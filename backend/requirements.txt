@@ -1,0 +1,39 @@
+# ===========================================
+# CPA-Agent Backend Dependencies
+# ===========================================
+# Python 3.11+ required
+# Install: pip install -r requirements.txt
+# ===========================================
+
+# ============= 核心框架 =============
+flask>=3.0.0
+flask-cors>=6.0.0
+
+# ============= LLM 相关 =============
+openai>=1.0.0
+
+# ============= 数据库 =============
+# Neo4j
+neo4j>=5.0.0
+
+# MySQL
+pymysql>=1.1.0
+sqlalchemy>=2.0.0
+
+# Redis
+redis>=5.0.0
+
+# Milvus (嵌入式版本, pip install 即用)
+pymilvus>=2.4.0
+
+# ============= Embedding =============
+# BGE-M3 通过 sentence-transformers 加载
+sentence-transformers>=3.0.0
+
+# ============= 工具库 =============
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+
+# ============= 报告导出 =============
+jinja2>=3.1.0
+# weasyprint>=60.0  # PDF 导出, 需要系统依赖, 按需安装
