@@ -1,0 +1,504 @@
+{
+  "schema_version": "hr_relation_extract_v2.0",
+  "description": "简历关系提取 API 模板 v2 — 对齐竞赛四维度人岗匹配，含维度标注与软技能实体",
+  "compatible_models": [
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "claude-sonnet-4-20250514",
+    "claude-3-5-sonnet-20241022",
+    "deepseek-chat",
+    "deepseek-reasoner",
+    "gpt-4-turbo",
+    "gpt-4o",
+    "qwen-max"
+  ],
+  "generation_config": {
+    "temperature": 0.05,
+    "max_tokens": 16384,
+    "top_p": 0.95,
+    "response_format": "json_object"
+  },
+  "system_prompt": "# 角色\n你是一个简历知识图谱构建专家，擅长从简历文本中提取实体和实体间关系，为企业 ATS（Applicant Tracking System）和人才知识图谱提供结构化数据。\n\n## 竞赛对齐说明\n- 提取的实体和关系将用于人岗匹配的四维度分析：基础要求、职业技能、职业素养、发展潜力\n- 每个关系必须标注所属匹配维度（matching_dimension），便于下游匹配引擎按维度聚合\n- 关键信息实体（DEGREE、MAJOR、CERTIFICATE）必须精确提取，准确率 > 90%\n\n---\n\n# 脏数据预处理（与实体提取模板一致）\n\n在提取前，自动清洗以下噪声：\n1. 移除 `[cite_start]`、`[cite: 数字]` 等引用标记\n2. 忽略 `**【xxx.pdf】**` 文件标题行\n3. 忽略 OCR 噪声（\"COOL\"、\"AAAA\"、\"轮廓效果\"、\"形状样式\"、\"文本框链接\"、\"Personal resume\" 等非简历内容）\n4. 繁体→简体：\"項目\"→\"项目\"、\"成員\"→\"成员\"\n5. 日期格式统一为 YYYY-MM\n\n---\n\n# 实体类型定义（18种）\n\n| 类型代码 | 说明 | 示例 |\n|---|---|---|\n| PERSON | 候选人姓名 | 钟梓珉、陈小鱼 |\n| SCHOOL | 学校名称 | 四川轻化工大学、哈尔滨工业大学 |\n| COLLEGE | 学院名称 | 数学与统计学院 |\n| MAJOR | 专业名称 | 计算机科学与技术、财务管理 |\n| DEGREE | 学历学位 | 本科、硕士、专科、自考本科 |\n| COMPANY | 公司/单位名称 | 中铁隧道局、国家电网陕西省电力科学研究院 |\n| POSITION | 职位/岗位名称 | 大模型应用/Agent开发工程师、实习生 |\n| PROJECT | 项目名称 | 多模态课程知识库与Learning Agent系统 |\n| INSTITUTION | 科研机构/实验室 | 省重点人工智能实验室、中国科学院北京力学研究所 |\n| SKILL | 技术技能 | Python、LangChain、Neo4j、RAG |\n| TOOL | 工具软件 | Git、Docker、Word、Excel、广联达 |\n| CERTIFICATE | 证书名称 | 英语四级、安全员C2证书、初级会计师 |\n| AWARD | 奖项/荣誉 | 一等奖学金、国家级一等奖 |\n| COMPETITION | 竞赛名称 | 全球校园人工智能算法精英大赛、美国大学生数学建模竞赛 |\n| LANGUAGE | 语言能力 | CET-4、CET-6、普通话二甲 |\n| DATE_RANGE | 时间段 | 2024-09~至今、2022-03~2024-03 |\n| LOCATION | 地点 | 陕西西安、广东省广州市海珠区 |\n| ORGANIZATION | 校内组织/社团 | 院学生会、人工智能协会、志愿者协会 |\n| SOFT_SKILL | 职业素养/软技能 | 沟通能力、团队协作、创新能力、抗压能力、学习能力、责任心 |\n| PUBLICATION | 论文/专利 | 《Research on Positioning Method...》 |\n\n---\n\n# 关系类型定义（22种）\n\n## A. 人-教育 关系\n| 关系代码 | 头实体 | 尾实体 | 说明 | 属性 |\n|---|---|---|---|---|\n| STUDIED_AT | PERSON | SCHOOL | 就读于某学校 | degree, major, period |\n| HAS_MAJOR | PERSON | MAJOR | 所学专业 | degree_level |\n| HAS_DEGREE | PERSON | DEGREE | 持有学历 | school |\n| COLLEGE_OF | COLLEGE | SCHOOL | 学院隶属学校 | — |\n\n## B. 人-工作 关系\n| 关系代码 | 头实体 | 尾实体 | 说明 | 属性 |\n|---|---|---|---|---|\n| WORKED_AT | PERSON | COMPANY | 就职于某公司 | position, period, department |\n| HAS_TITLE | PERSON | POSITION | 担任某职位 | company, period |\n| INDUSTRY_OF | COMPANY | SKILL | 公司所属行业/领域 | — |\n| INTERNED_AT | PERSON | COMPANY | 在某公司实习 | position, period, department |\n\n## C. 人-项目 关系\n| 关系代码 | 头实体 | 尾实体 | 说明 | 属性 |\n|---|---|---|---|---|\n| PARTICIPATED_IN | PERSON | PROJECT | 参与某项目 | role, period |\n| PROJECT_AT | PROJECT | COMPANY/INSTITUTION | 项目所属机构 | — |\n| PROJECT_USES | PROJECT | SKILL/TOOL | 项目使用技术 | — |\n\n## D. 人-科研 关系\n| 关系代码 | 头实体 | 尾实体 | 说明 | 属性 |\n|---|---|---|---|---|\n| RESEARCHED_AT | PERSON | INSTITUTION | 在某机构做科研 | role, period, direction |\n| PUBLISHED | PERSON | PUBLICATION | 发表论文/专利 | role(第一作者等), venue, year |\n\n## E. 人-技能 关系\n| 关系代码 | 头实体 | 尾实体 | 说明 | 属性 |\n|---|---|---|---|---|\n| HAS_SKILL | PERSON | SKILL | 掌握某技能 | proficiency(精通/熟练/熟悉/了解) |\n| USES_TOOL | PERSON | TOOL | 使用某工具 | proficiency |\n\n## F. 人-证书/奖项 关系\n| 关系代码 | 头实体 | 尾实体 | 说明 | 属性 |\n|---|---|---|---|---|\n| HAS_CERTIFICATE | PERSON | CERTIFICATE | 持有证书 | date, status(已获得/备考中) |\n| WON_AWARD | PERSON | AWARD | 获得奖项 | competition, level, rank, date |\n| COMPETED_IN | PERSON | COMPETITION | 参加竞赛 | role, award, date |\n\n## G. 人-语言 关系\n| 关系代码 | 头实体 | 尾实体 | 说明 | 属性 |\n|---|---|---|---|---|\n| HAS_LANGUAGE | PERSON | LANGUAGE | 语言能力 | proficiency, score |\n\n## H. 人-组织 关系\n| 关系代码 | 头实体 | 尾实体 | 说明 | 属性 |\n|---|---|---|---|---|\n| MEMBER_OF | PERSON | ORGANIZATION | 加入某组织 | role, period |\n\n## H2. 人-素养 关系\n| 关系代码 | 头实体 | 尾实体 | 说明 | 属性 |\n|---|---|---|---|---|\n| DEMONSTRATES | PERSON | SOFT_SKILL | 展现某项职业素养 | level(强/中/弱), evidence |\n\n## I. 时间绑定 关系\n| 关系代码 | 头实体 | 尾实体 | 说明 |\n|---|---|---|---|\n| HAS_PERIOD | SCHOOL/COMPANY/PROJECT/INSTITUTION/ORGANIZATION | DATE_RANGE | 经历的时间段 |\n\n## J. 地点关系\n| 关系代码 | 头实体 | 尾实体 | 说明 |\n|---|---|---|---|\n| LOCATED_IN | PERSON/COMPANY/SCHOOL | LOCATION | 所在地点 |\n\n---\n\n# 输出 Schema\n\n```json\n{\n  \"resume_id\": \"string\",\n  \"entities\": [\n    {\n      \"id\": \"e_001\",\n      \"type\": \"实体类型代码\",\n      \"text\": \"原文中的精确文本span\",\n      \"normalized\": \"标准化形式（如繁体转简体、缩写转全称）\",\n      \"start\": \"int 字符偏移起始（基于清洗后文本，0-indexed）\",\n      \"end\": \"int 字符偏移结束\",\n      \"confidence\": \"float 0.0-1.0\"\n    }\n  ],\n  \"relations\": [\n    {\n      \"id\": \"r_001\",\n      \"type\": \"关系类型代码\",\n      \"head\": \"头实体id（如 e_001）\",\n      \"tail\": \"尾实体id（如 e_002）\",\n      \"properties\": {\n        \"说明\": \"关系的附加属性，如 period、role、proficiency 等，视关系类型而定\"\n      },\n      \"matching_dimension\": \"D1_基础要求 | D2_职业技能 | D3_职业素养 | D4_发展潜力 | null（该关系所属的人岗匹配维度）\",\n      \"confidence\": \"float 0.0-1.0\",\n      \"evidence\": \"string 支撑该关系的原文片段（简短）\"\n    }\n  ],\n  \"statistics\": {\n    \"entity_count\": \"int 实体总数\",\n    \"relation_count\": \"int 关系总数\",\n    \"entity_type_distribution\": { \"PERSON\": 1, \"SKILL\": 5 },\n    \"relation_type_distribution\": { \"HAS_SKILL\": 5, \"STUDIED_AT\": 1 },\n    \"graph_density\": \"float 图密度 = 2*relation_count / (entity_count * (entity_count-1))\",\n    \"dimension_distribution\": {\n      \"D1_基础要求\": \"int 该维度关系数（STUDIED_AT, HAS_MAJOR, HAS_DEGREE, HAS_CERTIFICATE, HAS_LANGUAGE）\",\n      \"D2_职业技能\": \"int 该维度关系数（HAS_SKILL, USES_TOOL, PROJECT_USES, INTERNED_AT, WORKED_AT）\",\n      \"D3_职业素养\": \"int 该维度关系数（DEMONSTRATES, MEMBER_OF）\",\n      \"D4_发展潜力\": \"int 该维度关系数（WON_AWARD, COMPETED_IN, RESEARCHED_AT, PUBLISHED）\"\n    }\n  }\n}\n```\n\n---\n\n# 核心规则\n\n1. **span 精确性**：entity.text 必须是清洗后原文中的连续字符序列，不可修改措辞\n2. **去重**：同一实体在文中出现多次只标注一次（取首次出现位置），但关系可以有多条\n3. **关系完整性**：\n   - 每个 SCHOOL 必须有 HAS_PERIOD 关系（如果时间段存在）\n   - 每个 COMPANY 必须有 HAS_PERIOD 关系（如果时间段存在）\n   - 每个 SKILL 必须有 HAS_SKILL 或 PROJECT_USES 关系（技能必须挂载到人或项目）\n   - 每个 PROJECT 应尽量有 PARTICIPATED_IN + PROJECT_USES 关系\n4. **置信度规则**：\n   - 原文明确提及 → confidence ≥ 0.9\n   - 需要推断（如从上下文推断公司行业）→ 0.6-0.8\n   - 不确定但合理 → 0.4-0.6\n5. **evidence 字段**：每条关系必须提供原文中支撑该关系的简短证据片段（≤50字）\n6. **matching_dimension 标注规则**：\n   - D1_基础要求: STUDIED_AT, HAS_MAJOR, HAS_DEGREE, COLLEGE_OF, HAS_CERTIFICATE, HAS_LANGUAGE\n   - D2_职业技能: HAS_SKILL, USES_TOOL, WORKED_AT, INTERNED_AT, HAS_TITLE, PROJECT_USES, INDUSTRY_OF\n   - D3_职业素养: DEMONSTRATES, MEMBER_OF\n   - D4_发展潜力: WON_AWARD, COMPETED_IN, RESEARCHED_AT, PUBLISHED, PARTICIPATED_IN\n   - null: HAS_PERIOD, LOCATED_IN, PROJECT_AT（辅助关系，不直接属于匹配维度）\n7. **与 frozen schema 兼容**：实体类型和关系类型是对 entity_extraction_schema_frozen.txt 的超集扩展，向下兼容\n7. **直接输出 JSON**：不要有任何解释性文字、markdown标记或代码块包裹",
+  "user_prompt_template": "请从以下简历文本中提取所有实体和实体间关系，构建候选人知识图谱。\n\n## 简历原文\n{resume_text}\n\n## 提取要求\n1. 先清洗脏数据（引用标记、OCR噪声等）\n2. 提取所有 19 种实体类型（含 SOFT_SKILL）\n3. 提取所有 24 种关系类型（含 INTERNED_AT、DEMONSTRATES）\n4. 每条关系必须附带 matching_dimension（所属匹配维度）和 evidence（原文证据）\n5. 输出 statistics 统计信息（含 dimension_distribution）\n6. DEGREE、MAJOR、CERTIFICATE 实体必须精确提取\n\n直接输出 JSON：",
+  "usage_examples": {
+    "example_input": "钟梓珉\n2006/11\nhosheil@outlook.com\n13330772777\n大模型应用/Agent开发工程师\n熟悉 Python、Java\n熟悉 LangChain、LangGraph\n教育经历\n四川轻化工大学\n计算机科学与技术,本科\n2024/09-至今\n专业排名前1%,获得一等奖学金\n科研/项目经历\n省重点人工智能实验室\n学生科研组成员\n2024/11-至今",
+    "example_output_snippet": {
+      "entities": [
+        {
+          "id": "e_001",
+          "type": "PERSON",
+          "text": "钟梓珉",
+          "normalized": "钟梓珉",
+          "confidence": 1.0
+        },
+        {
+          "id": "e_002",
+          "type": "POSITION",
+          "text": "大模型应用/Agent开发工程师",
+          "normalized": "大模型应用/Agent开发工程师",
+          "confidence": 0.95
+        },
+        {
+          "id": "e_003",
+          "type": "SKILL",
+          "text": "Python",
+          "normalized": "Python",
+          "confidence": 0.95
+        },
+        {
+          "id": "e_004",
+          "type": "SKILL",
+          "text": "Java",
+          "normalized": "Java",
+          "confidence": 0.95
+        },
+        {
+          "id": "e_005",
+          "type": "SKILL",
+          "text": "LangChain",
+          "normalized": "LangChain",
+          "confidence": 0.95
+        },
+        {
+          "id": "e_006",
+          "type": "SKILL",
+          "text": "LangGraph",
+          "normalized": "LangGraph",
+          "confidence": 0.95
+        },
+        {
+          "id": "e_007",
+          "type": "SCHOOL",
+          "text": "四川轻化工大学",
+          "normalized": "四川轻化工大学",
+          "confidence": 1.0
+        },
+        {
+          "id": "e_008",
+          "type": "MAJOR",
+          "text": "计算机科学与技术",
+          "normalized": "计算机科学与技术",
+          "confidence": 1.0
+        },
+        {
+          "id": "e_009",
+          "type": "DEGREE",
+          "text": "本科",
+          "normalized": "本科",
+          "confidence": 1.0
+        },
+        {
+          "id": "e_010",
+          "type": "DATE_RANGE",
+          "text": "2024/09-至今",
+          "normalized": "2024-09~至今",
+          "confidence": 0.95
+        },
+        {
+          "id": "e_011",
+          "type": "AWARD",
+          "text": "一等奖学金",
+          "normalized": "一等奖学金",
+          "confidence": 0.95
+        },
+        {
+          "id": "e_012",
+          "type": "INSTITUTION",
+          "text": "省重点人工智能实验室",
+          "normalized": "省重点人工智能实验室",
+          "confidence": 0.9
+        },
+        {
+          "id": "e_013",
+          "type": "DATE_RANGE",
+          "text": "2024/11-至今",
+          "normalized": "2024-11~至今",
+          "confidence": 0.95
+        }
+      ],
+      "relations": [
+        {
+          "id": "r_001",
+          "type": "HAS_TITLE",
+          "head": "e_001",
+          "tail": "e_002",
+          "properties": {},
+          "confidence": 0.95,
+          "evidence": "大模型应用/Agent开发工程师（求职意向）"
+        },
+        {
+          "id": "r_002",
+          "type": "HAS_SKILL",
+          "head": "e_001",
+          "tail": "e_003",
+          "properties": {
+            "proficiency": "熟悉"
+          },
+          "confidence": 0.95,
+          "evidence": "熟悉 Python、Java"
+        },
+        {
+          "id": "r_003",
+          "type": "HAS_SKILL",
+          "head": "e_001",
+          "tail": "e_004",
+          "properties": {
+            "proficiency": "熟悉"
+          },
+          "confidence": 0.95,
+          "evidence": "熟悉 Python、Java"
+        },
+        {
+          "id": "r_004",
+          "type": "HAS_SKILL",
+          "head": "e_001",
+          "tail": "e_005",
+          "properties": {
+            "proficiency": "熟悉"
+          },
+          "confidence": 0.95,
+          "evidence": "熟悉 LangChain、LangGraph"
+        },
+        {
+          "id": "r_005",
+          "type": "STUDIED_AT",
+          "head": "e_001",
+          "tail": "e_007",
+          "properties": {
+            "degree": "本科",
+            "major": "计算机科学与技术",
+            "period": "2024-09~至今"
+          },
+          "confidence": 1.0,
+          "evidence": "四川轻化工大学 计算机科学与技术,本科 2024/09-至今"
+        },
+        {
+          "id": "r_006",
+          "type": "HAS_MAJOR",
+          "head": "e_001",
+          "tail": "e_008",
+          "properties": {
+            "degree_level": "本科"
+          },
+          "confidence": 1.0,
+          "evidence": "计算机科学与技术,本科"
+        },
+        {
+          "id": "r_007",
+          "type": "HAS_PERIOD",
+          "head": "e_007",
+          "tail": "e_010",
+          "properties": {},
+          "confidence": 0.95,
+          "evidence": "2024/09-至今"
+        },
+        {
+          "id": "r_008",
+          "type": "WON_AWARD",
+          "head": "e_001",
+          "tail": "e_011",
+          "properties": {
+            "level": "校级"
+          },
+          "confidence": 0.9,
+          "evidence": "获得一等奖学金"
+        },
+        {
+          "id": "r_009",
+          "type": "RESEARCHED_AT",
+          "head": "e_001",
+          "tail": "e_012",
+          "properties": {
+            "role": "学生科研组成员",
+            "period": "2024-11~至今"
+          },
+          "confidence": 0.9,
+          "evidence": "省重点人工智能实验室 学生科研组成员 2024/11-至今"
+        },
+        {
+          "id": "r_010",
+          "type": "HAS_PERIOD",
+          "head": "e_012",
+          "tail": "e_013",
+          "properties": {},
+          "confidence": 0.95,
+          "evidence": "2024/11-至今"
+        }
+      ],
+      "statistics": {
+        "entity_count": 13,
+        "relation_count": 10,
+        "entity_type_distribution": {
+          "PERSON": 1,
+          "POSITION": 1,
+          "SKILL": 4,
+          "SCHOOL": 1,
+          "MAJOR": 1,
+          "DEGREE": 1,
+          "DATE_RANGE": 2,
+          "AWARD": 1,
+          "INSTITUTION": 1
+        },
+        "relation_type_distribution": {
+          "HAS_TITLE": 1,
+          "HAS_SKILL": 4,
+          "STUDIED_AT": 1,
+          "HAS_MAJOR": 1,
+          "HAS_PERIOD": 2,
+          "WON_AWARD": 1,
+          "RESEARCHED_AT": 1
+        }
+      }
+    }
+  },
+  "relation_compatibility_matrix": {
+    "description": "关系类型的头尾实体类型约束矩阵 — 用于输出校验",
+    "rules": [
+      {
+        "relation": "STUDIED_AT",
+        "head_types": [
+          "PERSON"
+        ],
+        "tail_types": [
+          "SCHOOL"
+        ]
+      },
+      {
+        "relation": "HAS_MAJOR",
+        "head_types": [
+          "PERSON"
+        ],
+        "tail_types": [
+          "MAJOR"
+        ]
+      },
+      {
+        "relation": "HAS_DEGREE",
+        "head_types": [
+          "PERSON"
+        ],
+        "tail_types": [
+          "DEGREE"
+        ]
+      },
+      {
+        "relation": "COLLEGE_OF",
+        "head_types": [
+          "COLLEGE"
+        ],
+        "tail_types": [
+          "SCHOOL"
+        ]
+      },
+      {
+        "relation": "WORKED_AT",
+        "head_types": [
+          "PERSON"
+        ],
+        "tail_types": [
+          "COMPANY"
+        ]
+      },
+      {
+        "relation": "HAS_TITLE",
+        "head_types": [
+          "PERSON"
+        ],
+        "tail_types": [
+          "POSITION"
+        ]
+      },
+      {
+        "relation": "INDUSTRY_OF",
+        "head_types": [
+          "COMPANY"
+        ],
+        "tail_types": [
+          "SKILL"
+        ]
+      },
+      {
+        "relation": "INTERNED_AT",
+        "head_types": [
+          "PERSON"
+        ],
+        "tail_types": [
+          "COMPANY"
+        ]
+      },
+      {
+        "relation": "PARTICIPATED_IN",
+        "head_types": [
+          "PERSON"
+        ],
+        "tail_types": [
+          "PROJECT"
+        ]
+      },
+      {
+        "relation": "PROJECT_AT",
+        "head_types": [
+          "PROJECT"
+        ],
+        "tail_types": [
+          "COMPANY",
+          "INSTITUTION"
+        ]
+      },
+      {
+        "relation": "PROJECT_USES",
+        "head_types": [
+          "PROJECT"
+        ],
+        "tail_types": [
+          "SKILL",
+          "TOOL"
+        ]
+      },
+      {
+        "relation": "RESEARCHED_AT",
+        "head_types": [
+          "PERSON"
+        ],
+        "tail_types": [
+          "INSTITUTION"
+        ]
+      },
+      {
+        "relation": "PUBLISHED",
+        "head_types": [
+          "PERSON"
+        ],
+        "tail_types": [
+          "PUBLICATION"
+        ]
+      },
+      {
+        "relation": "HAS_SKILL",
+        "head_types": [
+          "PERSON"
+        ],
+        "tail_types": [
+          "SKILL"
+        ]
+      },
+      {
+        "relation": "USES_TOOL",
+        "head_types": [
+          "PERSON"
+        ],
+        "tail_types": [
+          "TOOL"
+        ]
+      },
+      {
+        "relation": "HAS_CERTIFICATE",
+        "head_types": [
+          "PERSON"
+        ],
+        "tail_types": [
+          "CERTIFICATE"
+        ]
+      },
+      {
+        "relation": "WON_AWARD",
+        "head_types": [
+          "PERSON"
+        ],
+        "tail_types": [
+          "AWARD"
+        ]
+      },
+      {
+        "relation": "COMPETED_IN",
+        "head_types": [
+          "PERSON"
+        ],
+        "tail_types": [
+          "COMPETITION"
+        ]
+      },
+      {
+        "relation": "HAS_LANGUAGE",
+        "head_types": [
+          "PERSON"
+        ],
+        "tail_types": [
+          "LANGUAGE"
+        ]
+      },
+      {
+        "relation": "MEMBER_OF",
+        "head_types": [
+          "PERSON"
+        ],
+        "tail_types": [
+          "ORGANIZATION"
+        ]
+      },
+      {
+        "relation": "HAS_PERIOD",
+        "head_types": [
+          "SCHOOL",
+          "COMPANY",
+          "PROJECT",
+          "INSTITUTION",
+          "ORGANIZATION"
+        ],
+        "tail_types": [
+          "DATE_RANGE"
+        ]
+      },
+      {
+        "relation": "LOCATED_IN",
+        "head_types": [
+          "PERSON",
+          "COMPANY",
+          "SCHOOL"
+        ],
+        "tail_types": [
+          "LOCATION"
+        ]
+      },
+      {
+        "relation": "DEMONSTRATES",
+        "head_types": [
+          "PERSON"
+        ],
+        "tail_types": [
+          "SOFT_SKILL"
+        ]
+      }
+    ],
+    "dimension_mapping": {
+      "D1_基础要求": [
+        "STUDIED_AT",
+        "HAS_MAJOR",
+        "HAS_DEGREE",
+        "COLLEGE_OF",
+        "HAS_CERTIFICATE",
+        "HAS_LANGUAGE"
+      ],
+      "D2_职业技能": [
+        "HAS_SKILL",
+        "USES_TOOL",
+        "WORKED_AT",
+        "INTERNED_AT",
+        "HAS_TITLE",
+        "PROJECT_USES",
+        "INDUSTRY_OF"
+      ],
+      "D3_职业素养": [
+        "DEMONSTRATES",
+        "MEMBER_OF"
+      ],
+      "D4_发展潜力": [
+        "WON_AWARD",
+        "COMPETED_IN",
+        "RESEARCHED_AT",
+        "PUBLISHED",
+        "PARTICIPATED_IN"
+      ]
+    }
+  }
+}

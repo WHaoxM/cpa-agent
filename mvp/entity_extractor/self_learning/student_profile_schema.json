@@ -1,0 +1,247 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Student Profile Schema",
+  "description": "学生就业能力画像JSON Schema - 用于人岗匹配训练数据",
+  "type": "object",
+
+  "properties": {
+    "student_id": {
+      "type": "string",
+      "description": "学生唯一标识"
+    },
+
+    "basic_info": {
+      "type": "object",
+      "required": ["name", "education_level", "major", "graduation_year"],
+      "properties": {
+        "name": {"type": "string", "description": "姓名"},
+        "gender": {"type": "string", "description": "性别"},
+        "age": {"type": "integer", "description": "年龄"},
+        "phone": {"type": "string", "description": "手机号（脱敏）"},
+        "email": {"type": "string", "description": "邮箱"},
+        "location": {"type": "string", "description": "所在地"},
+        "education_level": {
+          "type": "string",
+          "enum": ["大专", "本科", "硕士", "博士"],
+          "description": "学历"
+        },
+        "major": {"type": "string", "description": "专业"},
+        "school": {"type": "string", "description": "学校名称"},
+        "graduation_year": {"type": "integer", "description": "毕业年份"},
+        "GPA": {"type": "string", "description": "GPA（如3.8/4.0）"}
+      }
+    },
+
+    "professional_skills": {
+      "type": "object",
+      "description": "专业技能（对应人岗匹配的基础要求维度）",
+      "properties": {
+        "programming_languages": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "编程语言",
+          "examples": [["Python", "Java", "Go", "C++"]]
+        },
+        "frameworks": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "框架/库",
+          "examples": [["Spring", "Django", "React", "Vue"]]
+        },
+        "databases": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "数据库",
+          "examples": [["MySQL", "PostgreSQL", "MongoDB", "Redis"]]
+        },
+        "tools": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "开发工具/平台",
+          "examples": [["Git", "Docker", "Kubernetes", "Linux", "AWS"]]
+        },
+        "ai_ml": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "AI/ML技能",
+          "examples": [["TensorFlow", "PyTorch", "LangChain", "RAG", "Agent"]]
+        },
+        "certifications": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "专业认证",
+          "examples": [["计算机二级", "软考中级", "AWS认证"]]
+        }
+      }
+    },
+
+    "general_abilities": {
+      "type": "object",
+      "description": "通用能力（对应人岗匹配的职业素养维度）",
+      "properties": {
+        "innovation_ability": {
+          "type": "object",
+          "description": "创新能力",
+          "properties": {
+            "score": {"type": "number", "minimum": 0, "maximum": 100, "description": "评分0-100"},
+            "evidence": {
+              "type": "array",
+              "items": {"type": "string"},
+              "description": "证明材料",
+              "examples": [["发表论文1篇", "获得创新创业大赛二等奖", "拥有软件著作权2项"]]
+            }
+          }
+        },
+        "learning_ability": {
+          "type": "object",
+          "description": "学习能力",
+          "properties": {
+            "score": {"type": "number", "minimum": 0, "maximum": 100},
+            "evidence": {
+              "type": "array",
+              "items": {"type": "string"},
+              "examples": [["自学通过AWS认证", "连续3年获得奖学金", "跨专业考研成功"]]
+            }
+          }
+        },
+        "anti_pressure_ability": {
+          "type": "object",
+          "description": "抗压能力",
+          "properties": {
+            "score": {"type": "number", "minimum": 0, "maximum": 100},
+            "evidence": {
+              "type": "array",
+              "items": {"type": "string"},
+              "examples": [["同时完成多个项目", "在deadline前高强度工作", "跨部门协调解决问题"]]
+            }
+          }
+        },
+        "communication_ability": {
+          "type": "object",
+          "description": "沟通能力",
+          "properties": {
+            "score": {"type": "number", "minimum": 0, "maximum": 100},
+            "evidence": {
+              "type": "array",
+              "items": {"type": "string"},
+              "examples": [["担任学生会干部", "组织过大型活动", "有丰富的项目汇报经验"]]
+            }
+          }
+        }
+      }
+    },
+
+    "practical_experience": {
+      "type": "object",
+      "description": "实践能力（对应人岗匹配的发展潜力维度）",
+      "properties": {
+        "internship_count": {"type": "integer", "description": "实习次数"},
+        "total_internship_months": {"type": "integer", "description": "累计实习月数"},
+        "internships": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "company": {"type": "string", "description": "实习公司"},
+              "position": {"type": "string", "description": "岗位"},
+              "duration": {"type": "string", "description": "时长（如3个月）"},
+              "description": {"type": "string", "description": "工作描述"},
+              "achievements": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "主要成就"
+              }
+            }
+          }
+        },
+        "project_count": {"type": "integer", "description": "项目数量"},
+        "projects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {"type": "string", "description": "项目名称"},
+              "role": {"type": "string", "description": "担任角色"},
+              "duration": {"type": "string", "description": "项目时长"},
+              "description": {"type": "string", "description": "项目描述"},
+              "technologies": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "使用的技术"
+              },
+              "achievements": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "项目成果"
+              }
+            }
+          }
+        },
+        "awards": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {"type": "string", "description": "奖项名称"},
+              "level": {"type": "string", "description": "奖项级别"},
+              "year": {"type": "integer", "description": "获奖年份"}
+            }
+          },
+          "description": "获奖情况"
+        }
+      }
+    },
+
+    "personality_traits": {
+      "type": "object",
+      "description": "性格特质（可选）",
+      "properties": {
+        "mbti": {"type": "string", "description": "MBTI类型"},
+        "strengths": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "优势"
+        },
+        "weaknesses": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "劣势/待提升"
+        }
+      }
+    },
+
+    "career_preference": {
+      "type": "object",
+      "description": "求职偏好",
+      "properties": {
+        "target_positions": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "目标岗位"
+        },
+        "target_industries": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "目标行业"
+        },
+        "expected_salary": {
+          "type": "object",
+          "properties": {
+            "min": {"type": "integer", "description": "最低期望月薪（元）"},
+            "max": {"type": "integer", "description": "最高期望月薪（元）"}
+          }
+        },
+        "preferred_locations": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "期望工作地点"
+        }
+      }
+    },
+
+    "self_evaluation": {
+      "type": "string",
+      "description": "自我评价"
+    }
+  }
+}

@@ -1,0 +1,153 @@
+{
+  "resume_id": "xian_tu_hardware_2026",
+  "personal_info": {
+    "name": "未提供",
+    "contact": {
+      "phone": "未提供",
+      "email": "未提供"
+    },
+    "position": "硬件工程师",
+    "working_years": 0
+  },
+  "education": [
+    {
+      "school": "西安工业大学",
+      "major": "电子信息",
+      "degree": "硕士",
+      "duration": {
+        "start": "2023-09",
+        "end": "至今"
+      },
+      "highlights": [
+        "硕士研究生 [cite: 303]",
+        "2025年研究生二等学业奖学金 [cite: 316]",
+        "2024年研究生二等学业奖学金 [cite: 321]"
+      ]
+    },
+    {
+      "school": "西安工业大学",
+      "major": "自动化",
+      "degree": "本科",
+      "duration": {
+        "start": "2018-09",
+        "end": "2022-07"
+      },
+      "highlights": [
+        "大学本科 [cite: 303]",
+        "社会实践先进个人证书 [cite: 323]"
+      ]
+    }
+  ],
+  "work_experience": [
+    {
+      "company": "中国科学院北京力学研究所",
+      "position": "联培生",
+      "duration": {
+        "start": "2024-07",
+        "end": "2024-10"
+      },
+      "company_industry": "科研机构",
+      "company_scale": "大型",
+      "achievements": [
+        "进行飞行器表面气体流速测量传感器的研究，通过 MCU 接收传感器数据并进行分析 [cite: 313]",
+        "与北京航天五院协作，进行基于柔性传感器的降落伞表面张力测试实验 [cite: 314]"
+      ],
+      "technologies_used": [
+        "MCU",
+        "柔性传感器",
+        "数据分析"
+      ]
+    },
+    {
+      "company": "国家电网陕西省电力科学研究院",
+      "position": "实习生",
+      "duration": {
+        "start": "2023-10",
+        "end": "2024-01"
+      },
+      "company_industry": "能源/电力",
+      "company_scale": "大型",
+      "achievements": [
+        "进行 AIS 与 GIS 强电磁干扰室外模拟测试实验 [cite: 306]",
+        "参与超级隔离电源测试实验，通过 ARM 芯片测试设备受电磁干扰程度，并编写技术报告 [cite: 309]"
+      ],
+      "technologies_used": [
+        "ARM芯片",
+        "电磁干扰测试",
+        "AIS/GIS"
+      ]
+    }
+  ],
+  "project_experience": [
+    {
+      "name": "基于嵌入式系统的PE管道热熔焊机焊接参数采集与传输",
+      "role": "项目总体控制负责人",
+      "duration": {
+        "start": "未提供",
+        "end": "未提供"
+      },
+      "description": "采用 RS232 对焊机数据进行采集，通过 GPS 获取位置，利用蓝牙传输至服务器 [cite: 326, 327]",
+      "responsibilities": [
+        "设计项目总体控制方案，采用主板（采集）加子板（传输）的硬件架构 [cite: 329]",
+        "实现 AC-DC 电源隔离模块及 LM1117 电流转换电路设计 [cite: 329]",
+        "负责 SP232 电平转换与 UART 协议数据通信实现 [cite: 329]"
+      ],
+      "technologies": [
+        "PCB",
+        "STM32",
+        "蓝牙通信",
+        "RS232",
+        "UART",
+        "AC-DC隔离"
+      ],
+      "results": "成功实现焊接参数的实时采集与无线传输，有效提高了生产质量与效率 [cite: 327]"
+    }
+  ],
+  "skills": {
+    "programming_languages": [
+      "C"
+    ],
+    "frameworks": [
+      "STM32库"
+    ],
+    "databases": [],
+    "tools": [
+      "PCB设计",
+      "UART",
+      "RS232",
+      "ARM",
+      "MCU"
+    ],
+    "ai_ml": [],
+    "soft_skills": [
+      "技术报告编写",
+      "实验模拟",
+      "项目管理"
+    ]
+  },
+  "certificates": [
+    {
+      "name": "第二十届中国研究生电子设计竞赛西北赛区省级三等奖 [cite: 317]"
+    },
+    {
+      "name": "中国研究生人工智能创新大赛校赛一等奖 [cite: 322]"
+    },
+    {
+      "name": "发明专利：药柱顶部膨胀压力监测装置和方法 [cite: 318]"
+    },
+    {
+      "name": "会议论文：Research on Positioning Method of Mine Rail Car [cite: 320]"
+    }
+  ],
+  "languages": [
+    {
+      "language": "英语",
+      "level": "CET-4 [cite: 323]"
+    },
+    {
+      "language": "普通话",
+      "level": "二级证书 [cite: 323]"
+    }
+  ],
+  "self_evaluation": "西安工业大学硕士背景，主攻电子信息与自动化方向。具备在中科院力学所及国家电网等大型研究院的实习经验，熟悉强电磁干扰测试及传感器数据采集。精通 PCB 设计与嵌入式开发（STM32/ARM），拥有发明专利及多项研究生国家级/省级竞赛奖项，具备扎实的硬件研发与科研攻关能力。"
+}

@@ -1,0 +1,200 @@
+1. 输入契约 (Input Contract)
+
+```json
+{
+ "physical_parse_layer": {
+ "goal": "保证JD txt与学生简历pdf在物理层解析阶段不漏文本，并归类到正确文本块",
+ "input_sources": [
+ { "type": "jd_txt", "required": true },
+ { "type": "resume_pdf", "required": true }
+ ],
+ "routing_strategy": {
+ "pdf": {
+ "text_pdf": "pymupdf_direct",
+ "scanned_or_complex_pdf": "ocr_fallback"
+ },
+ "txt": {
+ "default": "direct_text_loader"
+ }
+ },
+ "block_taxonomy": [
+ "PERSONAL_INFO",
+ "EDUCATION",
+ "WORK_EXPERIENCE",
+ "PROJECT_EXPERIENCE",
+ "SKILLS_CERTS",
+ "JOB_TITLE",
+ "JOB_REQUIREMENTS",
+ "JOB_DESCRIPTION",
+ "OTHER"
+ ],
+ "lossless_requirements": {
+ "full_text_coverage": ">=0.99",
+ "block_classification_coverage": ">=0.95",
+ "unclassified_text_ratio": "<=0.05",
+ "cross_page_merge_enabled": true,
+ "preserve_source_position": true
+ },
+ "fallback_policy": {
+ "on_parse_failure": "retry_with_ocr_and_layout_model",
+ "on_block_misclassification": "send_to_low_confidence_queue",
+ "max_retry":2
+ },
+ "output": {
+ "document_blocks": [
+ {
+ "block_id": "string",
+ "block_type": "enum(block_taxonomy)",
+ "text": "string",
+ "confidence": "float [0,1]",
+ "source": {
+ "file_type": "pdf|txt",
+ "page": "number|null",
+ "bbox": "[x1,y1,x2,y2]|null"
+ }
+ }
+ ]
+ }
+ },
+
+ "raw_job_data": {
+ "schema_version": "2.8.0",
+ "total_scale":6000,
+ "pre_aggregation": {
+ "enabled": true,
+ "method": "frequency_statistics + ESCOX_ontology_mapping",
+ "fallback": "sync_stub_queue",
+ "thresholds": {
+ "min_samples_per_category":5,
+ "min_average_confidence":0.55
+ }
+ },
+ "jd_schema": {
+ "jd_id": "string (uuid)",
+ "job_category": "enum [TECHNICAL, MANAGEMENT, GENERAL]",
+ "content": {
+ "title": "string (required)",
+ "description": "string (raw_text)"
+ }
+ },
+ "essential_metadata": {
+ "job_level": { "seniority": "enum [JUNIOR, MID, SENIOR, LEAD, PRINCIPAL]" },
+ "requirements": { "degree_minimum": "enum [BACHELOR, MASTER, PHD]" },
+ "skill_ontology": { "hard_skills": ["string"], "soft_skills": ["string"] }
+ }
+ },
+
+ "raw_student_data": {
+ "student_id": "string (stu_xxx)",
+ "basic_profile": {
+ "major": "string",
+ "enrollment_year": "number",
+ "gpa": "number (nullable)"
+ },
+ "essential_student_profile": {
+ "education_depth": { "institution_tier": "enum [TOP,985_211, OTHERS]" },
+ "practice_experience": {
+ "internship_count": "number",
+ "project_count": "number"
+ },
+ "skill_evidence": {
+ "certifications_count": "number",
+ "competition_count": "number"
+ },
+ "career_intent": { "target_industries": ["string"] }
+ }
+ },
+
+ "cold_start_system": {
+ "information_entropy_score": {
+ "overall": "float [0-1]",
+ "formula": {
+ "base_score":1.0,
+ "penalties": {
+ "no_internship": -0.2,
+ "no_project": -0.15,
+ "low_institution_tier": -0.1,
+ "low_skill_evidence": -0.1
+ },
+ "final_calc": "clamp(base_score + sum(penalties),0.0,1.0)"
+ }
+ },
+ "cold_start_tiers": {
+ "TIER_1_ABSOLUTE_ZERO": { "trigger": "entropy_score <0.25", "strategy": "EXPLORATION_FIRST" },
+ "TIER_2_SEMI_STRUCTURED": { "trigger": "0.25 <= entropy_score <0.55", "strategy": "BRIDGE_BUILDING" },
+ "TIER_3_DOMAIN_PIVOT": { "enabled": false, "trigger": "disabled_in_mvp" }
+ }
+ },
+
+ "ethics_bias_filter": {
+ "enabled": true,
+ "mask_fields": ["gender", "age", "ethnicity", "hometown"],
+ "action": "REPLACE_WITH_MASK_TOKEN",
+ "execution_stage": "raw_text_first_step"
+ },
+
+ "privacy_guard": {
+ "enabled": true,
+ "stage": "before_llm_call",
+ "policy": {
+ "data_minimization": true,
+ "allow_fields_for_llm": [
+ "major",
+ "skills",
+ "experience_summary",
+ "project_summary",
+ "target_industries"
+ ]
+ },
+ "pii_detection": {
+ "method": "regex + ner_hybrid",
+ "entities": [
+ "PHONE",
+ "EMAIL",
+ "ID_CARD",
+ "ADDRESS",
+ "PERSON_NAME",
+ "STUDENT_ID",
+ "COMPANY_INTERNAL_ID"
+ ],
+ "low_confidence_action": "HUMAN_REVIEW"
+ },
+ "transformation": {
+ "PHONE": "TOKENIZE",
+ "EMAIL": "TOKENIZE",
+ "ID_CARD": "DROP",
+ "ADDRESS": "GENERALIZE_CITY_LEVEL",
+ "PERSON_NAME": "PSEUDONYMIZE",
+ "STUDENT_ID": "HMAC_SHA256"
+ },
+ "llm_safety": {
+ "provider_data_retention": "ZERO_RETENTION_REQUIRED",
+ "prompt_logging": "DISABLED_FOR_RAW_INPUT",
+ "training_opt_out_required": true
+ },
+ "audit": {
+ "trace_id_required": true,
+ "redaction_report_required": true,
+ "store_raw_text": false
+ }
+ },
+
+ "contract_metadata": {
+ "trace_id": "mandatory",
+ "input_hash": "string (sha256)",
+ "run_id": "mandatory",
+ "profile": "MVP_SMALL_SAMPLE"
+ },
+
+ "mvp_acceptance_gates": {
+ "pipeline_success_rate": ">=0.95",
+ "trace_completeness": "==1.00",
+ "explain_with_evidence_rate": ">=0.90",
+ "low_confidence_routing_rate": "observable_and_nonzero",
+ "physical_parse_quality": {
+ "full_text_coverage": ">=0.99",
+ "block_classification_coverage": ">=0.95"
+ }
+ }
+}
+```

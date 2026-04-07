@@ -1,0 +1,549 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Resume Field Constraints v1.0",
+  "description": "生产级简历字段约束 Schema — 用于教师模型输出验证、ConsensusGuard 质检、合成数据校验",
+  "version": "1.0.0",
+  "type": "object",
+  "required": ["personal_info", "education", "skills"],
+
+  "properties": {
+    "resume_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9_-]{1,64}$",
+      "description": "简历唯一标识符"
+    },
+
+    "personal_info": {
+      "type": "object",
+      "required": ["name", "contact"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 20,
+          "description": "姓名（中文2-6字 或 英文名）",
+          "x-constraints": {
+            "pattern_cn": "^[\\u4e00-\\u9fa5]{2,6}$",
+            "pattern_en": "^[A-Za-z][A-Za-z .'-]{1,30}$",
+            "validation": "must_match_one_of_patterns"
+          }
+        },
+        "contact": {
+          "type": "object",
+          "properties": {
+            "phone": {
+              "type": "string",
+              "pattern": "^1[3-9]\\d{1}\\*{4}\\d{4}$",
+              "description": "脱敏手机号，格式：138****8888",
+              "x-constraints": {
+                "pii_level": "desensitized",
+                "raw_pattern": "^1[3-9]\\d{9}$"
+              }
+            },
+            "email": {
+              "type": "string",
+              "format": "email",
+              "maxLength": 100,
+              "description": "邮箱地址"
+            },
+            "location": {
+              "type": "string",
+              "maxLength": 50,
+              "description": "所在城市/地区",
+              "x-constraints": {
+                "examples": ["北京", "上海", "深圳", "杭州", "San Francisco"],
+                "should_be_city_level": true
+              }
+            },
+            "linkedin": {
+              "type": "string",
+              "pattern": "^https?://(www\\.)?linkedin\\.com/in/[a-zA-Z0-9-]+/?$",
+              "description": "LinkedIn 主页（可选）"
+            },
+            "github": {
+              "type": "string",
+              "pattern": "^https?://(www\\.)?github\\.com/[a-zA-Z0-9-]+/?$",
+              "description": "GitHub 主页（可选）"
+            }
+          }
+        },
+        "position": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 30,
+          "description": "求职意向/应聘岗位"
+        },
+        "working_years": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50,
+          "description": "工作年限",
+          "x-constraints": {
+            "cross_field_rule": "abs(working_years - sum(work_experience.duration_months)/12) <= 1",
+            "description": "工作年限与工作经历时间总和差值不超过1年"
+          }
+        }
+      }
+    },
+
+    "education": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "description": "教育经历（倒序排列）",
+      "x-constraints": {
+        "ordering": "descending_by_duration.start",
+        "no_overlap": "education[i].duration 不能与 education[j].duration 完全重叠"
+      },
+      "items": {
+        "type": "object",
+        "required": ["school", "degree", "duration"],
+        "properties": {
+          "school": {
+            "type": "string",
+            "minLength": 4,
+            "maxLength": 40,
+            "description": "学校名称（全称）",
+            "x-constraints": {
+              "must_contain_suffix": ["大学", "学院", "学校", "University", "Institute", "College", "School"],
+              "or_known_abbreviation": ["MIT", "ETH", "CMU", "UCLA", "NYU", "NUS", "HKUST"],
+              "validation": "school_name_must_be_recognizable"
+            }
+          },
+          "major": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 30,
+            "description": "专业名称"
+          },
+          "degree": {
+            "type": "string",
+            "enum": ["博士", "硕士", "本科", "专科", "高中", "PhD", "Master", "Bachelor", "Associate"],
+            "description": "学历"
+          },
+          "duration": {
+            "$ref": "#/$defs/date_range"
+          },
+          "gpa": {
+            "type": "string",
+            "pattern": "^\\d{1}\\.\\d{1,2}/[45]\\.0$",
+            "description": "GPA（如 3.8/4.0 或 4.2/5.0）",
+            "x-constraints": {
+              "gpa_value_range": "[0, scale_max]",
+              "scale_options": [4.0, 5.0]
+            }
+          },
+          "highlights": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "description": "荣誉/奖项/主修课程"
+          }
+        }
+      }
+    },
+
+    "work_experience": {
+      "type": "array",
+      "maxItems": 10,
+      "description": "工作经历（倒序排列）",
+      "x-constraints": {
+        "ordering": "descending_by_duration.start",
+        "max_gap_months": 24,
+        "description": "相邻工作经历间隔不超过24个月（除非有教育经历填补）"
+      },
+      "items": {
+        "type": "object",
+        "required": ["company", "position", "duration"],
+        "properties": {
+          "company": {
+            "type": "string",
+            "minLength": 4,
+            "maxLength": 50,
+            "description": "公司名称（全称或知名品牌缩写）",
+            "x-constraints": {
+              "should_contain_suffix": ["有限公司", "股份有限公司", "集团", "科技", "网络", "信息", "技术"],
+              "or_known_brand": ["阿里巴巴", "腾讯", "字节跳动", "百度", "美团", "京东", "华为", "小米", "Google", "Meta", "Amazon", "Microsoft", "Apple"],
+              "validation": "company_name_must_be_recognizable"
+            }
+          },
+          "company_industry": {
+            "type": "string",
+            "maxLength": 20,
+            "description": "行业",
+            "x-constraints": {
+              "recommended_values": ["互联网", "金融", "教育", "医疗", "制造", "电商", "游戏", "社交", "企业服务", "新能源", "物流", "房地产"]
+            }
+          },
+          "company_scale": {
+            "type": "string",
+            "enum": ["初创", "中小型", "大型", "上市公司", "跨国公司"],
+            "description": "公司规模"
+          },
+          "position": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 30,
+            "description": "职位名称"
+          },
+          "duration": {
+            "$ref": "#/$defs/date_range"
+          },
+          "achievements": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "minLength": 10,
+              "maxLength": 200
+            },
+            "description": "工作成就（每条1-2句）",
+            "x-constraints": {
+              "should_contain_quantifier": "至少1条包含数字量化指标（如：提升30%、服务100万用户）",
+              "quantifier_pattern": "\\d+[%万亿千百倍]|\\d+\\s*(个|条|次|人|台)"
+            }
+          },
+          "technologies_used": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 30
+            },
+            "description": "使用的技术/工具",
+            "x-constraints": {
+              "cross_field_rule": "technologies_used ⊂ (skills.programming_languages ∪ skills.frameworks ∪ skills.databases ∪ skills.tools ∪ skills.ai_ml)",
+              "description": "工作中使用的技术必须是 skills 中列出的技能子集"
+            }
+          }
+        }
+      }
+    },
+
+    "project_experience": {
+      "type": "array",
+      "maxItems": 10,
+      "description": "项目经历",
+      "items": {
+        "type": "object",
+        "required": ["name", "role", "duration"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 40,
+            "description": "项目名称"
+          },
+          "role": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 20,
+            "description": "项目角色",
+            "x-constraints": {
+              "recommended_values": ["核心开发者", "技术负责人", "独立完成", "项目经理", "架构师", "团队成员", "实习生"]
+            }
+          },
+          "duration": {
+            "$ref": "#/$defs/date_range"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 300,
+            "description": "项目描述（1-3句话）"
+          },
+          "responsibilities": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "minLength": 10,
+              "maxLength": 200
+            },
+            "description": "职责/贡献"
+          },
+          "technologies": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "maxLength": 30
+            },
+            "description": "使用的技术栈",
+            "x-constraints": {
+              "cross_field_rule": "technologies ⊂ all_skills",
+              "description": "项目技术栈应为技能列表的子集"
+            }
+          },
+          "results": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "项目成果/业绩",
+            "x-constraints": {
+              "should_contain_quantifier": "应包含至少一个量化指标",
+              "quantifier_pattern": "\\d+[%万亿千百倍]|\\d+\\s*(个|条|次|人|台|ms|QPS|TPS)"
+            }
+          }
+        }
+      }
+    },
+
+    "skills": {
+      "type": "object",
+      "description": "技能树",
+      "x-constraints": {
+        "total_skill_count_min": 5,
+        "total_skill_count_max": 50,
+        "cross_field_rule": "union(all_skill_arrays) ∩ union(all_project_technologies, all_work_technologies) ≠ ∅",
+        "description": "至少一个技能在项目或工作经历中被使用过"
+      },
+      "properties": {
+        "programming_languages": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 20
+          },
+          "description": "编程语言",
+          "x-constraints": {
+            "known_values": ["Python", "Java", "JavaScript", "TypeScript", "Go", "Rust", "C++", "C#", "PHP", "Ruby", "Swift", "Kotlin", "Scala", "R", "MATLAB", "SQL", "Shell", "Dart"]
+          }
+        },
+        "frameworks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 30
+          },
+          "description": "框架/库",
+          "x-constraints": {
+            "known_values": ["Spring", "Spring Boot", "Django", "Flask", "FastAPI", "React", "Vue", "Angular", "Node.js", "Express", "NestJS", "Next.js", "Nuxt.js", "Rails", "Laravel", "Gin", "Echo", "Actix"]
+          }
+        },
+        "databases": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 30
+          },
+          "description": "数据库",
+          "x-constraints": {
+            "known_values": ["MySQL", "PostgreSQL", "MongoDB", "Redis", "Neo4j", "Milvus", "Elasticsearch", "ClickHouse", "Cassandra", "DynamoDB", "SQLite", "Oracle", "SQL Server", "TiDB"]
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 30
+          },
+          "description": "工具/平台",
+          "x-constraints": {
+            "known_values": ["Git", "Docker", "Kubernetes", "Jenkins", "CI/CD", "AWS", "GCP", "Azure", "Linux", "Nginx", "Apache", "Kafka", "RabbitMQ", "Prometheus", "Grafana", "Terraform"]
+          }
+        },
+        "ai_ml": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 30
+          },
+          "description": "AI/ML技能",
+          "x-constraints": {
+            "known_values": ["TensorFlow", "PyTorch", "Keras", "Scikit-learn", "LangChain", "LangGraph", "RAG", "Agent", "OpenAI", "Hugging Face", "BERT", "GPT", "Transformer", "ONNX", "vLLM", "Ollama"]
+          }
+        },
+        "soft_skills": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 20
+          },
+          "description": "软技能"
+        }
+      }
+    },
+
+    "certificates": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 60,
+            "description": "证书名称"
+          },
+          "issuer": {
+            "type": "string",
+            "maxLength": 50,
+            "description": "颁发机构"
+          },
+          "date": {
+            "type": "string",
+            "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+            "description": "获得时间 YYYY-MM"
+          }
+        }
+      },
+      "description": "证书/认证"
+    },
+
+    "languages": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "required": ["language"],
+        "properties": {
+          "language": {
+            "type": "string",
+            "maxLength": 20,
+            "description": "语言"
+          },
+          "level": {
+            "type": "string",
+            "maxLength": 30,
+            "description": "等级/分数",
+            "x-constraints": {
+              "examples": ["CET-4 550", "CET-6 520", "IELTS 7.0", "TOEFL 100", "N1", "精通", "流利", "熟练"]
+            }
+          }
+        }
+      },
+      "description": "语言能力"
+    },
+
+    "self_evaluation": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 500,
+      "description": "自我评价"
+    }
+  },
+
+  "$defs": {
+    "date_range": {
+      "type": "object",
+      "required": ["start", "end"],
+      "properties": {
+        "start": {
+          "type": "string",
+          "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+          "description": "开始时间 YYYY-MM"
+        },
+        "end": {
+          "type": "string",
+          "pattern": "^(\\d{4}-(0[1-9]|1[0-2])|至今)$",
+          "description": "结束时间 YYYY-MM 或 至今"
+        }
+      },
+      "x-constraints": {
+        "chronological": "start <= end (when end != '至今')",
+        "year_range": "year(start) >= 1970 AND year(start) <= current_year + 1",
+        "reasonable_duration": "duration_months >= 1 AND duration_months <= 120",
+        "description": "时间范围合理性校验"
+      }
+    }
+  },
+
+  "x-cross_field_rules": [
+    {
+      "rule_id": "CFR-001",
+      "name": "working_years_consistency",
+      "description": "工作年限与工作经历时间总和差值不超过1年",
+      "expression": "abs(personal_info.working_years - sum(work_experience[*].duration_months) / 12) <= 1",
+      "severity": "warning"
+    },
+    {
+      "rule_id": "CFR-002",
+      "name": "education_before_work",
+      "description": "最早的工作开始时间不早于最早的教育开始时间（允许实习重叠）",
+      "expression": "min(work_experience[*].duration.start) >= min(education[*].duration.start)",
+      "severity": "warning"
+    },
+    {
+      "rule_id": "CFR-003",
+      "name": "skills_used_in_experience",
+      "description": "技能列表中的技能至少有一个在工作或项目经历中被使用",
+      "expression": "intersection(all_skills, all_experience_technologies) is not empty",
+      "severity": "error"
+    },
+    {
+      "rule_id": "CFR-004",
+      "name": "project_within_work_period",
+      "description": "项目经历的时间应在工作经历或教育经历的时间范围内",
+      "expression": "for each project: exists work or education whose duration overlaps project.duration",
+      "severity": "warning"
+    },
+    {
+      "rule_id": "CFR-005",
+      "name": "no_future_dates",
+      "description": "除 '至今' 外，所有日期不能超过当前日期",
+      "expression": "all dates <= current_date (except '至今')",
+      "severity": "error"
+    },
+    {
+      "rule_id": "CFR-006",
+      "name": "achievement_quantification",
+      "description": "工作成就和项目成果中至少有一条包含量化指标",
+      "expression": "exists achievement or result matching quantifier_pattern",
+      "severity": "warning"
+    }
+  ],
+
+  "x-quality_scoring": {
+    "description": "简历质量四维评分（0-1），用于 ConsensusGuard 和合成数据过滤",
+    "dimensions": {
+      "completeness": {
+        "weight": 0.3,
+        "checks": [
+          "personal_info.name present",
+          "personal_info.contact.phone or email present",
+          "education has at least 1 entry",
+          "skills has at least 5 items total",
+          "work_experience or project_experience has at least 1 entry"
+        ]
+      },
+      "consistency": {
+        "weight": 0.3,
+        "checks": [
+          "all cross_field_rules pass",
+          "skills match technologies in experience",
+          "dates are chronologically ordered",
+          "no contradictory information"
+        ]
+      },
+      "specificity": {
+        "weight": 0.2,
+        "checks": [
+          "achievements contain quantified metrics",
+          "project descriptions are specific (not generic)",
+          "company and school names are real/recognizable",
+          "technologies are specific (not just 'programming')"
+        ]
+      },
+      "chronology": {
+        "weight": 0.2,
+        "checks": [
+          "no overlapping work periods",
+          "no unreasonable gaps (>24 months without explanation)",
+          "education → work timeline is logical",
+          "dates within valid range"
+        ]
+      }
+    },
+    "thresholds": {
+      "gold": 0.85,
+      "silver": 0.6,
+      "reject": "below 0.6"
+    }
+  }
+}

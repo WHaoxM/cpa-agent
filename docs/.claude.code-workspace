@@ -1,0 +1,28 @@
+{
+	"folders": [
+		{
+			"path": "../.claude"
+		},
+		{
+			"path": "../.cursor"
+		},
+		{
+			"path": "../.trae"
+		},
+		{
+			"path": "../data"
+		},
+		{
+			"path": "."
+		},
+		{
+			"path": "../model"
+		},
+		{
+			"path": "../mvp"
+		},
+		{
+			"path": "../outdata"
+		}
+	]
+}

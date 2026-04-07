@@ -1,0 +1,123 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Resume Extracted Data Schema",
+  "description": "简历实体提取结果Schema - 基于真实简历数据",
+  "type": "object",
+
+  "properties": {
+    "schema_version": {"type": "string"},
+    "mode": {"type": "string"},
+    "doc_type": {"type": "string", "enum": ["resume"]},
+    "pipeline_type": {"type": "string"},
+
+    "contract_metadata": {
+      "type": "object",
+      "properties": {
+        "trace_id": {"type": "string"},
+        "input_hash": {"type": "string"},
+        "run_id": {"type": "string"}
+      }
+    },
+
+    "phase1_summary": {
+      "type": "object",
+      "properties": {
+        "total_blocks": {"type": "integer"},
+        "target_blocks": {"type": "integer"},
+        "block_types": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "block_id": {"type": "string"},
+              "block_type": {"type": "string"},
+              "text": {"type": "string"},
+              "confidence": {"type": "number"},
+              "heading": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+
+    "blocks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "block_id": {"type": "string"},
+          "block_type": {
+            "type": "string",
+            "enum": [
+              "PERSONAL_INFO",
+              "SKILLS_CERTS",
+              "EDUCATION",
+              "WORK_EXPERIENCE",
+              "PROJECT_EXPERIENCE",
+              "OTHER"
+            ]
+          },
+          "heading": {"type": "string"},
+          "confidence": {"type": "number"},
+          "original_text": {"type": "string"},
+          "masked_text": {"type": "string"},
+          "tagged_text": {"type": "string"},
+
+          "pre_extracted": {
+            "type": "object",
+            "properties": {
+              "skills": {"type": "array", "items": {"type": "string"}},
+              "dates": {"type": "array", "items": {"type": "string"}},
+              "degrees": {"type": "array", "items": {"type": "string"}},
+              "roles": {"type": "array", "items": {"type": "string"}},
+              "schools": {"type": "array", "items": {"type": "string"}},
+              "companies": {"type": "array", "items": {"type": "string"}},
+              "projects": {"type": "array", "items": {"type": "string"}}
+            }
+          },
+
+          "llm_output": {
+            "type": "object",
+            "properties": {
+              "entities": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "PERSON_NAME",
+                        "POSITION",
+                        "SKILL",
+                        "DATE_RANGE",
+                        "PROJECT_ROLE",
+                        "SCHOOL",
+                        "MAJOR",
+                        "DEGREE",
+                        "COMPANY",
+                        "PROJECT_NAME",
+                        "TOOL",
+                        "CERTIFICATE",
+                        "LANGUAGE"
+                      ]
+                    },
+                    "span": {"type": "string"},
+                    "confidence": {"type": "number"},
+                    "start": {"type": "string"},
+                    "end": {"type": "string"}
+                  }
+                }
+              },
+              "relations": {"type": "array"},
+              "is_valid": {"type": "boolean"}
+            }
+          },
+
+          "is_valid": {"type": "boolean"},
+          "classification": {"type": "string", "enum": ["HIGH", "MEDIUM", "LOW"]}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,256 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Resume Schema",
+  "description": "标准化简历JSON Schema - 用于NS-LE实体提取训练数据",
+  "type": "object",
+  "required": ["personal_info", "education", "work_experience", "skills"],
+
+  "properties": {
+    "resume_id": {
+      "type": "string",
+      "description": "简历唯一标识符"
+    },
+    "personal_info": {
+      "type": "object",
+      "required": ["name", "contact"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "姓名"
+        },
+        "contact": {
+          "type": "object",
+          "properties": {
+            "phone": {"type": "string", "description": "手机号（脱敏格式：138****8888）"},
+            "email": {"type": "string", "description": "邮箱"},
+            "location": {"type": "string", "description": "所在地"}
+          }
+        },
+        "position": {
+          "type": "string",
+          "description": "应聘岗位/求职意向"
+        },
+        "working_years": {
+          "type": "integer",
+          "description": "工作年限"
+        }
+      }
+    },
+
+    "education": {
+      "type": "array",
+      "description": "教育经历（倒序排列）",
+      "items": {
+        "type": "object",
+        "required": ["school", "degree", "duration"],
+        "properties": {
+          "school": {
+            "type": "string",
+            "description": "学校名称（全称）",
+            "examples": ["清华大学", "MIT", "University of Oxford"]
+          },
+          "major": {
+            "type": "string",
+            "description": "专业"
+          },
+          "degree": {
+            "type": "string",
+            "enum": ["博士", "硕士", "本科", "专科", "高中"],
+            "description": "学历"
+          },
+          "duration": {
+            "type": "object",
+            "required": ["start", "end"],
+            "properties": {
+              "start": {"type": "string", "description": "开始时间 YYYY-MM"},
+              "end": {"type": "string", "description": "结束时间 YYYY-MM 或 至今"}
+            }
+          },
+          "gpa": {
+            "type": "string",
+            "description": "GPA（如：3.8/4.0）"
+          },
+          "highlights": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "荣誉/奖项"
+          }
+        }
+      }
+    },
+
+    "work_experience": {
+      "type": "array",
+      "description": "工作经历（倒序排列）",
+      "items": {
+        "type": "object",
+        "required": ["company", "position", "duration"],
+        "properties": {
+          "company": {
+            "type": "string",
+            "description": "公司名称（全称）",
+            "examples": ["阿里巴巴", "Tencent Technology", "ByteDance"]
+          },
+          "company_industry": {
+            "type": "string",
+            "description": "行业",
+            "examples": ["互联网", "金融", "教育", "医疗"]
+          },
+          "company_scale": {
+            "type": "string",
+            "enum": ["初创", "中小型", "大型", "上市公司", "跨国公司"],
+            "description": "公司规模"
+          },
+          "position": {
+            "type": "string",
+            "description": "职位",
+            "examples": ["后端开发工程师", "算法工程师", "产品经理"]
+          },
+          "duration": {
+            "type": "object",
+            "required": ["start", "end"],
+            "properties": {
+              "start": {"type": "string", "description": "开始时间 YYYY-MM"},
+              "end": {"type": "string", "description": "结束时间 YYYY-MM 或 至今"}
+            }
+          },
+          "achievements": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "工作成就/主要业绩（每条1-2句）"
+          },
+          "technologies_used": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "使用的技术/工具"
+          }
+        }
+      }
+    },
+
+    "project_experience": {
+      "type": "array",
+      "description": "项目经历（与工作经历分开）",
+      "items": {
+        "type": "object",
+        "required": ["name", "role", "duration"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "项目名称",
+            "examples": ["智能推荐系统", "分布式爬虫平台"]
+          },
+          "role": {
+            "type": "string",
+            "description": "项目角色",
+            "examples": ["核心开发者", "技术负责人", "独立完成"]
+          },
+          "duration": {
+            "type": "object",
+            "required": ["start", "end"],
+            "properties": {
+              "start": {"type": "string", "description": "开始时间 YYYY-MM"},
+              "end": {"type": "string", "description": "结束时间 YYYY-MM 或 至今"}
+            }
+          },
+          "description": {
+            "type": "string",
+            "description": "项目描述（1-3句话）"
+          },
+          "responsibilities": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "职责/贡献"
+          },
+          "technologies": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "使用的技术栈"
+          },
+          "results": {
+            "type": "string",
+            "description": "项目成果/业绩"
+          }
+        }
+      }
+    },
+
+    "skills": {
+      "type": "object",
+      "properties": {
+        "programming_languages": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "编程语言",
+          "examples": [["Python", "Java", "Go"]]
+        },
+        "frameworks": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "框架/库",
+          "examples": [["Spring", "Django", "React"]]
+        },
+        "databases": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "数据库",
+          "examples": [["MySQL", "Redis", "MongoDB"]]
+        },
+        "tools": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "工具/平台",
+          "examples": [["Git", "Docker", "Kubernetes", "AWS"]]
+        },
+        "ai_ml": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "AI/ML技能",
+          "examples": [["TensorFlow", "PyTorch", "LangChain", "RAG"]]
+        },
+        "soft_skills": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "软技能",
+          "examples": [["团队协作", "项目管理", "沟通能力"]]
+        }
+      }
+    },
+
+    "certificates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string", "description": "证书名称"},
+          "issuer": {"type": "string", "description": "颁发机构"},
+          "date": {"type": "string", "description": "获得时间 YYYY-MM"}
+        }
+      },
+      "description": "证书/认证"
+    },
+
+    "languages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "language": {"type": "string", "description": "语言"},
+          "level": {"type": "string", "description": "等级/分数"}
+        }
+      },
+      "description": "语言能力"
+    },
+
+    "hobbies": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "兴趣爱好"
+    },
+
+    "self_evaluation": {
+      "type": "string",
+      "description": "自我评价（200字以内）"
+    }
+  }
+}

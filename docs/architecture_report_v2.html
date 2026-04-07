@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CPA-Agent Architecture Report</title>
+<style>
+:root{--c-primary:#0f3460;--c-accent:#e94560;--c-purple:#533483;--c-green:#27ae60;--c-blue:#2980b9;--c-orange:#e67e22;--c-bg:#f5f7fa;--c-card:#fff;--c-text:#1a1a2e;--c-muted:#666;--radius:10px}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--c-bg);color:var(--c-text);line-height:1.6}
+.container{max-width:1140px;margin:0 auto;padding:20px}
+.header{text-align:center;padding:35px 0 20px}
+.header h1{font-size:2.2em;color:var(--c-primary);margin-bottom:6px}
+.header .sub{color:var(--c-muted);font-size:0.92em}
+.tab-nav{display:flex;justify-content:center;gap:0;margin:25px 0 30px;border-bottom:2px solid #ddd}
+.tab-btn{padding:12px 32px;font-size:1.05em;font-weight:600;cursor:pointer;border:none;background:none;color:var(--c-muted);border-bottom:3px solid transparent;transition:all 0.2s}
+.tab-btn:hover{color:var(--c-primary)}
+.tab-btn.active{color:var(--c-primary);border-bottom-color:var(--c-accent)}
+.tab-btn .ico{font-size:1.1em;margin-right:6px}
+.tab-content{display:none}
+.tab-content.active{display:block}
+h2{color:var(--c-primary);margin:28px 0 14px;padding-left:12px;border-left:4px solid var(--c-accent);font-size:1.35em}
+h3{color:var(--c-purple);margin:18px 0 8px;font-size:1.08em}
+.section{margin-bottom:36px}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:0.9em}
+th{background:var(--c-primary);color:#fff;padding:10px 12px;text-align:left;font-weight:600}
+td{padding:9px 12px;border-bottom:1px solid #e0e0e0}
+tr:nth-child(even){background:#f0f4ff}
+.tag{display:inline-block;color:#fff;padding:2px 9px;border-radius:10px;font-size:0.78em;margin:2px;font-weight:500}
+.t-red{background:var(--c-accent)}.t-green{background:var(--c-green)}.t-blue{background:var(--c-blue)}.t-orange{background:var(--c-orange)}.t-purple{background:var(--c-purple)}
+.card{background:var(--c-card);border-radius:var(--radius);padding:18px;margin:12px 0;box-shadow:0 2px 10px rgba(0,0,0,0.06)}
+.arch-box{background:linear-gradient(135deg,var(--c-primary),var(--c-purple));color:#fff;border-radius:var(--radius);padding:22px;margin:15px 0;font-family:'Cascadia Code','Fira Code',monospace;white-space:pre-line;font-size:0.86em;line-height:1.85}
+.metrics{display:flex;flex-wrap:wrap;justify-content:center;gap:12px;margin:16px 0}
+.metric{background:var(--c-card);border:2px solid var(--c-primary);border-radius:var(--radius);padding:12px 22px;text-align:center;min-width:140px}
+.metric .val{font-size:1.9em;font-weight:bold;color:var(--c-accent)}
+.metric .label{font-size:0.78em;color:var(--c-muted);margin-top:2px}
+.frozen{background:#fff3cd;border-left:4px solid #ffc107;padding:10px 16px;margin:12px 0;border-radius:0 6px 6px 0;font-size:0.92em}
+.info-box{background:#e8f4fd;border-left:4px solid var(--c-blue);padding:10px 16px;margin:12px 0;border-radius:0 6px 6px 0;font-size:0.92em}
+.inno-badge{display:inline-block;background:linear-gradient(135deg,var(--c-accent),var(--c-purple));color:#fff;padding:3px 12px;border-radius:12px;font-size:0.78em;font-weight:600;margin-left:8px;vertical-align:middle}
+.evolution-line{display:flex;align-items:center;justify-content:center;gap:0;margin:20px 0;flex-wrap:wrap}
+.evo-node{background:var(--c-card);border:2px solid var(--c-primary);border-radius:var(--radius);padding:10px 18px;text-align:center;font-size:0.88em;font-weight:600;min-width:120px}
+.evo-node.current{border-color:var(--c-accent);background:linear-gradient(135deg,#fff5f7,#fff)}
+.evo-arrow{font-size:1.3em;color:var(--c-primary);padding:0 6px}
+code{background:#f0f0f0;padding:2px 7px;border-radius:4px;font-size:0.86em;font-family:'Cascadia Code','Fira Code',monospace}
+.footer-bar{text-align:center;padding:30px;background:var(--c-primary);color:#fff;border-radius:var(--radius);margin-top:20px}
+.footer-bar h2{color:#fff;border:none;padding:0;margin:0 0 12px}
+.footer-bar table{color:#fff;margin:0 auto;max-width:700px}
+.footer-bar th{background:var(--c-purple)}
+html{scroll-behavior:smooth}
+.sidebar{position:fixed;top:0;left:0;width:250px;height:100vh;background:#fff;border-right:1px solid #e0e0e0;overflow-y:auto;padding:0;z-index:100;transition:transform 0.3s;box-shadow:2px 0 12px rgba(0,0,0,0.04)}
+.sidebar .logo{padding:16px 18px;font-weight:700;color:var(--c-primary);font-size:1.05em;border-bottom:1px solid #eee}
+.toc-group{display:none;padding:6px 0}
+.toc-group.active{display:block}
+.toc-title{padding:10px 18px 4px;font-size:0.72em;font-weight:700;color:var(--c-muted);text-transform:uppercase;letter-spacing:0.5px}
+.toc-link{display:block;padding:5px 18px 5px 24px;font-size:0.82em;color:#555;text-decoration:none;border-left:3px solid transparent;transition:all 0.15s;line-height:1.45}
+.toc-link:hover{background:#f0f4ff;color:var(--c-primary)}
+.toc-link.active{border-left-color:var(--c-accent);color:var(--c-accent);background:#fff5f7;font-weight:600}
+.main-wrap{margin-left:250px;min-height:100vh}
+.back-to-top{position:fixed;bottom:28px;right:28px;width:42px;height:42px;border-radius:50%;background:var(--c-primary);color:#fff;border:none;font-size:1.2em;cursor:pointer;opacity:0;transition:opacity 0.3s;z-index:99;box-shadow:0 2px 12px rgba(0,0,0,0.2)}
+.back-to-top.visible{opacity:1}
+.back-to-top:hover{background:var(--c-accent)}
+.sidebar-toggle{display:none;position:fixed;top:12px;left:12px;z-index:200;background:var(--c-primary);color:#fff;border:none;border-radius:8px;width:38px;height:38px;font-size:1.2em;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.15)}
+h2[id]{scroll-margin-top:20px}
+@media(max-width:900px){.sidebar{transform:translateX(-100%)}.sidebar.open{transform:translateX(0);box-shadow:4px 0 20px rgba(0,0,0,0.15)}.sidebar-toggle{display:block}.main-wrap{margin-left:0}}
+@media(max-width:768px){.tab-btn{padding:10px 16px;font-size:0.92em}.metrics{flex-direction:column;align-items:center}}
+</style>
+</head>
+<body>
+
+<nav class="sidebar" id="sidebar">
+  <div class="logo">&#x1F4CB; CPA-Agent Report</div>
+  <div class="toc-group active" id="toc-prod">
+    <div class="toc-title">&#x1F680; 落地架构</div>
+    <a class="toc-link" href="#p-metrics">一、核心性能指标</a>
+    <a class="toc-link" href="#p-pipeline">二、6层管线架构</a>
+    <a class="toc-link" href="#p-agent">三、Agent 架构</a>
+    <a class="toc-link" href="#p-decisions">四、关键架构决策</a>
+    <a class="toc-link" href="#p-benchmark">五、SmartResume Benchmark</a>
+    <a class="toc-link" href="#p-requirements">六、竞赛需求覆盖</a>
+    <a class="toc-link" href="#p-database">七、数据库架构</a>
+    <a class="toc-link" href="#p-techstack">八、技术栈</a>
+    <a class="toc-link" href="#p-backend">九、后端工程骨架</a>
+    <a class="toc-link" href="#p-schema">十、冻结 JSON Schema</a>
+    <a class="toc-link" href="#p-papers">十一、论文与依据</a>
+  </div>
+  <div class="toc-group" id="toc-inno">
+    <div class="toc-title">&#x1F4A1; 创新点架构</div>
+    <a class="toc-link" href="#i-evolution">架构演进路线</a>
+    <a class="toc-link" href="#i-v21">一、v2.1 工程隐患修复</a>
+    <a class="toc-link" href="#i-v30">二、v3.0 自进化升维</a>
+    <a class="toc-link" href="#i-v31">三、v3.1 对抗性审计</a>
+    <a class="toc-link" href="#i-summary">四、创新点总结</a>
+  </div>
+</nav>
+<button class="sidebar-toggle" onclick="document.getElementById('sidebar').classList.toggle('open')">&#9776;</button>
+
+<div class="main-wrap">
+<div class="container">
+
+<div class="header">
+  <h1>CPA-Agent Architecture Report</h1>
+  <p class="sub">大学生职业规划智能体 — 落地架构 + 创新演进 + 性能基线<br>
+  2026-04-05 | 基于 12 篇论文 + 6 个开源项目 + MiroFish 参考 + 专家深度评审</p>
+</div>
+
+<div class="tab-nav">
+  <button class="tab-btn active" onclick="switchTab('prod')"><span class="ico">&#x1F680;</span> 落地架构 (Production MVP)</button>
+  <button class="tab-btn" onclick="switchTab('inno')"><span class="ico">&#x1F4A1;</span> 创新点架构 (Innovation)</button>
+</div>
+
+<!-- ====== PART A: 实际快速落地架构 ====== -->
+<div id="tab-prod" class="tab-content active">
+
+<div class="section">
+<h2 id="p-metrics">一、核心性能指标</h2>
+<div class="metrics">
+  <div class="metric"><div class="val">0.964</div><div class="label">简历抽取 F1<br>(Qwen3-0.6B-SFT)</div></div>
+  <div class="metric"><div class="val">1.22s</div><div class="label">单份处理时间</div></div>
+  <div class="metric"><div class="val">0.89-0.94</div><div class="label">Hybrid 技能匹配 F1</div></div>
+  <div class="metric"><div class="val">92.1%</div><div class="label">版面检测 mAP@0.5</div></div>
+  <div class="metric"><div class="val">12/12</div><div class="label">赛题需求覆盖</div></div>
+</div>
+</div>
+
+<div class="section">
+<h2 id="p-pipeline">二、6层管线架构 (含 Agent 层)</h2>
+<div class="arch-box">Layer 0: 数据摄入与解析
+  ├─ Resume: MinerU + YOLOv10 + Qwen3-0.6B-SFT (F1=0.964)
+  ├─ JD: Excel 规则解析 + LLM 补充 → 过滤非IT岗位 (R-01)
+  └─ SFT: Teacher(GPT-4o) → 500份 Gold → Qwen3 LoRA 微调
+         ↓ student_profile.json / job_posting.json
+
+Layer 1: 知识构建
+  ├─ IT技能骨架 (O*NET inspired, 6大类 24子类 ~500技能) + LLM 从 JD 填充
+  ├─ 岗位画像聚合: 同岗位 JD 合并 → 技能频次 + 学历众数 (≥10个)
+  └─ 职业路径图谱: Neo4j 全量入图 (晋升≥3链 + 换岗≥5×2)
+         ↓ skill_taxonomy / job_portraits / career_graph → Neo4j
+
+Layer 2: 画像生成
+  ├─ 学生画像: D1规则 + D2 Hybrid匹配 + D3/D4 LLM特征→规则评分
+  └─ 岗位画像: 四维需求提取 + 权重分配
+         ↓ student_portrait_4d / job_portrait_4d → MySQL + Milvus
+
+Layer 3: 匹配与分析
+  ├─ 4D匹配: D1硬约束 + D2 AC+Embedding + D3/D4加权
+  ├─ 技能差距: required - possessed → gap → 学习资源推荐
+  └─ 路径推荐: 图最短路径 + 技能重叠过滤
+         ↓ match_result / skill_gap / career_path → MySQL
+
+Layer 4: 报告生成
+  ├─ 职业发展报告: 6章 (模板直填70% + LLM并行解读30%)
+  ├─ 学习路径: 短期/中期阶段化规划
+  └─ 导出: JSON → Jinja2 → HTML (ECharts雷达图) / PDF
+         ↓ career_report.html / .pdf
+
+Layer 5: ReAct Agent (智能体核心)
+  ├─ 对话管理: 多轮对话 + Redis Session + Milvus RAG 记忆
+  ├─ 工具调度: ReAct 框架自主决定调用哪个 Tool
+  │    ├─ Tool 1: Neo4j 图谱查询 (Text-to-Cypher, 知识图谱可视化)
+  │    ├─ Tool 2: MySQL 结构化查询 (画像/匹配/报告)
+  │    ├─ Tool 3: Milvus 语义检索 (技能/JD/简历 RAG)
+  │    ├─ Tool 4: L0-L4 管线触发 (简历解析/画像生成/匹配/报告)
+  │    └─ Tool 5: LLM 推理 (职业建议/报告润色/自然语言回答)
+  └─ 意图识别 → 工具选择 → 执行 → 结果组装 → 自然语言回复
+         ↓ 用户对话界面</div>
+</div>
+
+<div class="section">
+<h2 id="p-agent">三、Agent 架构 (ReAct + Multi-Tool)</h2>
+<div class="info-box">
+  智能体采用 ReAct (Reasoning + Acting) 框架，LLM 作为"大脑"自主推理并决定调用哪个工具，满足 R-11 智能体定义。
+</div>
+
+<h3>Tool 定义</h3>
+<table>
+<tr><th>Tool</th><th>数据源</th><th>功能</th><th>触发场景</th></tr>
+<tr><td><strong>graph_query</strong></td><td>Neo4j</td><td>Text-to-Cypher: LLM 生成 Cypher 查询图谱</td><td>"前端转AI算法难吗" "Java后端晋升路径" "哪些岗位需要Python"</td></tr>
+<tr><td><strong>db_query</strong></td><td>MySQL</td><td>结构化数据查询 (画像/匹配/报告历史)</td><td>"我的匹配结果" "查看XX岗位画像" "历史对话记录"</td></tr>
+<tr><td><strong>semantic_search</strong></td><td>Milvus</td><td>BGE-M3 向量语义检索</td><td>"类似React的前端技能" "跟我简历最匹配的岗位"</td></tr>
+<tr><td><strong>pipeline_run</strong></td><td>L0-L4</td><td>触发管线: 简历解析/画像/匹配/报告</td><td>"帮我分析简历" "生成职业报告" "重新匹配"</td></tr>
+<tr><td><strong>llm_reason</strong></td><td>LLM API</td><td>自然语言推理/建议/润色</td><td>"给我职业建议" "润色报告第三章" "解释匹配分数"</td></tr>
+</table>
+
+<h3>对话 + RAG 记忆</h3>
+<div class="card">
+<strong>短期记忆</strong>: Redis Session — 当前会话上下文 (最近N轮对话)<br>
+<strong>长期记忆</strong>: MySQL conversation_history — 全量对话历史持久化<br>
+<strong>语义记忆</strong>: Milvus 对话向量化 — 关键对话 Embedding 存储，支持跨会话语义检索 (RAG)<br>
+<strong>工作流</strong>: 用户输入 → Redis 取会话上下文 → LLM 意图识别 → ReAct 推理链 → Tool 调用 → 结果组装 → 回复 + 存储
+</div>
+</div>
+
+<div class="section">
+<h2 id="p-decisions">四、关键架构决策</h2>
+<table>
+<tr><th>决策点</th><th>方案</th><th>论据</th><th>量化收益</th></tr>
+<tr><td>简历抽取</td><td>Qwen3-0.6B + Teacher SFT 蒸馏</td><td>SmartResume arXiv:2510.09722</td><td>F1: 0.645→<strong>0.964</strong> (+32pp)</td></tr>
+<tr><td>技能匹配</td><td>Hybrid AC + Embedding</td><td>Elastic / SSRN 2025</td><td>F1: 0.73→<strong>0.94</strong></td></tr>
+<tr><td>技能分类</td><td>O*NET 预定义骨架 + LLM 填充</td><td>Xu et al. Nature 2021</td><td>准确率 90-95%</td></tr>
+<tr><td>D3/D4 评分</td><td>LLM 特征提取→规则评分</td><td>LLM Agents ACL 2024</td><td>比直接 LLM 评分更稳定</td></tr>
+<tr><td>报告生成</td><td>Template-first 70% + LLM 30%</td><td>企业级最佳实践</td><td>延迟 15-30s→<strong>3-5s</strong></td></tr>
+<tr><td>冷启动</td><td>亲缘矩阵 + 自适应权重</td><td>行业先验补丁</td><td>零 JD 也能输出有效图谱</td></tr>
+</table>
+</div>
+
+<div class="section">
+<h2 id="p-benchmark">五、SmartResume Benchmark 对比</h2>
+<table>
+<tr><th>模型</th><th>SynthResume F1</th><th>RealResume F1</th><th>时间/份</th><th>备注</th></tr>
+<tr style="background:#fff3cd"><td><strong>Qwen3-0.6B-SFT (Ours)</strong></td><td><strong>0.917</strong></td><td><strong>0.964</strong></td><td><strong>1.22s</strong></td><td>生产部署方案</td></tr>
+<tr><td>GPT-4o (Pipeline)</td><td>0.952</td><td>0.954</td><td>5.50s</td><td>4.5x slower</td></tr>
+<tr><td>Claude-4 (Pipeline)</td><td>0.946</td><td>0.959</td><td>4.98s</td><td>4.1x slower</td></tr>
+<tr><td>Gemini-2.5-flash</td><td>0.951</td><td>0.954</td><td>11.23s</td><td>9.2x slower</td></tr>
+<tr><td>Qwen3-0.6B 零-shot</td><td>0.645</td><td>0.641</td><td>1.22s</td><td>SFT 前基线</td></tr>
+<tr><td>Bello (商业系统)</td><td>0.762</td><td>0.817</td><td>1.43s</td><td>传统方案</td></tr>
+</table>
+<p style="font-size:0.82em;color:var(--c-muted);margin-top:4px">数据来源: SmartResume arXiv:2510.09722 Table 2 (Alibaba Group)</p>
+</div>
+
+<div class="section">
+<h2 id="p-requirements">六、竞赛需求覆盖矩阵</h2>
+<table>
+<tr><th>规则</th><th>要求</th><th>覆盖层</th><th>实现方法</th><th>状态</th></tr>
+<tr><td>R-01</td><td>只保留 IT 岗位</td><td>L0</td><td>行业 + 关键词双过滤</td><td><span class="tag t-green">✅</span></td></tr>
+<tr><td>R-02</td><td>缺失数据不剔除</td><td>L0/L1</td><td>null 填充 + 聚合补充</td><td><span class="tag t-green">✅</span></td></tr>
+<tr><td>R-03</td><td>技能匹配 ≥ 80%</td><td>L3</td><td>Hybrid AC + Embedding (D2)</td><td><span class="tag t-green">✅</span></td></tr>
+<tr><td>R-04</td><td>关键信息 &gt; 90%</td><td>L0</td><td>SFT F1=0.964</td><td><span class="tag t-green">✅</span></td></tr>
+<tr><td>R-05</td><td>岗位画像合并 ≥ 10</td><td>L1B</td><td>同岗位 JD 聚合</td><td><span class="tag t-green">✅</span></td></tr>
+<tr><td>R-06</td><td>晋升 ≥ 3 条链</td><td>L1C</td><td>同族层级递增 + 技能子集</td><td><span class="tag t-green">✅</span></td></tr>
+<tr><td>R-07</td><td>换岗 ≥ 5×2</td><td>L1C</td><td>Jaccard &gt; 0.3 跨族匹配</td><td><span class="tag t-green">✅</span></td></tr>
+<tr><td>R-08</td><td>两核心任务</td><td>L3</td><td>Task1 匹配 + Task2 差距</td><td><span class="tag t-green">✅</span></td></tr>
+<tr><td>R-09</td><td>JSON 知识库</td><td>L1</td><td>图谱 + 画像 JSON 导出</td><td><span class="tag t-green">✅</span></td></tr>
+<tr><td>R-10</td><td>API KEY 管理</td><td>全局</td><td>环境变量 + 文档说明</td><td><span class="tag t-green">✅</span></td></tr>
+<tr><td>R-12</td><td>粗粒度润色</td><td>L4C</td><td>一致性检查 + 过渡句</td><td><span class="tag t-green">✅</span></td></tr>
+<tr><td>R-13</td><td>评估周期</td><td>L4</td><td>报告第六章</td><td><span class="tag t-green">✅</span></td></tr>
+</table>
+</div>
+
+<div class="section">
+<h2 id="p-database">七、数据库架构（四库分治）</h2>
+<div class="frozen">⚠️ 存储 Schema 已软冻结: 允许加列/加索引, 不允许改已有列/删列。完整设计见 <code>docs/arch_v2_db_schema.md</code></div>
+
+<div class="arch-box">┌─────────────────────────────────────────────────────┐
+│                    智能体数据层                       │
+│                                                     │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────┐│
+│  │  Neo4j   │  │  MySQL   │  │  Milvus  │  │Redis ││
+│  │ 知识图谱  │  │ 业务主库  │  │ 向量存储  │  │ 缓存 ││
+│  │ 2 Graph  │  │ 11 Tables│  │ 4 Coll.  │  │ 3 类 ││
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └──┬───┘│
+│       │             │             │            │    │
+│  Graph A:        student_prof   skill_vec    session│
+│   Skill(~500)   job_posting    jd_vec       cache  │
+│   JobPortrait   portrait_4d    resume_vec    task  │
+│   CareerNode    match_result   convo_vec          │
+│   +10 Rel       skill_gap                         │
+│  Graph B:       career_path                        │
+│   19 Entity     career_report                      │
+│   24 Relation   conversation                       │
+│                 conv_message                       │
+│                 pipeline_task                      │
+└─────────────────────────────────────────────────────┘</div>
+
+<h3>MySQL — 11 张业务表 (Hybrid 模式: 核心列 + JSON 列)</h3>
+<table>
+<tr><th>表</th><th>层</th><th>核心索引列</th><th>JSON 列</th><th>说明</th></tr>
+<tr><td><strong>student_profile</strong></td><td>L0</td><td>student_id, name, degree, school, major</td><td>profile_json</td><td>简历解析结果 (16字段全量)</td></tr>
+<tr><td><strong>job_posting</strong></td><td>L0</td><td>job_id, position_normalized, job_category, is_it_position</td><td>posting_json</td><td>岗位信息 (R-01 过滤)</td></tr>
+<tr><td><strong>student_portrait_4d</strong></td><td>L2</td><td>student_id, d1~d4_score, competitiveness, skill_coverage</td><td>portrait_json</td><td>学生四维画像</td></tr>
+<tr><td><strong>job_portrait_4d</strong></td><td>L2</td><td>portrait_id, position_name, jd_count</td><td>portrait_json</td><td>岗位需求画像 (R-05 ≥10)</td></tr>
+<tr><td><strong>match_result</strong></td><td>L3</td><td>student_id, job_portrait_id, total_score, is_matched</td><td>result_json</td><td>人岗匹配结果</td></tr>
+<tr><td><strong>skill_gap</strong></td><td>L3</td><td>student_id, critical_count</td><td>gap_json</td><td>技能差距分析</td></tr>
+<tr><td><strong>career_path</strong></td><td>L3</td><td>student_id, recommended_dir</td><td>path_json</td><td>职业路径推荐</td></tr>
+<tr><td><strong>career_report</strong></td><td>L4</td><td>report_id, student_id, status</td><td>ch1~ch6_json + report_json</td><td>6章拆列 (支持流式填入)</td></tr>
+<tr><td><strong>conversation</strong></td><td>Agent</td><td>session_id, student_id, status</td><td>—</td><td>对话会话元数据</td></tr>
+<tr><td><strong>conversation_message</strong></td><td>Agent</td><td>session_id, role, created_at</td><td>tool_calls_json, thinking_json</td><td>对话消息 + Agent 元数据</td></tr>
+<tr><td><strong>pipeline_task</strong></td><td>全局</td><td>task_id, pipeline, status</td><td>params_json, result_json</td><td>管线异步任务追踪</td></tr>
+</table>
+
+<h3>Neo4j — 2 张图 (Graph A 知识图谱 + Graph B 简历实体网络)</h3>
+<table>
+<tr><th>图</th><th>节点</th><th>关系</th><th>索引</th></tr>
+<tr><td><strong>Graph A</strong><br>知识与职业</td><td>Skill (~500) + SkillCategory (30) + JobPortrait (≥10) + CareerNode (~40)</td><td>BELONGS_TO, REQUIRES, PREFERS, BONUS, PROMOTION (≥3链), TRANSFER (≥5×2), PREREQUISITE, REPLACES, EVOLVES_TO</td><td>skill_name UNIQUE + fulltext</td></tr>
+<tr><td><strong>Graph B</strong><br>简历实体</td><td>19 种实体类型 (Person, School, Skill, Company...)</td><td>24 种关系类型 (STUDIED_AT, HAS_SKILL, WORKED_AT...) 含 D1-D4 维度标记</td><td>student_id + entity_name</td></tr>
+</table>
+
+<h3>Milvus — 4 个 Collection (BGE-M3, dim=1024, COSINE)</h3>
+<table>
+<tr><th>Collection</th><th>核心字段</th><th>用途</th></tr>
+<tr><td><strong>skill_vectors</strong></td><td>skill_name, category, embedding</td><td>语义匹配 (cosine>0.85) + OOV 归类</td></tr>
+<tr><td><strong>jd_vectors</strong></td><td>job_id, position_name, text_chunk, embedding</td><td>"跟我匹配的岗位" 检索</td></tr>
+<tr><td><strong>resume_vectors</strong></td><td>student_id, section_type, text_chunk, embedding</td><td>简历语义检索</td></tr>
+<tr><td><strong>conversation_vectors</strong></td><td>session_id, student_id, role, content, embedding</td><td>跨会话 RAG 记忆</td></tr>
+</table>
+
+<h3>Redis — 3 类 Key (Session + Cache + Task)</h3>
+<table>
+<tr><th>Key Pattern</th><th>类型</th><th>TTL</th><th>用途</th></tr>
+<tr><td><code>session:{id}</code></td><td>HASH</td><td>2h (续期)</td><td>学生ID/画像摘要/当前岗位</td></tr>
+<tr><td><code>session:{id}:history</code></td><td>LIST</td><td>2h</td><td>最近 20 条消息 (滑动窗口)</td></tr>
+<tr><td><code>cache:portrait:job:{id}</code></td><td>STRING</td><td>1h</td><td>岗位画像热缓存</td></tr>
+<tr><td><code>task:{id}</code></td><td>HASH</td><td>1h</td><td>管线任务实时状态</td></tr>
+</table>
+
+<h3>数据流向</h3>
+<div class="card">
+<strong>写入路径</strong>: L0 → MySQL (student_profile/job_posting) + Neo4j Graph B (实体网络) + Milvus (resume/jd 向量) → L1 → Neo4j Graph A (知识图谱) + Milvus (skill 向量) → L2 → MySQL (portrait_4d) → L3 → MySQL (match/gap/path) → L4 → MySQL (career_report)<br>
+<strong>查询路径</strong>: Agent → Redis (session) → Tool 分发 → Neo4j (Cypher) / MySQL (SQL) / Milvus (向量) / Pipeline (任务) / LLM (推理)<br>
+<strong>知识库导出</strong>: Neo4j Graph A + Milvus → JSON 格式导出 (满足 R-09)
+</div>
+</div>
+
+<div class="section">
+<h2 id="p-techstack">八、技术栈</h2>
+<table>
+<tr><th>组件</th><th>技术</th><th>用途</th><th>层</th></tr>
+<tr><td>PDF 解析</td><td>MinerU (magic-pdf) + pdfplumber</td><td>双通道 metadata + OCR</td><td>L0</td></tr>
+<tr><td>版面检测</td><td>YOLOv10 ONNX (265MB)</td><td>多列/侧边栏区域检测</td><td>L0</td></tr>
+<tr><td>信息抽取</td><td>Qwen3-0.6B-SFT + GPU 推理</td><td>并行 3 子任务抽取</td><td>L0</td></tr>
+<tr><td>Embedding</td><td>BGE-M3 (BAAI, 1024dim)</td><td>技能语义匹配 + 向量化</td><td>L2/L3</td></tr>
+<tr><td>精确匹配</td><td>Aho-Corasick (ahocorasick)</td><td>技能词典精确匹配</td><td>L2/L3</td></tr>
+<tr><td>知识图谱</td><td>Neo4j + NetworkX</td><td>图谱存储 + 离线批量计算</td><td>L1</td></tr>
+<tr><td>向量数据库</td><td>Milvus Lite</td><td>语义检索 + 对话 RAG 记忆</td><td>L2/L3/Agent</td></tr>
+<tr><td>业务数据库</td><td>MySQL 8.0</td><td>用户/画像/匹配/报告/对话</td><td>全局</td></tr>
+<tr><td>缓存</td><td>Redis 7.x</td><td>Session + 热查询缓存</td><td>全局</td></tr>
+<tr><td>Teacher LLM</td><td>GPT-4o / DeepSeek-V3</td><td>Gold 标注 + 报告解读</td><td>L0/L4</td></tr>
+<tr><td>报告导出</td><td>Jinja2 + ECharts + weasyprint</td><td>HTML / PDF 生成</td><td>L4</td></tr>
+<tr><td><strong>后端框架</strong></td><td>Flask 3.x + Blueprint</td><td>API 路由分层 (5 域)</td><td>全局</td></tr>
+<tr><td><strong>LLM 网关</strong></td><td>OpenAI SDK 统一封装</td><td>chat / chat_json / stream</td><td>Agent</td></tr>
+<tr><td><strong>智能体框架</strong></td><td>纯 Python ReAct (无 LangChain)</td><td>Tool 调度 + 推理循环</td><td>Agent</td></tr>
+<tr><td><strong>Agent 日志</strong></td><td>JSONL 结构化日志</td><td>思考/工具/结果全记录</td><td>Agent</td></tr>
+</table>
+</div>
+
+<div class="section">
+<h2 id="p-backend">九、后端工程骨架 (参考 MiroFish)</h2>
+<div class="info-box">
+  参考开源项目 <strong>MiroFish</strong> (GitHub 666ghj/MiroFish, 3.5k+ stars, 盛大孵化) 的 ReAct Agent 实现模式，搭建 CPA-Agent 后端骨架。<br>
+  核心借鉴: 纯 Python ReAct 循环 (不依赖 LangChain) + &lt;tool_call&gt; XML 标签格式 + Flask 应用工厂 + 指数退避重试
+</div>
+
+<h3>项目结构 (25 个文件)</h3>
+<div class="arch-box">backend/
+├─ run.py                          # 启动入口 (Windows UTF-8 兼容)
+├─ requirements.txt                # 依赖清单
+├─ .env.example                    # 环境变量模板 (四库 + LLM)
+└─ app/
+   ├─ __init__.py                  # Flask 应用工厂 create_app()
+   ├─ config.py                    # 四库连接 + Agent 参数
+   ├─ api/                         # 5 个 Blueprint 路由
+   │  ├─ graph.py                  # /api/graph   — Neo4j 图谱
+   │  ├─ profile.py                # /api/profile — 学生/岗位画像
+   │  ├─ match.py                  # /api/match   — 匹配/差距
+   │  ├─ report.py                 # /api/report  — 报告生成/导出
+   │  └─ agent.py                  # /api/agent   — 智能体对话
+   ├─ services/
+   │  ├─ react_agent.py            # ⭐ ReAct Agent 核心 (~320行)
+   │  ├─ agent_logger.py           # JSONL 结构化日志
+   │  └─ tools/
+   │     ├─ base.py                # BaseTool 抽象基类
+   │     ├─ graph_query.py         # Tool 1: Text-to-Cypher
+   │     ├─ db_query.py            # Tool 2: MySQL 查询
+   │     ├─ semantic_search.py     # Tool 3: Milvus 语义检索
+   │     ├─ pipeline_run.py        # Tool 4: L0-L4 管线触发
+   │     └─ llm_reason.py          # Tool 5: LLM 推理
+   └─ utils/
+      ├─ llm_client.py             # LLM 统一封装 (OpenAI SDK)
+      ├─ logger.py                 # 控制台 + 文件轮转日志
+      └─ retry.py                  # 指数退避重试装饰器</div>
+
+<h3>ReAct 循环实现</h3>
+<div class="card">
+<strong>核心模式</strong> (参考 MiroFish report_agent.py):<br><br>
+<code>for iteration in range(max_iterations):</code><br>
+&nbsp;&nbsp;<code>response = llm.chat(messages)</code> — Thought (思考)<br>
+&nbsp;&nbsp;<code>tool_calls = parse_tool_calls(response)</code> — 解析 &lt;tool_call&gt; XML<br>
+&nbsp;&nbsp;<code>if "Final Answer:" in response → return</code> — 终止条件<br>
+&nbsp;&nbsp;<code>if tool_calls → execute_tool → inject observation</code> — Action + Observation<br><br>
+<strong>容错机制</strong>:<br>
+- Tool Call 解析: XML 标签 + 裸 JSON 兜底 + 尾部 JSON 提取 (3 级降级)<br>
+- 冲突处理: LLM 同时输出 tool_call + Final Answer → 前2次拒绝重试, 第3次截断降级<br>
+- 强制收尾: 达到 max_iterations 后注入 FORCE_FINAL_MSG<br>
+- LLM 空响应: 注入 "请继续" 重试
+</div>
+
+<h3>与 MiroFish 的差异</h3>
+<table>
+<tr><th>维度</th><th>MiroFish</th><th>CPA-Agent</th></tr>
+<tr><td>数据层</td><td>无 DB (Zep Cloud + 文件系统)</td><td><strong>四库分治</strong> (Neo4j+MySQL+Milvus+Redis)</td></tr>
+<tr><td>Tool 数量</td><td>4 (insight_forge/panorama/quick/interview)</td><td><strong>5</strong> (graph/db/semantic/pipeline/llm)</td></tr>
+<tr><td>Blueprint</td><td>3 (graph/simulation/report)</td><td><strong>5</strong> (graph/profile/match/report/agent)</td></tr>
+<tr><td>Schema</td><td>LLM 动态生成 10 种实体</td><td><strong>冻结 19 种实体 + 24 种关系</strong></td></tr>
+<tr><td>Agent 场景</td><td>报告生成 + 对话</td><td><strong>全流程</strong> (解析→画像→匹配→报告→对话)</td></tr>
+</table>
+</div>
+
+<div class="section">
+<h2 id="p-schema">十、冻结 JSON Schema 一览</h2>
+<div class="frozen">⚠️ 以下 Schema 均已冻结到 Memory，任何对话中不得擅自修改字段结构。</div>
+
+<h3>Layer 0 — 数据摄入</h3>
+<div class="card">
+<strong>student_profile.json</strong> — 16 个顶级字段<br>
+<span class="tag t-blue">resume_id</span> <span class="tag t-blue">data_quality</span> <span class="tag t-blue">candidate_profile</span> <span class="tag t-blue">education[]</span> <span class="tag t-blue">work_experience[]</span> <span class="tag t-blue">internship_experience[]</span> <span class="tag t-blue">project_experience[]</span> <span class="tag t-blue">research_experience[]</span> <span class="tag t-blue">skills{}</span> <span class="tag t-blue">certificates[]</span> <span class="tag t-blue">awards[]</span> <span class="tag t-blue">language_skills[]</span> <span class="tag t-blue">campus_experience[]</span> <span class="tag t-blue">self_evaluation</span> <span class="tag t-blue">employability_portrait</span> <span class="tag t-blue">hr_assessment</span>
+<br><br>
+<strong>job_posting.json</strong> — 14 个顶级字段<br>
+<span class="tag t-orange">job_id</span> <span class="tag t-orange">position_name</span> <span class="tag t-orange">position_name_normalized</span> <span class="tag t-orange">job_category</span> <span class="tag t-orange">company{}</span> <span class="tag t-orange">salary_range{}</span> <span class="tag t-orange">degree_requirement</span> <span class="tag t-orange">experience_requirement</span> <span class="tag t-orange">major_requirements[]</span> <span class="tag t-orange">required_skills[]</span> <span class="tag t-orange">preferred_skills[]</span> <span class="tag t-orange">responsibilities[]</span> <span class="tag t-orange">raw_description</span> <span class="tag t-orange">source{}</span>
+</div>
+
+<h3>Layer 1 — 知识构建</h3>
+<div class="card">
+<strong>skill_taxonomy.json</strong>: 6 大类 → 24 子类 → ~500 技能节点, {name, aliases[], frequency, embedding[1024]}<br>
+<strong>job_portrait.json</strong>: ≥10 个聚合画像, required / preferred / bonus 三级技能 + dimension_weights<br>
+<strong>career_graph.json</strong>: NetworkX DiGraph, promotion_edges (≥3链) + transfer_edges (≥5×2)
+</div>
+
+<h3>Layer 2 — 画像生成</h3>
+<div class="card">
+<strong>student_portrait_4d.json</strong>: D1(规则) + D2(Hybrid) + D3(LLM特征→规则) + D4(规则)<br>
+<strong>公式</strong>: <code>competitiveness = D1×0.25 + D2×0.35 + D3×0.20 + D4×0.20</code><br>
+<strong>等级</strong>: ≥85 极强 / ≥70 强 / ≥55 中等 / ≥40 偏弱 / &lt;40 弱
+</div>
+
+<h3>Layer 3 — 匹配分析</h3>
+<div class="card">
+<strong>match_result.json</strong>: D1 硬约束 → D2 skill_coverage → D3/D4 加权 → total_score<br>
+<strong>判定</strong>: D1 pass AND coverage ≥ 0.6 AND total ≥ 50 → 匹配成功<br>
+<strong>skill_gap.json</strong>: critical[] + quick_learn[] + recommended_learning[]<br>
+<strong>career_path.json</strong>: promotion_path[] + lateral_options[] + recommended_direction
+</div>
+
+<h3>Layer 4 — 报告输出</h3>
+<div class="card">
+<strong>career_report.json</strong>: 6 章结构<br>
+Ch1 个人画像摘要 | Ch2 目标岗位分析 | Ch3 人岗匹配度分析 | Ch4 职业发展路径 | Ch5 差距与学习规划 | Ch6 评估周期<br>
+<strong>导出</strong>: JSON → Jinja2 → HTML (ECharts 雷达图) / PDF
+</div>
+</div>
+
+<div class="section">
+<h2 id="p-papers">十一、论文与开源项目依据</h2>
+<table>
+<tr><th>论文 / 项目</th><th>方法</th><th>用途</th><th>关键数据</th></tr>
+<tr><td>SmartResume (arXiv:2510.09722)</td><td>Layout-aware + 0.6B SFT</td><td>Layer 0 基础</td><td>F1: 0.645→0.964</td></tr>
+<tr><td>Xu et al. (Nature 2021)</td><td>O*NET→中国技能映射</td><td>Layer 1 技能体系</td><td>161 种技能→434 职业</td></tr>
+<tr><td>Hybrid Search (Elastic 2024)</td><td>AC + Embedding 混合检索</td><td>Layer 2/3 技能匹配</td><td>F1: 0.89-0.94</td></tr>
+<tr><td>LLM Agents (ACL 2024)</td><td>LLM Agent 简历筛选</td><td>Layer 2/3 评分</td><td>F1 = 87.73%</td></tr>
+<tr><td>GNN for CJM (Springer 2025)</td><td>图神经网络匹配</td><td>Layer 1/3 图结构</td><td>BAcc 65.4%</td></tr>
+<tr><td>BGE-M3 (HuggingFace)</td><td>多语言 Embedding</td><td>Layer 2/3 语义匹配</td><td>dim=1024, 8192 tokens</td></tr>
+<tr><td><strong>MiroFish (GitHub 3.5k★)</strong></td><td>纯 Python ReAct + Multi-Tool</td><td>Agent 层架构参考</td><td>ReAct 循环 + Tool Call 解析 + 容错机制</td></tr>
+</table>
+</div>
+
+</div><!-- end tab-prod -->
+
+<!-- ====== PART B: 创新点架构 ====== -->
+<div id="tab-inno" class="tab-content">
+
+<div class="section">
+<h2 id="i-evolution">架构演进路线</h2>
+<div class="evolution-line">
+  <div class="evo-node"><strong>v2.0</strong><br>五层管线</div>
+  <div class="evo-arrow">→</div>
+  <div class="evo-node"><strong>v2.1</strong><br>三项隐患修复</div>
+  <div class="evo-arrow">→</div>
+  <div class="evo-node current"><strong>v3.0</strong><br>三大升维</div>
+  <div class="evo-arrow">→</div>
+  <div class="evo-node"><strong>v3.1</strong><br>对抗性审计</div>
+</div>
+<div class="info-box">
+  v2.0/v2.1 为竞赛落地版本 (见「落地架构」Tab)；v3.0/v3.1 为渐进激活的创新模块，不破坏已冻结 Schema。
+</div>
+</div>
+
+<!-- v2.1 -->
+<div class="section">
+<h2 id="i-v21">一、v2.1 工程隐患修复 <span class="inno-badge">工程创新</span></h2>
+
+<h3>补丁 1: OOV Discovery Pipeline（新词发现管道）<span class="tag t-purple">L1</span></h3>
+<div class="card">
+<strong>问题</strong>: 静态技能骨架 (500 节点) 随 AI / 前端领域快速迭代而老化<br>
+<strong>解法</strong>: L0 unmatched → oov_buffer.jsonl → Embedding 近邻 (&gt;0.85 alias / &gt;0.70 related / &lt;0.70 novel) → 频次 ≥3% 进审核 → LLM 归类 → taxonomy append-only 版本化更新<br>
+<strong>约束</strong>: 骨架结构不变，只增叶子+别名；blacklist 防重复；竞赛阶段可关闭
+</div>
+
+<h3>补丁 2: Template-first + Streaming（报告延迟优化）<span class="tag t-purple">L4</span></h3>
+<div class="card">
+<table>
+<tr><th>阶段</th><th>内容</th><th>延迟</th></tr>
+<tr><td>Phase 1 模板直填 (70%)</td><td>雷达图 + 匹配表 + 路径图 + 评估指标</td><td><strong>0ms</strong></td></tr>
+<tr><td>Phase 2 LLM 并行 (30%)</td><td>4 段解读文本 (~1000字), ThreadPool×4</td><td><strong>3-5s</strong></td></tr>
+<tr><td>ch2 缓存</td><td>行业趋势 (同岗位共享)</td><td>0ms</td></tr>
+<tr><td colspan="2"><strong>总计</strong></td><td><strong>3-5s (↓60-80%)</strong></td></tr>
+</table>
+<strong>前端</strong>: SSE 流式渲染, T=0s 骨架可浏览, T=3-5s 解读文本流式插入
+</div>
+
+<h3>补丁 3: Industry Common-sense Patch（冷启动常识补丁）<span class="tag t-purple">L1/L3</span></h3>
+<div class="card">
+<strong>问题</strong>: Jaccard 依赖 JD 丰富度，初期几百份 JD 产生荒谬换岗路径<br>
+<table>
+<tr><th>数据状态</th><th>公式</th><th>阈值</th></tr>
+<tr><td>充足 (≥20 JD)</td><td>jaccard×0.8 + affinity×0.2</td><td>0.30</td></tr>
+<tr><td>不足 (&lt;20 JD)</td><td>jaccard×0.4 + affinity×0.6</td><td>0.35 (更严格)</td></tr>
+<tr><td colspan="3"><strong>硬约束</strong>: affinity &lt; 0.15 → 绝对否决 (如 产品→算法=0.05)</td></tr>
+</table>
+<strong>兜底</strong>: PROMOTION_CHAINS 行业标准晋升模板，零 JD 也能输出有效图谱<br>
+<strong>透明</strong>: data_confidence 字段标注 high / low / template_augmented
+</div>
+</div>
+
+<!-- v3.0 -->
+<div class="section">
+<h2 id="i-v30">二、v3.0 自进化智能体升维 <span class="inno-badge">学术创新</span></h2>
+<div class="frozen">v3.0 为演进式设计，不破坏 v2.1 已冻结 Schema。竞赛阶段使用 v2.1；v3.0 模块上线后渐进激活。</div>
+
+<h3>升维一: Cron-Driven Autonomous Ontology（自组织知识网络）<span class="tag t-purple">L1</span></h3>
+<div class="card">
+<strong>核心</strong>: 系统从"被动响应"升级为"主动探测"<br>
+<strong>架构</strong>: Celery Beat (每周) → 爬取最新 1000 份 JD → AC 新词发现 → DeepSeek-R1 CoT 推理 → 图谱热更新<br>
+<strong>R1 推理输出</strong>: 拓扑坐标 + 前置技能链 + 替代/演进关系 + 热度预测<br>
+<strong>新边类型</strong>: PREREQUISITE (前置) / REPLACES (替代) / EVOLVES_TO (演进)<br>
+<strong>与 v2.1</strong>: 共存——v2.1 处理已入系统数据, v3.0 主动探测外部世界, 共享 Phase D 热更新<br>
+<strong>学术亮点</strong>: Continuous Knowledge Distillation — 持续从非结构化JD蒸馏结构化知识
+</div>
+
+<h3>升维二: Actor-Critic Reflexion Loop（审查智能体）<span class="tag t-purple">L3</span></h3>
+<div class="card">
+<strong>核心</strong>: Planner-Critic 零和博弈，消除 LLM 过度乐观<br>
+<table>
+<tr><th>角色</th><th>职责</th><th>温度</th></tr>
+<tr><td><strong>Planner Agent</strong></td><td>基于图谱提出 1-2 条发展路径</td><td>0.7</td></tr>
+<tr><td><strong>Critique Agent</strong></td><td>规则硬检 (学历/转移概率) + LLM 软审 (市场/趋势)</td><td>0.2</td></tr>
+</table>
+<strong>循环</strong>: 最多 3 轮; REJECTED → 负约束累积 → 重规划; 3 轮仍驳回 → 保守路径兜底<br>
+<strong>透明性</strong>: critique_history 完整记录，前端展示"曾考虑但被排除的路径"<br>
+<strong>学术亮点</strong>: Reflexion (Shinn et al. 2023) + Constitutional AI 审查范式
+</div>
+
+<h3>升维三: Asymmetric Transition Probability（非对称转移概率）<span class="tag t-purple">L1</span></h3>
+<div class="card">
+<strong>核心问题</strong>: Jaccard 是对称的 (A→B = B→A)，但职场转型是非对称的<br>
+<strong>公式</strong>: <code>P(S→T) = coverage(S,T) × exp(-λ × energy_barrier)</code><br>
+<table>
+<tr><th>维度</th><th>v2.1 Jaccard</th><th>v3.0 Asymmetric</th></tr>
+<tr><td>对称性</td><td>对称</td><td><strong>非对称</strong></td></tr>
+<tr><td>成本建模</td><td>无</td><td><strong>weeks × difficulty_tier</strong></td></tr>
+<tr><td>衰减函数</td><td>线性</td><td><strong>指数衰减 exp(-λ·barrier)</strong></td></tr>
+<tr><td>时间估算</td><td>无</td><td><strong>关键路径法 (并行学习)</strong></td></tr>
+</table>
+<strong>示例</strong>: 前端→AI算法 P=0.04 (几乎不可能) vs AI算法→前端 P=0.61 (自然过渡)<br>
+<strong>论文潜力</strong>: "基于技能势能差的非对称职场跃迁算法" — 核心创新点
+</div>
+</div>
+
+<!-- v3.1 -->
+<div class="section">
+<h2 id="i-v31">三、v3.1 对抗性审计修复 <span class="inno-badge">鲁棒性创新</span></h2>
+<div class="frozen">v3.1 不破坏 v3.0 公式结构，只强化数据源和防护层。三审三修。</div>
+
+<h3>审计一: Quad-Source Calibration（四源校准）— 修复数据真空 <span class="tag t-purple">L1</span></h3>
+<div class="card">
+<strong>问题</strong>: SKILL_ACQUISITION_COST 的 weeks/difficulty 靠 LLM 脑补 → GIGO<br>
+<table>
+<tr><th>数据源</th><th>示例</th><th>竞赛可行</th></tr>
+<tr><td>A: GitHub Roadmaps</td><td>roadmap.sh → React ~4周</td><td><span class="tag t-green">✅</span></td></tr>
+<tr><td>B: 培训机构大纲</td><td>Coursera / 极客时间课时</td><td><span class="tag t-green">✅</span></td></tr>
+<tr><td>C: 开发者调查</td><td>SO Survey 经验分布</td><td><span class="tag t-green">✅</span></td></tr>
+<tr><td>D: JD 隐含信号</td><td>"X年经验" → 学习年限</td><td><span class="tag t-green">✅</span></td></tr>
+</table>
+<strong>聚合</strong>: 加权中位数 + 2σ 离群检测 + calibration_confidence<br>
+<strong>联动</strong>: 低置信度技能 → uncertainty_penalty (×1.2~1.5) → 宁可高估壁垒
+</div>
+
+<h3>审计二: Early Stopping + Negative Cache — 修复灾难性延迟 <span class="tag t-purple">L3</span></h3>
+<div class="card">
+<strong>问题</strong>: 3 轮串行 LLM 调用 = 18-30s，叠加 L4 可能突破 1min<br>
+<table>
+<tr><th>策略</th><th>机制</th><th>覆盖</th><th>节省</th></tr>
+<tr><td><strong>Pre-flight 剪枝</strong></td><td>规则预检裁剪不可达节点</td><td>100%</td><td>减少搜索空间</td></tr>
+<tr><td><strong>Early Stopping</strong></td><td>confidence &gt; 0.85 + 规则全通过 → 跳过 Critic</td><td>~60%</td><td>省 Critic 轮</td></tr>
+<tr><td><strong>Negative Cache</strong></td><td>缓存死路模式, TTL=30天</td><td>~10%</td><td>省整轮循环</td></tr>
+</table>
+<strong>效果</strong>: 加权均值 8.4s → <strong>4.8s (↓43%)</strong>; 端到端 11-13s<br>
+<strong>协同</strong>: L4 Streaming 骨架 T=0s 即可见，Reflexion 在后台运行
+</div>
+
+<h3>审计三: Quad-Layer Decontamination（四层净化管道）— 修复污染扩散 <span class="tag t-purple">L1</span></h3>
+<div class="card">
+<strong>问题</strong>: HR 写 JD 常见拼写错误 (Jave/ChatJPT)、概念混淆 (Excel=数据库)<br>
+<table>
+<tr><th>层</th><th>机制</th><th>处理</th></tr>
+<tr><td>D1: 拼写纠错</td><td>SymSpell + IT 专用词典 + KNOWN_TYPOS</td><td>Jave→Java</td></tr>
+<tr><td>D2: OOD 检测</td><td>BGE-M3 距离 &gt; θ=0.55 → REJECT</td><td>PPT→REJECT</td></tr>
+<tr><td>D3: 隔离沙箱</td><td>影子模式 14 天; 频次≥3% + 语境一致性≥0.8 → 晋升</td><td>新词观察期</td></tr>
+<tr><td>D4: 人工审核</td><td>novel 类需管理员确认; 竞赛阶段默认全 REJECT</td><td>最终网关</td></tr>
+</table>
+<strong>断路器</strong>: 新词上线后匹配置信度下降 &gt;10% → 自动回滚 + 告警
+</div>
+</div>
+
+<!-- Innovation Summary -->
+<div class="section">
+<h2 id="i-summary">四、创新点总结与论文潜力</h2>
+<table>
+<tr><th>创新点</th><th>版本</th><th>类型</th><th>学术亮点</th><th>论文潜力</th></tr>
+<tr><td>OOV Discovery Pipeline</td><td>v2.1</td><td>工程</td><td>Embedding 近邻自动归类</td><td>★★☆</td></tr>
+<tr><td>Template-first Streaming</td><td>v2.1</td><td>工程</td><td>模板 70% + LLM 30% 架构</td><td>★☆☆</td></tr>
+<tr><td>Cold-start Affinity Patch</td><td>v2.1</td><td>工程</td><td>行业先验自适应权重</td><td>★★☆</td></tr>
+<tr><td>Autonomous Ontology</td><td>v3.0</td><td>学术</td><td>Continuous Knowledge Distillation</td><td>★★★</td></tr>
+<tr><td>Actor-Critic Reflexion</td><td>v3.0</td><td>学术</td><td>Planner-Critic 零和博弈审查</td><td>★★★</td></tr>
+<tr><td><strong>Asymmetric Transition</strong></td><td>v3.0</td><td>学术</td><td><strong>技能势能差非对称跃迁算法</strong></td><td><strong>★★★★</strong></td></tr>
+<tr><td>Quad-Source Calibration</td><td>v3.1</td><td>鲁棒性</td><td>多源校准 + 不确定性惩罚</td><td>★★★</td></tr>
+<tr><td>Quad-Layer Decontamination</td><td>v3.1</td><td>鲁棒性</td><td>四层净化 + 断路器回滚</td><td>★★☆</td></tr>
+</table>
+</div>
+
+</div><!-- end tab-inno -->
+
+<!-- ====== Footer ====== -->
+<div class="footer-bar">
+<h2>Schema 冻结清单</h2>
+<p style="margin:12px 0;opacity:0.85">以下 Memory ID 已冻结，任何对话中不得擅自修改</p>
+<table>
+<tr><th>Schema</th><th>Memory ID</th></tr>
+<tr><td>竞赛规则 R-01~R-15</td><td><code>5176bcea</code></td></tr>
+<tr><td>实体提取 Schema v2.0</td><td><code>a844d77d</code></td></tr>
+<tr><td>关系提取 Schema v2.0</td><td><code>6cbaa893</code></td></tr>
+<tr><td>Layer 0: student_profile</td><td><code>f431e26d</code></td></tr>
+<tr><td>Layer 0: job_posting</td><td><code>b17d433f</code></td></tr>
+<tr><td>Layer 1: taxonomy+portrait+graph</td><td><code>fafd7090</code></td></tr>
+<tr><td>Layer 2: portrait_4d</td><td><code>a07e8d0c</code></td></tr>
+<tr><td>Layer 3: match+gap+path</td><td><code>98b980d3</code></td></tr>
+<tr><td>Layer 4: career_report</td><td><code>c648edf8</code></td></tr>
+</table>
+</div>
+
+</div><!-- end container -->
+</div><!-- end main-wrap -->
+
+<button class="back-to-top" id="backToTop" onclick="window.scrollTo({top:0})">&#8593;</button>
+
+<script>
+let currentTab = 'prod';
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  const btns = document.querySelectorAll('.tab-btn');
+  if (tab === 'prod') btns[0].classList.add('active');
+  else btns[1].classList.add('active');
+  // Sync TOC
+  document.querySelectorAll('.toc-group').forEach(g => g.classList.remove('active'));
+  document.getElementById('toc-' + tab).classList.add('active');
+  // Close mobile sidebar
+  document.getElementById('sidebar').classList.remove('open');
+  updateScrollSpy();
+}
+
+// Back to top
+const backBtn = document.getElementById('backToTop');
+window.addEventListener('scroll', () => {
+  backBtn.classList.toggle('visible', window.scrollY > 400);
+  updateScrollSpy();
+});
+
+// Scroll spy
+function updateScrollSpy() {
+  const prefix = currentTab === 'prod' ? 'p-' : 'i-';
+  const sections = document.querySelectorAll('h2[id^="' + prefix + '"]');
+  const links = document.querySelectorAll('#toc-' + currentTab + ' .toc-link');
+  let activeId = '';
+  sections.forEach(sec => {
+    const rect = sec.getBoundingClientRect();
+    if (rect.top <= 120) activeId = sec.id;
+  });
+  links.forEach(link => {
+    link.classList.toggle('active', link.getAttribute('href') === '#' + activeId);
+  });
+}
+
+// TOC link click: close mobile sidebar
+document.querySelectorAll('.toc-link').forEach(link => {
+  link.addEventListener('click', () => {
+    document.getElementById('sidebar').classList.remove('open');
+  });
+});
+</script>
+</body>
+</html>

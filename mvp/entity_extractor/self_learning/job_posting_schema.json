@@ -1,0 +1,292 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Job Posting Schema",
+  "description": "就业岗位画像JSON Schema - 用于人岗匹配训练数据",
+  "type": "object",
+  "required": ["job_id", "job_title", "company_info", "job_requirements", "ability_requirements"],
+
+  "properties": {
+    "job_id": {
+      "type": "string",
+      "description": "职位编码/ID"
+    },
+    "job_title": {
+      "type": "string",
+      "description": "职位名称",
+      "examples": ["Java开发工程师", "算法工程师", "前端开发工程师"]
+    },
+    "job_category": {
+      "type": "string",
+      "description": "职位类别",
+      "examples": ["后端开发", "前端开发", "算法", "运维", "测试"]
+    },
+
+    "company_info": {
+      "type": "object",
+      "required": ["company_name", "industry", "scale", "nature"],
+      "properties": {
+        "company_name": {
+          "type": "string",
+          "description": "公司全称"
+        },
+        "industry": {
+          "type": "string",
+          "description": "所属行业",
+          "examples": ["互联网", "金融", "教育", "医疗", "通信"]
+        },
+        "scale": {
+          "type": "string",
+          "enum": ["50人以下", "50-99人", "100-499人", "500-999人", "1000-9999人", "10000人以上"],
+          "description": "人员规模"
+        },
+        "nature": {
+          "type": "string",
+          "enum": ["民营企业", "国有企业", "外资企业", "合资企业", "上市公司", "事业单位"],
+          "description": "企业性质"
+        },
+        "address": {
+          "type": "string",
+          "description": "工作地址"
+        },
+        "description": {
+          "type": "string",
+          "description": "公司简介"
+        }
+      }
+    },
+
+    "salary_range": {
+      "type": "object",
+      "description": "薪资范围",
+      "properties": {
+        "min_monthly": {"type": "integer", "description": "最低月薪（元）"},
+        "max_monthly": {"type": "integer", "description": "最高月薪（元）"},
+        "min_annual": {"type": "integer", "description": "最低年薪（元）"},
+        "max_annual": {"type": "integer", "description": "最高年薪（元）"}
+      }
+    },
+
+    "job_description": {
+      "type": "string",
+      "description": "职位描述/岗位职责"
+    },
+
+    "job_requirements": {
+      "type": "object",
+      "description": "岗位要求（对应人岗匹配的基础要求维度）",
+      "properties": {
+        "education": {
+          "type": "string",
+          "description": "学历要求",
+          "examples": ["本科", "硕士", "大专以上"]
+        },
+        "major": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "专业要求",
+          "examples": [["计算机科学与技术", "软件工程", "人工智能"]]
+        },
+        "experience": {
+          "type": "string",
+          "description": "经验要求",
+          "examples": ["1-3年", "3-5年", "接受应届生", "5年以上"]
+        },
+        "certifications": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "证书要求",
+          "examples": [["计算机等级证书", "软考证书", "专业认证"]]
+        }
+      }
+    },
+
+    "professional_skills": {
+      "type": "object",
+      "description": "职业技能要求（对应人岗匹配的职业技能维度）",
+      "properties": {
+        "required_skills": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "skill": {"type": "string", "description": "技能名称"},
+              "level": {"type": "string", "enum": ["了解", "熟悉", "掌握", "精通"], "description": "掌握程度"},
+              "weight": {"type": "number", "minimum": 0, "maximum": 1, "description": "权重"}
+            }
+          },
+          "description": "必备技能列表（含权重）"
+        },
+        "preferred_skills": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "优先技能"
+        },
+        "languages": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "语言要求",
+          "examples": [["英语CET-4", "英语CET-6", "日语N2"]]
+        }
+      }
+    },
+
+    "general_abilities": {
+      "type": "object",
+      "description": "通用能力要求（对应人岗匹配的职业素养维度）",
+      "properties": {
+        "innovation_ability": {
+          "type": "object",
+          "properties": {
+            "required": {"type": "boolean", "description": "是否必需"},
+            "weight": {"type": "number", "minimum": 0, "maximum": 1},
+            "description": {"type": "string", "description": "具体要求"}
+          }
+        },
+        "learning_ability": {
+          "type": "object",
+          "properties": {
+            "required": {"type": "boolean"},
+            "weight": {"type": "number", "minimum": 0, "maximum": 1},
+            "description": {"type": "string"}
+          }
+        },
+        "anti_pressure_ability": {
+          "type": "object",
+          "properties": {
+            "required": {"type": "boolean"},
+            "weight": {"type": "number", "minimum": 0, "maximum": 1},
+            "description": {"type": "string"}
+          }
+        },
+        "communication_ability": {
+          "type": "object",
+          "properties": {
+            "required": {"type": "boolean"},
+            "weight": {"type": "number", "minimum": 0, "maximum": 1},
+            "description": {"type": "string"}
+          }
+        },
+        "teamwork": {
+          "type": "object",
+          "properties": {
+            "required": {"type": "boolean"},
+            "weight": {"type": "number", "minimum": 0, "maximum": 1},
+            "description": {"type": "string"}
+          }
+        }
+      }
+    },
+
+    "development_potential": {
+      "type": "object",
+      "description": "发展潜力要求（对应人岗匹配的发展潜力维度）",
+      "properties": {
+        "internship_exp_required": {
+          "type": "boolean",
+          "description": "是否要求实习经验"
+        },
+        "internship_months_min": {
+          "type": "integer",
+          "description": "最低实习月数"
+        },
+        "project_exp_required": {
+          "type": "boolean",
+          "description": "是否要求项目经验"
+        },
+        "project_count_min": {
+          "type": "integer",
+          "description": "最低项目数量"
+        },
+        "leadership_exp": {
+          "type": "string",
+          "description": "领导力要求",
+          "examples": ["有团队管理经验优先", "担任过学生干部优先"]
+        }
+      }
+    },
+
+    "career_path": {
+      "type": "object",
+      "description": "职业发展路径（用于构建垂直晋升图谱）",
+      "properties": {
+        "entry_level": {
+          "type": "string",
+          "description": "入门级岗位",
+          "examples": ["初级Java开发工程师"]
+        },
+        "mid_level": {
+          "type": "string",
+          "description": "中级岗位",
+          "examples": ["Java开发工程师", "高级Java开发工程师"]
+        },
+        "senior_level": {
+          "type": "string",
+          "description": "高级岗位",
+          "examples": ["资深Java开发工程师", "技术专家"]
+        },
+        "management_level": {
+          "type": "string",
+          "description": "管理岗位",
+          "examples": ["技术经理", "架构师", "技术总监"]
+        },
+        "promotion_requirements": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "晋升要求"
+        }
+      }
+    },
+
+    "job_transfer_paths": {
+      "type": "array",
+      "description": "换岗路径（用于构建换岗路径图谱，每个岗位至少2条）",
+      "items": {
+        "type": "object",
+        "properties": {
+          "target_job": {
+            "type": "string",
+            "description": "目标岗位"
+          },
+          "transfer_reason": {
+            "type": "string",
+            "description": "转换原因"
+          },
+          "skill_overlap": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "技能重叠度"
+          },
+          "difficulty": {
+            "type": "string",
+            "enum": ["容易", "中等", "困难"],
+            "description": "转换难度"
+          },
+          "training_needed": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "需要补充的培训"
+          }
+        }
+      },
+      "minItems": 2,
+      "description": "至少2条换岗路径"
+    },
+
+    "hiring_status": {
+      "type": "string",
+      "enum": ["招聘中", "已截止", "暂停招聘"],
+      "description": "招聘状态"
+    },
+
+    "posting_date": {
+      "type": "string",
+      "description": "发布日期 YYYY-MM-DD"
+    },
+
+    "source_url": {
+      "type": "string",
+      "description": "数据来源URL"
+    }
+  }
+}
