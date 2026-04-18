@@ -41,7 +41,7 @@ class Config:
     # Redis 配置
     REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
 
-    # Milvus 配置
+    # Milvus 配置 (嵌入式 Lite 模式)
     MILVUS_URI = os.environ.get('MILVUS_URI', './milvus_data/milvus.db')
 
     # 文件上传配置

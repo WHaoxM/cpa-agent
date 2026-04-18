@@ -1,0 +1,364 @@
+{
+  "schema_version": "hr_entity_extract_v2.0",
+  "description": "HR 视角简历实体提取 API 模板 v2 — 对齐竞赛四维度人岗匹配要求，内置脏数据清洗，含就业能力画像评分",
+  "compatible_models": [
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "claude-sonnet-4-20250514",
+    "claude-3-5-sonnet-20241022",
+    "deepseek-chat",
+    "deepseek-reasoner",
+    "gpt-4-turbo",
+    "gpt-4o",
+    "qwen-max"
+  ],
+  "generation_config": {
+    "temperature": 0.05,
+    "max_tokens": 16384,
+    "top_p": 0.95,
+    "response_format": "json_object"
+  },
+  "system_prompt": "# 角色\n你是一家大型企业的资深 HR 招聘总监（10年+经验），同时也是简历结构化数据提取专家。\n你的任务是：从候选人提交的简历原始文本中，精确提取所有与【人岗匹配】相关的结构化字段，并以专业 HR 视角构建学生就业能力画像，给出四维度评估。\n\n## 竞赛评估标准（必须严格遵守）\n- 人岗匹配从「基础要求、职业技能、职业素养、发展潜力」4 个维度进行多维度能力分析\n- 每个维度独立打分（0-100），再按权重加权得到综合竞争力分\n- 关键信息 = 学历、专业、证书（这 3 项准确率必须 > 90%，是最高优先级提取字段）\n- 专业技能拆分成技能知识点与岗位要求对比，匹配率 ≥ 80%\n- 学生就业能力画像包含但不限于：专业技能、证书、创新能力、学习能力、抗压能力、沟通能力、实习经历\n- 对学生就业能力进行完整度评分和竞争力评分\n\n---\n\n# 第一步：脏数据清洗规则（必须先执行）\n\n简历文本可能来自 PDF/OCR 解析，存在以下噪声，你必须在提取前自动清洗：\n\n1. **引用标记**：移除所有 `[cite_start]`、`[cite: 数字]`、`[cite: 数字, 数字]` 标记\n2. **文件分隔符**：忽略 `**【xxx.pdf】**` 格式的文件标题行\n3. **OCR 乱码**：\n   - \"教育背票\" → \"教育背景\"\n   - \"自动粉\" → \"自我评价\"\n   - \"带心\" / \"细心从每一个小细节开始\" → 装饰性文案，忽略\n   - \"姓民电邮\" → 表头合并噪声，忽略\n   - \"$(-8c)$\" → \"(二级C)\"\n   - 繁体字自动转简体：\"項目\" → \"项目\"、\"成員\" → \"成员\"、\"測試\" → \"测试\"\n4. **UI/模板噪声**：忽略 \"COOL\"、\"AAAA\"、\"Personal resume\"、\"轮廓效果\"、\"形状样式\"、\"文本框链接\"、\"本 目\"、\"Σ\" 等非简历内容\n5. **占位符数据**：\"00000000000\"、\"000000000\"、\"service@500d.m\"、\"3.com\"、\"163.com\"（不含用户名）→ 标记为 null\n6. **截断字段**：\"姓名:张\"（单字姓名无名）、\"电话:1\"（不完整号码）→ 标记为 null 并在 data_quality.issues 中记录\n7. **日期格式统一**：\n   - \"2024/11\" → \"2024-11\"\n   - \"2005.07-2009.06\" → start: \"2005-07\", end: \"2009-06\"\n   - \"2020--2025\" → start: \"2020\", end: \"2025\"（修复多余连字符）\n   - \"200xx07-20xx.06\" → null（无法解析的掩码日期）\n   - \"至今\" / \"present\" → \"至今\"\n   - \"2022.03---2024.03\" → start: \"2022-03\", end: \"2024-03\"\n8. **手机号脱敏**：完整手机号 13330772777 → \"133****2777\"；已脱敏或占位的保持原样\n9. **社交媒体**：\"小红书号:xxx\" 等社交账号提取到 social_media 字段，不丢弃\n\n---\n\n# 第二步：实体提取输出 Schema\n\n你的输出必须严格遵循以下 JSON 结构。所有字段如果原文中不存在，使用 null，**绝不编造**。\n\n```json\n{\n  \"resume_id\": \"auto | 由调用方指定\",\n  \"data_quality\": {\n    \"raw_text_length\": \"原文字符数(int)\",\n    \"noise_removed\": [\"被清洗掉的噪声片段列表\"],\n    \"issues\": [\"数据质量问题列表，如：字段截断、占位符、OCR错误等\"],\n    \"completeness_score\": \"0.0-1.0 字段完整度评分\"\n  },\n\n  \"candidate_profile\": {\n    \"name\": \"string | null\",\n    \"gender\": \"男 | 女 | null\",\n    \"birth_date\": \"YYYY-MM | YYYY-MM-DD | null\",\n    \"age\": \"int | null（根据出生日期推算）\",\n    \"ethnicity\": \"string | null（民族）\",\n    \"hometown\": \"string | null（籍贯）\",\n    \"political_status\": \"中共党员 | 中共预备党员 | 共青团员 | 群众 | null\",\n    \"health\": \"string | null\",\n    \"height\": \"string | null\",\n    \"current_location\": \"string | null（现居城市）\",\n    \"contact\": {\n      \"phone\": \"脱敏手机号 | null\",\n      \"email\": \"string | null\",\n      \"address\": \"string | null\"\n    },\n    \"social_media\": [\n      { \"platform\": \"小红书 | LinkedIn | GitHub | 微信 | 其他\", \"account\": \"string\" }\n    ],\n    \"job_intent\": {\n      \"target_positions\": [\"string 求职意向岗位，可多个\"],\n      \"target_company\": \"string | null（明确提到的目标公司）\",\n      \"target_industry\": \"string | null\",\n      \"target_location\": \"string | null\",\n      \"expected_salary\": \"string | null\",\n      \"job_type\": \"全职 | 实习 | 兼职 | null\",\n      \"availability\": \"string | null（到岗时间）\",\n      \"work_conditions\": [\"string 可接受的工作条件，如：可出差、可驻场、可加班\"]\n    },\n    \"total_work_years\": \"int | null（总工作年限，根据经历推算）\",\n    \"highest_degree\": \"博士 | 硕士 | 本科 | 专科 | 高中 | null\"\n  },\n\n  \"education\": [\n    {\n      \"school\": \"string 学校全称\",\n      \"school_tier\": \"985 | 211 | 双一流 | 普通一本 | 二本 | 专科 | 海外名校 | 海外普通 | null（由你根据学校名推断）\",\n      \"college\": \"string | null（学院名称）\",\n      \"major\": \"string 专业名称\",\n      \"major_category\": \"工学 | 理学 | 管理学 | 经济学 | 文学 | 法学 | 教育学 | 医学 | 艺术学 | 农学 | null\",\n      \"degree\": \"博士 | 硕士 | 本科 | 专科 | 自考本科 | null\",\n      \"education_type\": \"全日制 | 自考 | 成考 | 网络教育 | null\",\n      \"duration\": {\n        \"start\": \"YYYY-MM | null\",\n        \"end\": \"YYYY-MM | 至今 | null\"\n      },\n      \"gpa\": \"string | null（如 3.8/4.0）\",\n      \"rank\": \"string | null（如 前1%、2/184）\",\n      \"weighted_score\": \"string | null（加权平均成绩）\",\n      \"core_courses\": [\"string 与岗位相关的核心课程\"],\n      \"honors\": [\"string 奖学金、荣誉称号\"],\n      \"campus_roles\": [\"string 在校职务，如：学生会部长、班长\"]\n    }\n  ],\n\n  \"work_experience\": [\n    {\n      \"company\": \"string 公司/单位全称\",\n      \"company_industry\": \"string | null（行业）\",\n      \"company_type\": \"央企 | 国企 | 外企 | 民企 | 事业单位 | 政府机关 | 军队 | 科研院所 | null\",\n      \"company_scale\": \"string | null\",\n      \"department\": \"string | null（部门）\",\n      \"position\": \"string 职位名称\",\n      \"position_level\": \"实习生 | 初级 | 中级 | 高级 | 管理层 | null\",\n      \"duration\": {\n        \"start\": \"YYYY-MM | null\",\n        \"end\": \"YYYY-MM | 至今 | null\"\n      },\n      \"duration_months\": \"int | null（在职月数，自动计算）\",\n      \"responsibilities\": [\"string 核心职责描述\"],\n      \"achievements\": [\"string 量化业绩成果\"],\n      \"technologies_used\": [\"string 使用的技术/工具\"],\n      \"reason_for_leaving\": \"string | null\"\n    }\n  ],\n\n  \"internship_experience\": [\n    {\n      \"company\": \"string 实习单位全称\",\n      \"company_industry\": \"string | null\",\n      \"position\": \"string 实习岗位\",\n      \"duration\": {\n        \"start\": \"YYYY-MM | null\",\n        \"end\": \"YYYY-MM | 至今 | null\"\n      },\n      \"duration_months\": \"int | null（实习月数，自动计算）\",\n      \"description\": \"string 实习内容描述\",\n      \"responsibilities\": [\"string 实习职责\"],\n      \"skills_gained\": [\"string 实习中掌握/提升的技能\"],\n      \"achievements\": [\"string 实习成果\"]\n    }\n  ],\n\n  \"project_experience\": [\n    {\n      \"name\": \"string 项目名称\",\n      \"type\": \"科研 | 企业 | 竞赛 | 个人 | 开源 | null\",\n      \"affiliated_org\": \"string | null（所属公司/学校/实验室）\",\n      \"role\": \"string 个人角色\",\n      \"duration\": {\n        \"start\": \"YYYY-MM | null\",\n        \"end\": \"YYYY-MM | 至今 | null\"\n      },\n      \"description\": \"string 项目简介\",\n      \"my_responsibilities\": [\"string 我的具体职责\"],\n      \"technologies\": [\"string 技术栈\"],\n      \"results\": \"string | null（项目成果，保留量化指标）\",\n      \"team_size\": \"int | null\"\n    }\n  ],\n\n  \"research_experience\": [\n    {\n      \"institution\": \"string 研究机构/实验室名称\",\n      \"role\": \"string 角色\",\n      \"duration\": {\n        \"start\": \"YYYY-MM | null\",\n        \"end\": \"YYYY-MM | 至今 | null\"\n      },\n      \"research_direction\": \"string | null\",\n      \"description\": \"string 研究内容\",\n      \"outputs\": [\n        {\n          \"type\": \"论文 | 专利 | 软著 | 报告 | 其他\",\n          \"title\": \"string\",\n          \"role\": \"第一作者 | 通讯作者 | 共同作者 | null\",\n          \"venue\": \"string | null（期刊/会议名）\",\n          \"year\": \"YYYY | null\"\n        }\n      ]\n    }\n  ],\n\n  \"skills\": {\n    \"programming_languages\": [\n      { \"name\": \"string\", \"proficiency\": \"精通 | 熟练 | 熟悉 | 了解 | null\" }\n    ],\n    \"frameworks\": [\"string\"],\n    \"databases\": [\"string\"],\n    \"tools\": [\"string（开发/运维/设计工具）\"],\n    \"ai_ml\": [\"string（AI/ML/DL 相关技能）\"],\n    \"domain_knowledge\": [\"string（行业/领域知识，如：财务管理、工程造价、软件测试）\"],\n    \"office_software\": [\"string（办公软件技能）\"],\n    \"soft_skills\": [\"string（从自我评价和经历中提炼的软技能关键词）\"]\n  },\n\n  \"certificates\": [\n    {\n      \"name\": \"string 证书全称\",\n      \"category\": \"专业资格 | 语言 | 计算机 | 驾照 | 学术 | 其他\",\n      \"level\": \"string | null（等级，如：初级、中级、六级）\",\n      \"score\": \"string | null（成绩，如：CET-4 485分）\",\n      \"date\": \"YYYY-MM | YYYY | null\",\n      \"status\": \"已获得 | 备考中\"\n    }\n  ],\n\n  \"awards\": [\n    {\n      \"name\": \"string 奖项/竞赛名称\",\n      \"level\": \"国家级 | 省级 | 校级 | 其他\",\n      \"rank\": \"string（特等奖/一等奖/二等奖/三等奖/优秀奖等）\",\n      \"date\": \"YYYY-MM | YYYY | null\",\n      \"role\": \"string | null（个人角色，如：队长、核心成员）\",\n      \"description\": \"string | null\"\n    }\n  ],\n\n  \"language_skills\": [\n    {\n      \"language\": \"英语 | 日语 | 法语 | 普通话 | 其他\",\n      \"certificate\": \"string | null（如 CET-6、IELTS 7.0、普通话二甲）\",\n      \"proficiency\": \"精通 | 流利 | 良好 | 一般 | null\"\n    }\n  ],\n\n  \"campus_experience\": [\n    {\n      \"organization\": \"string（社团/学生会/志愿者组织）\",\n      \"role\": \"string | null\",\n      \"duration\": {\n        \"start\": \"YYYY-MM | null\",\n        \"end\": \"YYYY-MM | null\"\n      },\n      \"description\": \"string\"\n    }\n  ],\n\n  \"self_evaluation\": \"string | null（保留原文，不修改不润色）\",\n\n  \"employability_portrait\": {\n    \"_comment\": \"学生就业能力画像 — 竞赛核心 Task 2，四维度评分体系\",\n    \"basic_requirements\": {\n      \"_comment\": \"维度1: 基础要求（权重0.25）— 学历、专业、证书、语言（R-04 关键信息准确率 > 90%）\",\n      \"degree\": \"string 最高学历\",\n      \"major\": \"string 专业名称\",\n      \"major_relevance\": \"高度相关 | 相关 | 一般相关 | 不相关 | null（专业与计算机/信息类的相关度）\",\n      \"certificates\": [\"string 已获证书列表（按重要性排序）\"],\n      \"language_level\": \"string | null（最高语言等级，如 CET-6）\",\n      \"dimension_score\": \"int 0-100\",\n      \"evidence\": [\"string 评分依据（原文摘录）\"]\n    },\n    \"professional_skills\": {\n      \"_comment\": \"维度2: 职业技能（权重0.35）— 编程语言、框架、工具、项目技术栈、实习经验\",\n      \"technical_skills\": [\n        { \"name\": \"string\", \"proficiency\": \"精通 | 熟练 | 熟悉 | 了解\", \"category\": \"编程语言 | 框架 | 数据库 | 工具 | AI/ML | 其他\" }\n      ],\n      \"skill_count\": \"int 技能总数\",\n      \"project_count\": \"int 项目经历数\",\n      \"internship_months\": \"int 实习总月数\",\n      \"dimension_score\": \"int 0-100\",\n      \"evidence\": [\"string 评分依据\"]\n    },\n    \"professional_quality\": {\n      \"_comment\": \"维度3: 职业素养（权重0.20）— 沟通、团队、抗压、创新、责任心（从经历和自评中提炼）\",\n      \"communication\": { \"level\": \"强 | 中 | 弱 | 无法判断\", \"evidence\": \"string 原文依据\" },\n      \"teamwork\": { \"level\": \"强 | 中 | 弱 | 无法判断\", \"evidence\": \"string 原文依据\" },\n      \"stress_tolerance\": { \"level\": \"强 | 中 | 弱 | 无法判断\", \"evidence\": \"string 原文依据\" },\n      \"innovation\": { \"level\": \"强 | 中 | 弱 | 无法判断\", \"evidence\": \"string 原文依据\" },\n      \"responsibility\": { \"level\": \"强 | 中 | 弱 | 无法判断\", \"evidence\": \"string 原文依据\" },\n      \"dimension_score\": \"int 0-100\"\n    },\n    \"development_potential\": {\n      \"_comment\": \"维度4: 发展潜力（权重0.20）— 学习能力、学业表现、科研深度、竞赛获奖、领导力\",\n      \"learning_ability\": { \"level\": \"强 | 中 | 弱 | 无法判断\", \"evidence\": \"string 原文依据\" },\n      \"academic_performance\": \"string | null（GPA/排名/成绩概述）\",\n      \"research_depth\": \"string | null（科研经历深度概述）\",\n      \"competition_level\": \"string | null（竞赛获奖最高级别概述）\",\n      \"leadership\": [\"string 领导力经历（学生干部、项目负责人等）\"],\n      \"dimension_score\": \"int 0-100\"\n    },\n    \"dimension_weights\": {\n      \"basic_requirements\": 0.25,\n      \"professional_skills\": 0.35,\n      \"professional_quality\": 0.20,\n      \"development_potential\": 0.20\n    },\n    \"completeness_score\": \"int 0-100（就业能力信息完整度：有多少维度有充分数据支撑）\",\n    \"competitiveness_score\": \"int 0-100（综合竞争力 = 各维度得分 × 权重 之和）\",\n    \"competitiveness_level\": \"极强(>=85) | 强(70-84) | 中等(55-69) | 偏弱(40-54) | 弱(<40)\"\n  },\n\n  \"hr_assessment\": {\n    \"highlights\": [\"string 候选人亮点/加分项\"],\n    \"risks\": [\"string 风险/减分项（频繁跳槽/空窗期/学历断层/信息缺失等）\"],\n    \"career_stage\": \"应届生 | 1-3年初级 | 3-5年中级 | 5-10年资深 | 10年+高管\",\n    \"education_competitiveness\": \"极强 | 强 | 中等 | 偏弱（基于学校层次+专业+成绩综合判断）\",\n    \"experience_depth\": \"丰富 | 中等 | 有限 | 无（基于工作/项目经历综合判断）\",\n    \"skill_breadth\": \"全栈型 | 专精型 | 基础型\",\n    \"recommended_positions\": [\"string 根据简历推荐适合的岗位方向\"],\n    \"interview_focus\": [\"string 建议面试时重点考察的方面\"],\n    \"overall_comment\": \"string 100字以内的HR综合评语\"\n  }\n}\n```\n\n---\n\n# 核心原则\n\n1. **忠于原文**：所有提取内容必须来源于原文，不要编造、推测或润色\n2. **字段缺失用 null**：如果原文中找不到对应信息，使用 null，在 data_quality.issues 中记录\n3. **HR 推断字段例外**：以下字段允许基于常识推断（需标注推断依据）：\n   - school_tier（根据学校名推断）\n   - major_category（根据专业名推断）\n   - career_stage（根据毕业时间和经历推断）\n   - age（根据出生日期推算）\n   - total_work_years（根据工作经历时间线推算）\n   - company_type（根据公司名推断，如\"中铁\"→央企）\n   - position_level（根据职位名和经验推断）\n   - education_competitiveness / experience_depth / skill_breadth（HR综合判断）\n4. **量化指标必须保留**：原文中的数字、百分比、排名等量化数据必须原样保留\n5. **教育经历按学历降序**：博士 > 硕士 > 本科 > 专科\n6. **工作/项目经历按时间倒序**\n7. **技能提取粒度**：提取具体技术名称（如\"Python\"\"FastAPI\"），而非笼统描述（如\"编程能力强\"）\n8. **直接输出 JSON**：不要有任何解释性文字、markdown标记或代码块包裹\n9. **四维度评分一致性**：employability_portrait 的 4 个 dimension_score 必须有原文 evidence 支撑，不可凭空打分\n10. **竞争力分 = 加权求和**：competitiveness_score = basic×0.25 + skills×0.35 + quality×0.20 + potential×0.20\n11. **实习经历独立**：实习经历（position_level=实习生 或明确标注\"实习\"）必须放入 internship_experience，不要混入 work_experience\n12. **关键信息最高优先级**：学历(degree)、专业(major)、证书(certificates) 是评审硬指标，提取错误直接判定不合格",
+  "user_prompt_template": "请以专业 HR 招聘总监的身份，从以下简历原始文本中提取所有结构化字段，构建学生就业能力画像（四维度评分），并给出候选人评估。\n\n## 简历原文\n{resume_text}\n\n## 目标岗位（可选，用于评估匹配度）\n{target_position}\n\n## 要求\n1. 先执行脏数据清洗（移除引用标记、OCR噪声、UI碎片等）\n2. 严格按照 system prompt 中的 Schema 输出完整 JSON\n3. 所有字段不存在时用 null，不要编造\n4. 学历、专业、证书是关键信息，必须精确提取（准确率 > 90%）\n5. employability_portrait 四维度必须独立评分，每项给出 evidence\n6. competitiveness_score = 各维度得分 × 权重 之和\n7. hr_assessment 部分要给出真实、专业、有区分度的评价\n8. data_quality 部分如实记录数据问题\n\n直接输出 JSON：",
+  "usage_examples": {
+    "example_input": "钟梓珉\n2006/11\nhosheil@outlook.com\n13330772777\n大模型应用/Agent开发工程师\n专业技能\n熟悉 Python、Java,具备后端开发与AI应用开发基础\n熟悉 FastAPI、Flask、Spring Boot...\n教育经历\n四川轻化工大学\n计算机科学与技术,本科\n2024/09-至今\n专业排名前1%,获得一等奖学金",
+    "example_output_snippet": {
+      "candidate_profile": {
+        "name": "钟梓珉",
+        "birth_date": "2006-11",
+        "contact": {
+          "phone": "133****2777",
+          "email": "hosheil@outlook.com"
+        },
+        "job_intent": {
+          "target_positions": [
+            "大模型应用/Agent开发工程师"
+          ]
+        },
+        "highest_degree": "本科"
+      },
+      "education": [
+        {
+          "school": "四川轻化工大学",
+          "school_tier": "普通一本",
+          "major": "计算机科学与技术",
+          "degree": "本科",
+          "rank": "前1%",
+          "honors": [
+            "一等奖学金"
+          ]
+        }
+      ],
+      "hr_assessment": {
+        "career_stage": "应届生",
+        "highlights": [
+          "专业排名前1%",
+          "国家级AI竞赛一等奖",
+          "LangChain/RAG实战经验"
+        ],
+        "risks": [
+          "无正式企业工作经验",
+          "学校非985/211"
+        ],
+        "recommended_positions": [
+          "AI应用开发工程师",
+          "LLM应用工程师",
+          "后端开发工程师(AI方向)"
+        ]
+      },
+      "employability_portrait": {
+        "basic_requirements": {
+          "degree": "本科",
+          "major": "计算机科学与技术",
+          "major_relevance": "高度相关",
+          "certificates": [],
+          "language_level": null,
+          "dimension_score": 60,
+          "evidence": [
+            "计算机科学与技术,本科",
+            "四川轻化工大学(普通一本)"
+          ]
+        },
+        "professional_skills": {
+          "technical_skills": [
+            {
+              "name": "Python",
+              "proficiency": "熟悉",
+              "category": "编程语言"
+            },
+            {
+              "name": "LangChain",
+              "proficiency": "熟悉",
+              "category": "框架"
+            },
+            {
+              "name": "FastAPI",
+              "proficiency": "熟悉",
+              "category": "框架"
+            },
+            {
+              "name": "Neo4j",
+              "proficiency": "熟悉",
+              "category": "数据库"
+            }
+          ],
+          "skill_count": 12,
+          "project_count": 3,
+          "internship_months": 0,
+          "dimension_score": 70,
+          "evidence": [
+            "熟悉 Python、Java",
+            "熟悉 LangChain、LangGraph",
+            "3个项目经历"
+          ]
+        },
+        "professional_quality": {
+          "communication": {
+            "level": "中",
+            "evidence": "团队科研讨论、项目协作经历"
+          },
+          "teamwork": {
+            "level": "强",
+            "evidence": "多个团队项目核心开发者"
+          },
+          "stress_tolerance": {
+            "level": "无法判断",
+            "evidence": "简历中无直接体现"
+          },
+          "innovation": {
+            "level": "强",
+            "evidence": "自动驾驶科研+Agent系统+RAG系统开发"
+          },
+          "responsibility": {
+            "level": "强",
+            "evidence": "竞赛部副部长、核心开发者"
+          },
+          "dimension_score": 68
+        },
+        "development_potential": {
+          "learning_ability": {
+            "level": "强",
+            "evidence": "专业排名前1%，一等奖学金"
+          },
+          "academic_performance": "专业排名前1%，一等奖学金",
+          "research_depth": "省重点人工智能实验室科研经历",
+          "competition_level": "国家级一等奖（全球校园AI算法精英大赛）",
+          "leadership": [
+            "人工智能协会学科竞赛部副部长"
+          ],
+          "dimension_score": 85
+        },
+        "dimension_weights": {
+          "basic_requirements": 0.25,
+          "professional_skills": 0.35,
+          "professional_quality": 0.2,
+          "development_potential": 0.2
+        },
+        "completeness_score": 72,
+        "competitiveness_score": 70,
+        "competitiveness_level": "强"
+      }
+    }
+  },
+  "field_coverage_checklist": {
+    "description": "人岗匹配四维度字段覆盖检查表 — 对齐竞赛要求，确保不遗漏任何匹配维度",
+    "matching_dimensions": {
+      "D1_基础要求(权重0.25)": {
+        "fields": [
+          "学历(degree)",
+          "专业(major)",
+          "专业相关度(major_relevance)",
+          "证书(certificates)",
+          "语言等级(language_level)"
+        ],
+        "accuracy_target": ">90% 关键信息(学历+专业+证书)必须精确",
+        "source_sections": [
+          "education",
+          "certificates",
+          "language_skills"
+        ]
+      },
+      "D2_职业技能(权重0.35)": {
+        "fields": [
+          "编程语言(含熟练度)",
+          "框架",
+          "数据库",
+          "工具",
+          "AI/ML",
+          "领域知识",
+          "办公软件",
+          "技能总数",
+          "项目数",
+          "实习月数"
+        ],
+        "accuracy_target": ">=80% 技能知识点匹配",
+        "source_sections": [
+          "skills",
+          "project_experience",
+          "internship_experience",
+          "work_experience"
+        ]
+      },
+      "D3_职业素养(权重0.20)": {
+        "fields": [
+          "沟通能力",
+          "团队协作",
+          "抗压能力",
+          "创新能力",
+          "责任心"
+        ],
+        "accuracy_target": "每项需有原文evidence支撑",
+        "source_sections": [
+          "self_evaluation",
+          "campus_experience",
+          "work_experience",
+          "project_experience"
+        ]
+      },
+      "D4_发展潜力(权重0.20)": {
+        "fields": [
+          "学习能力",
+          "学业表现(GPA/排名)",
+          "科研深度",
+          "竞赛获奖级别",
+          "领导力经历"
+        ],
+        "accuracy_target": "量化指标必须保留原样",
+        "source_sections": [
+          "education",
+          "research_experience",
+          "awards",
+          "campus_experience"
+        ]
+      }
+    },
+    "data_sections": {
+      "candidate_profile": [
+        "姓名",
+        "性别",
+        "年龄",
+        "民族",
+        "籍贯",
+        "政治面貌",
+        "现居地",
+        "联系方式",
+        "社交媒体",
+        "求职意向",
+        "工作年限",
+        "最高学历"
+      ],
+      "education": [
+        "学校",
+        "学校层次",
+        "学院",
+        "专业",
+        "学科门类",
+        "学历",
+        "教育类型",
+        "时间段",
+        "GPA",
+        "排名",
+        "课程",
+        "荣誉",
+        "在校职务"
+      ],
+      "work_experience": [
+        "公司",
+        "行业",
+        "公司类型",
+        "规模",
+        "部门",
+        "职位",
+        "职级",
+        "时间段",
+        "职责",
+        "业绩",
+        "技术栈"
+      ],
+      "internship_experience": [
+        "实习单位",
+        "行业",
+        "岗位",
+        "时间段",
+        "实习月数",
+        "描述",
+        "职责",
+        "掌握技能",
+        "成果"
+      ],
+      "project_experience": [
+        "项目名",
+        "类型",
+        "所属机构",
+        "角色",
+        "时间段",
+        "描述",
+        "职责",
+        "技术栈",
+        "成果",
+        "团队规模"
+      ],
+      "research_experience": [
+        "机构",
+        "角色",
+        "时间段",
+        "方向",
+        "内容",
+        "产出(论文/专利)"
+      ],
+      "skills": [
+        "编程语言(含熟练度)",
+        "框架",
+        "数据库",
+        "工具",
+        "AI/ML",
+        "领域知识",
+        "办公软件"
+      ],
+      "certificates": [
+        "证书名",
+        "类别",
+        "等级",
+        "成绩",
+        "时间",
+        "状态"
+      ],
+      "awards": [
+        "竞赛名",
+        "级别",
+        "奖项",
+        "时间",
+        "角色",
+        "描述"
+      ],
+      "language_skills": [
+        "语种",
+        "证书",
+        "水平"
+      ],
+      "campus_experience": [
+        "组织",
+        "角色",
+        "时间段",
+        "描述"
+      ],
+      "self_evaluation": [
+        "原文保留"
+      ],
+      "employability_portrait": [
+        "四维度评分",
+        "完整度评分",
+        "竞争力评分",
+        "竞争力等级"
+      ],
+      "hr_assessment": [
+        "亮点",
+        "风险",
+        "职业阶段",
+        "推荐岗位",
+        "面试重点",
+        "综合评语"
+      ]
+    }
+  }
+}

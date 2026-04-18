@@ -1,0 +1,567 @@
+[2026-04-17 18:52:00] INFO    cpa-agent.llm | LLMClient 初始化: model=deepseek-chat, base_url=https://api.openai.com/v1
+[2026-04-17 18:52:00] INFO    cpa-agent.react_agent | ReactAgent 初始化: max_tool_calls=5, max_iterations=8
+[2026-04-17 18:52:42] INFO    cpa-agent.llm | LLMClient 初始化: model=deepseek-chat, base_url=https://api.openai.com/v1
+[2026-04-17 18:52:42] INFO    cpa-agent.react_agent | ReactAgent 初始化: max_tool_calls=5, max_iterations=8
+[2026-04-17 18:53:02] DEBUG   cpa-agent.request | 请求: GET /health
+[2026-04-17 18:53:02] DEBUG   cpa-agent.request | 响应: 200 - 0.001s
+[2026-04-17 18:53:02] DEBUG   cpa-agent.request | 请求: GET /metrics
+[2026-04-17 18:53:02] DEBUG   cpa-agent.request | 响应: 200 - 0.113s
+[2026-04-17 18:53:02] INFO    cpa-agent.llm | LLMClient 初始化: model=deepseek-chat, base_url=https://api.openai.com/v1
+[2026-04-17 18:53:02] INFO    cpa-agent.react_agent | ReactAgent 初始化: max_tool_calls=5, max_iterations=8
+[2026-04-17 19:12:27] DEBUG   cpa-agent.request | 请求: GET /health
+[2026-04-17 19:12:27] DEBUG   cpa-agent.request | 响应: 200 - 0.001s
+[2026-04-17 19:13:20] DEBUG   cpa-agent.request | 请求: GET /health
+[2026-04-17 19:13:20] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 19:14:46] DEBUG   cpa-agent.request | 请求: GET /health
+[2026-04-17 19:14:46] DEBUG   cpa-agent.request | 响应: 200 - 0.001s
+[2026-04-17 19:14:46] DEBUG   cpa-agent.request | 请求: GET /metrics
+[2026-04-17 19:14:46] DEBUG   cpa-agent.request | 响应: 200 - 0.116s
+[2026-04-17 19:23:52] DEBUG   cpa-agent.request | 请求: GET /health
+[2026-04-17 19:23:52] DEBUG   cpa-agent.request | 响应: 200 - 0.001s
+[2026-04-17 19:23:52] DEBUG   cpa-agent.request | 请求: GET /metrics
+[2026-04-17 19:23:52] DEBUG   cpa-agent.request | 响应: 200 - 0.101s
+[2026-04-17 19:42:51] DEBUG   cpa-agent.request | 请求: GET /health
+[2026-04-17 19:42:51] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 19:42:51] DEBUG   cpa-agent.request | 请求: GET /metrics
+[2026-04-17 19:42:51] DEBUG   cpa-agent.request | 响应: 200 - 0.101s
+[2026-04-17 19:47:03] DEBUG   cpa-agent.request | 请求: GET /health
+[2026-04-17 19:47:03] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 19:47:03] DEBUG   cpa-agent.request | 请求: GET /metrics
+[2026-04-17 19:47:03] DEBUG   cpa-agent.request | 响应: 200 - 0.102s
+[2026-04-17 20:35:28] DEBUG   cpa-agent.request | 请求: GET /health
+[2026-04-17 20:35:28] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:35:28] DEBUG   cpa-agent.request | 请求: GET /metrics
+[2026-04-17 20:35:28] DEBUG   cpa-agent.request | 响应: 200 - 0.102s
+[2026-04-17 20:35:52] INFO    cpa-agent | ==================================================
+[2026-04-17 20:35:52] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 20:35:52] INFO    cpa-agent | ==================================================
+[2026-04-17 20:35:53] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 20:36:00] DEBUG   cpa-agent.request | 请求: GET /health
+[2026-04-17 20:36:00] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:36:02] DEBUG   cpa-agent.request | 请求: GET /metrics
+[2026-04-17 20:36:02] DEBUG   cpa-agent.request | 响应: 200 - 0.102s
+[2026-04-17 20:36:04] DEBUG   cpa-agent.request | 请求: GET /api/pipeline/list
+[2026-04-17 20:36:04] DEBUG   cpa-agent.request | 响应: 404 - 0.001s
+[2026-04-17 20:36:17] DEBUG   cpa-agent.request | 请求: GET /health
+[2026-04-17 20:36:17] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:36:19] DEBUG   cpa-agent.request | 请求: GET /metrics
+[2026-04-17 20:36:19] DEBUG   cpa-agent.request | 响应: 200 - 0.102s
+[2026-04-17 20:36:21] DEBUG   cpa-agent.request | 请求: GET /api/pipeline/list
+[2026-04-17 20:36:21] DEBUG   cpa-agent.request | 响应: 404 - 0.000s
+[2026-04-17 20:36:55] INFO    cpa-agent | ==================================================
+[2026-04-17 20:36:55] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 20:36:55] INFO    cpa-agent | ==================================================
+[2026-04-17 20:36:57] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 20:38:43] DEBUG   cpa-agent.request | 请求: GET /api/pipeline/list
+[2026-04-17 20:38:43] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:39:20] DEBUG   cpa-agent.request | 请求: GET /health
+[2026-04-17 20:39:20] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:39:22] DEBUG   cpa-agent.request | 请求: GET /metrics
+[2026-04-17 20:39:22] DEBUG   cpa-agent.request | 响应: 200 - 0.101s
+[2026-04-17 20:39:24] DEBUG   cpa-agent.request | 请求: GET /api/pipeline/list
+[2026-04-17 20:39:24] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:39:26] DEBUG   cpa-agent.request | 请求: GET /api/graph/overview
+[2026-04-17 20:39:26] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:39:28] DEBUG   cpa-agent.request | 请求: GET /api/profile/student/demo
+[2026-04-17 20:39:28] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:39:30] DEBUG   cpa-agent.request | 请求: GET /api/profile/job/list
+[2026-04-17 20:39:30] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:39:32] DEBUG   cpa-agent.request | 请求: GET /api/match/result/demo/portrait_job_001
+[2026-04-17 20:39:32] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:39:34] DEBUG   cpa-agent.request | 请求: GET /api/report/list
+[2026-04-17 20:39:34] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:42:50] INFO    cpa-agent | ==================================================
+[2026-04-17 20:42:50] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 20:42:50] INFO    cpa-agent | ==================================================
+[2026-04-17 20:42:51] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 20:43:09] INFO    cpa-agent | ==================================================
+[2026-04-17 20:43:09] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 20:43:09] INFO    cpa-agent | ==================================================
+[2026-04-17 20:43:10] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 20:43:33] INFO    cpa-agent | ==================================================
+[2026-04-17 20:43:33] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 20:43:33] INFO    cpa-agent | ==================================================
+[2026-04-17 20:43:34] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 20:43:49] DEBUG   cpa-agent.request | 请求: GET /health
+[2026-04-17 20:43:49] DEBUG   cpa-agent.request | 响应: 200 - 0.001s
+[2026-04-17 20:43:51] DEBUG   cpa-agent.request | 请求: GET /metrics
+[2026-04-17 20:43:51] DEBUG   cpa-agent.request | 响应: 200 - 0.103s
+[2026-04-17 20:43:53] DEBUG   cpa-agent.request | 请求: GET /api/pipeline/list
+[2026-04-17 20:43:53] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:43:55] DEBUG   cpa-agent.request | 请求: GET /api/graph/overview
+[2026-04-17 20:43:55] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:43:57] DEBUG   cpa-agent.request | 请求: GET /api/profile/student/demo
+[2026-04-17 20:43:57] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:43:59] DEBUG   cpa-agent.request | 请求: GET /api/profile/job/list
+[2026-04-17 20:43:59] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:44:01] DEBUG   cpa-agent.request | 请求: GET /api/match/result/demo/portrait_job_001
+[2026-04-17 20:44:01] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:44:03] DEBUG   cpa-agent.request | 请求: GET /api/report/list
+[2026-04-17 20:44:03] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:44:18] INFO    cpa-agent | ==================================================
+[2026-04-17 20:44:18] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 20:44:18] INFO    cpa-agent | ==================================================
+[2026-04-17 20:44:20] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 20:44:29] DEBUG   cpa-agent.request | 请求: GET /health
+[2026-04-17 20:44:29] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:44:31] DEBUG   cpa-agent.request | 请求: GET /metrics
+[2026-04-17 20:44:31] DEBUG   cpa-agent.request | 响应: 200 - 0.105s
+[2026-04-17 20:44:33] DEBUG   cpa-agent.request | 请求: GET /api/pipeline/list
+[2026-04-17 20:44:33] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:44:35] DEBUG   cpa-agent.request | 请求: GET /api/graph/overview
+[2026-04-17 20:44:35] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:44:37] DEBUG   cpa-agent.request | 请求: GET /api/profile/student/demo
+[2026-04-17 20:44:37] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:44:39] DEBUG   cpa-agent.request | 请求: GET /api/profile/job/list
+[2026-04-17 20:44:39] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:44:41] DEBUG   cpa-agent.request | 请求: GET /api/match/result/demo/portrait_job_001
+[2026-04-17 20:44:41] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:44:43] DEBUG   cpa-agent.request | 请求: GET /api/report/list
+[2026-04-17 20:44:43] DEBUG   cpa-agent.request | 响应: 200 - 0.001s
+[2026-04-17 20:44:45] DEBUG   cpa-agent.request | 请求: GET /api/learning/courses
+[2026-04-17 20:44:45] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:44:47] DEBUG   cpa-agent.request | 请求: GET /api/learning/learning/report/demo_user
+[2026-04-17 20:44:47] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:44:50] DEBUG   cpa-agent.request | 请求: GET /api/saved-jobs
+[2026-04-17 20:44:50] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:44:52] DEBUG   cpa-agent.request | 请求: GET /api/target-role-market/后端开发
+[2026-04-17 20:44:52] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:44:54] DEBUG   cpa-agent.request | 请求: GET /api/admin/knowledge-base
+[2026-04-17 20:44:54] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:44:56] DEBUG   cpa-agent.request | 请求: GET /api/admin/dataset
+[2026-04-17 20:44:56] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:46:58] INFO    cpa-agent | ==================================================
+[2026-04-17 20:46:58] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 20:46:58] INFO    cpa-agent | ==================================================
+[2026-04-17 20:48:45] DEBUG   cpa-agent.request | 请求: GET /health
+[2026-04-17 20:48:45] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 20:48:45] DEBUG   cpa-agent.request | 请求: GET /metrics
+[2026-04-17 20:48:45] DEBUG   cpa-agent.request | 响应: 200 - 0.101s
+[2026-04-17 21:25:18] INFO    cpa-agent | ==================================================
+[2026-04-17 21:25:18] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 21:25:18] INFO    cpa-agent | ==================================================
+[2026-04-17 21:25:19] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 21:25:55] DEBUG   cpa-agent.request | 请求: GET /api/graph/overview
+[2026-04-17 21:25:55] INFO    cpa-agent.db.neo4j | 创建 Neo4j 驱动: bolt://localhost:17687
+[2026-04-17 21:25:55] INFO    cpa-agent.db.neo4j | Neo4j 连接测试成功
+[2026-04-17 21:25:55] INFO    cpa-agent.db.neo4j | 获取图谱 schema: 9 种节点, 10 种关系
+[2026-04-17 21:25:55] DEBUG   cpa-agent.request | 响应: 200 - 0.396s
+[2026-04-17 21:25:58] DEBUG   cpa-agent.request | 请求: POST /api/graph/query
+[2026-04-17 21:25:58] DEBUG   cpa-agent.request | 响应: 400 - 0.000s
+[2026-04-17 21:26:00] DEBUG   cpa-agent.request | 请求: GET /api/profile/student/test_student_001
+[2026-04-17 21:26:00] INFO    cpa-agent.db.mysql | 创建 MySQL 引擎: localhost:3306/!Rootmysql123
+[2026-04-17 21:26:00] ERROR   cpa-agent.db.mysql | SQL 执行失败: (pymysql.err.OperationalError) (1045, "Access denied for user 'root'@'localhost' (using password: YES)")
+(Background on this error at: https://sqlalche.me/e/20/e3q8), query: 
+        SELECT
+            student_id, name, phone, email,
+            degree, school, major, graduation_year,
+            source_file, source_type, parse_version,
+            completeness, created_at, updated_at
+        FROM student_profile
+        WHERE student_id = %s
+        
+[2026-04-17 21:26:00] ERROR   cpa-agent.api.profile | 获取学生画像失败: (pymysql.err.OperationalError) (1045, "Access denied for user 'root'@'localhost' (using password: YES)")
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+[2026-04-17 21:26:00] DEBUG   cpa-agent.request | 响应: 500 - 0.174s
+[2026-04-17 21:26:02] DEBUG   cpa-agent.request | 请求: GET /api/profile/job/list
+[2026-04-17 21:26:02] ERROR   cpa-agent.db.mysql | SQL 执行失败: (pymysql.err.OperationalError) (1045, "Access denied for user 'root'@'localhost' (using password: YES)")
+(Background on this error at: https://sqlalche.me/e/20/e3q8), query: 
+            SELECT
+                portrait_id, position_name, jd_count,
+                required_degree, required_skill_cnt,
+                d1_weight, d2_weight, d3_weight, d4_weight,
+                created_at
+            FROM job_portrait_4d
+            ORDER BY jd_count DESC
+            LIMIT %s OFFSET %s
+            
+[2026-04-17 21:26:02] ERROR   cpa-agent.api.profile | 获取岗位画像列表失败: (pymysql.err.OperationalError) (1045, "Access denied for user 'root'@'localhost' (using password: YES)")
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+[2026-04-17 21:26:02] DEBUG   cpa-agent.request | 响应: 500 - 0.023s
+[2026-04-17 21:26:04] DEBUG   cpa-agent.request | 请求: GET /health
+[2026-04-17 21:26:04] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 21:26:29] DEBUG   cpa-agent.request | 请求: GET /api/graph/overview
+[2026-04-17 21:26:29] INFO    cpa-agent.db.neo4j | Neo4j 连接测试成功
+[2026-04-17 21:26:29] INFO    cpa-agent.db.neo4j | 获取图谱 schema: 9 种节点, 10 种关系
+[2026-04-17 21:26:29] DEBUG   cpa-agent.request | 响应: 200 - 0.066s
+[2026-04-17 21:26:31] DEBUG   cpa-agent.request | 请求: POST /api/graph/query
+[2026-04-17 21:26:31] DEBUG   cpa-agent.request | 响应: 400 - 0.000s
+[2026-04-17 21:26:33] DEBUG   cpa-agent.request | 请求: GET /api/profile/student/test_student_001
+[2026-04-17 21:26:33] ERROR   cpa-agent.db.mysql | SQL 执行失败: (pymysql.err.OperationalError) (1045, "Access denied for user 'root'@'localhost' (using password: YES)")
+(Background on this error at: https://sqlalche.me/e/20/e3q8), query: 
+        SELECT
+            student_id, name, phone, email,
+            degree, school, major, graduation_year,
+            source_file, source_type, parse_version,
+            completeness, created_at, updated_at
+        FROM student_profile
+        WHERE student_id = %s
+        
+[2026-04-17 21:26:33] ERROR   cpa-agent.api.profile | 获取学生画像失败: (pymysql.err.OperationalError) (1045, "Access denied for user 'root'@'localhost' (using password: YES)")
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+[2026-04-17 21:26:33] DEBUG   cpa-agent.request | 响应: 500 - 0.026s
+[2026-04-17 21:26:35] DEBUG   cpa-agent.request | 请求: GET /api/profile/job/list
+[2026-04-17 21:26:35] ERROR   cpa-agent.db.mysql | SQL 执行失败: (pymysql.err.OperationalError) (1045, "Access denied for user 'root'@'localhost' (using password: YES)")
+(Background on this error at: https://sqlalche.me/e/20/e3q8), query: 
+            SELECT
+                portrait_id, position_name, jd_count,
+                required_degree, required_skill_cnt,
+                d1_weight, d2_weight, d3_weight, d4_weight,
+                created_at
+            FROM job_portrait_4d
+            ORDER BY jd_count DESC
+            LIMIT %s OFFSET %s
+            
+[2026-04-17 21:26:35] ERROR   cpa-agent.api.profile | 获取岗位画像列表失败: (pymysql.err.OperationalError) (1045, "Access denied for user 'root'@'localhost' (using password: YES)")
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+[2026-04-17 21:26:35] DEBUG   cpa-agent.request | 响应: 500 - 0.021s
+[2026-04-17 21:26:37] DEBUG   cpa-agent.request | 请求: GET /api/pipeline/list
+[2026-04-17 21:26:37] DEBUG   cpa-agent.request | 响应: 404 - 0.001s
+[2026-04-17 21:28:29] INFO    cpa-agent | ==================================================
+[2026-04-17 21:28:29] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 21:28:29] INFO    cpa-agent | ==================================================
+[2026-04-17 21:28:30] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 21:28:33] DEBUG   cpa-agent.request | 请求: GET /api/graph/overview
+[2026-04-17 21:28:33] INFO    cpa-agent.db.neo4j | 创建 Neo4j 驱动: bolt://localhost:17687
+[2026-04-17 21:28:33] INFO    cpa-agent.db.neo4j | Neo4j 连接测试成功
+[2026-04-17 21:28:33] INFO    cpa-agent.db.neo4j | 获取图谱 schema: 9 种节点, 10 种关系
+[2026-04-17 21:28:33] DEBUG   cpa-agent.request | 响应: 200 - 0.095s
+[2026-04-17 21:28:35] DEBUG   cpa-agent.request | 请求: POST /api/graph/query
+[2026-04-17 21:28:35] DEBUG   cpa-agent.request | 响应: 400 - 0.000s
+[2026-04-17 21:28:37] DEBUG   cpa-agent.request | 请求: GET /api/profile/student/test_student_001
+[2026-04-17 21:28:37] INFO    cpa-agent.db.mysql | 创建 MySQL 引擎: localhost:3306/cpa_agent
+[2026-04-17 21:28:37] ERROR   cpa-agent.db.mysql | SQL 执行失败: (pymysql.err.ProgrammingError) (1064, "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near '%s' at line 7")
+[SQL: 
+        SELECT
+            student_id, name, phone, email,
+            degree, school, major, graduation_year,
+            source_file, source_type, parse_version,
+            completeness, created_at, updated_at
+        FROM student_profile
+        WHERE student_id = %%s
+        ]
+(Background on this error at: https://sqlalche.me/e/20/f405), query: 
+        SELECT
+            student_id, name, phone, email,
+            degree, school, major, graduation_year,
+            source_file, source_type, parse_version,
+            completeness, created_at, updated_at
+        FROM student_profile
+        WHERE student_id = %s
+        
+[2026-04-17 21:28:37] ERROR   cpa-agent.api.profile | 获取学生画像失败: (pymysql.err.ProgrammingError) (1064, "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near '%s' at line 7")
+[SQL: 
+        SELECT
+            student_id, name, phone, email,
+            degree, school, major, graduation_year,
+            source_file, source_type, parse_version,
+            completeness, created_at, updated_at
+        FROM student_profile
+        WHERE student_id = %%s
+        ]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-04-17 21:28:37] DEBUG   cpa-agent.request | 响应: 500 - 0.233s
+[2026-04-17 21:28:39] DEBUG   cpa-agent.request | 请求: GET /api/profile/job/list
+[2026-04-17 21:28:39] ERROR   cpa-agent.db.mysql | SQL 执行失败: (pymysql.err.ProgrammingError) (1064, "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near '%s OFFSET %s' at line 8")
+[SQL: 
+            SELECT
+                portrait_id, position_name, jd_count,
+                required_degree, required_skill_cnt,
+                d1_weight, d2_weight, d3_weight, d4_weight,
+                created_at
+            FROM job_portrait_4d
+            ORDER BY jd_count DESC
+            LIMIT %%s OFFSET %%s
+            ]
+(Background on this error at: https://sqlalche.me/e/20/f405), query: 
+            SELECT
+                portrait_id, position_name, jd_count,
+                required_degree, required_skill_cnt,
+                d1_weight, d2_weight, d3_weight, d4_weight,
+                created_at
+            FROM job_portrait_4d
+            ORDER BY jd_count DESC
+            LIMIT %s OFFSET %s
+            
+[2026-04-17 21:28:39] ERROR   cpa-agent.api.profile | 获取岗位画像列表失败: (pymysql.err.ProgrammingError) (1064, "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near '%s OFFSET %s' at line 8")
+[SQL: 
+            SELECT
+                portrait_id, position_name, jd_count,
+                required_degree, required_skill_cnt,
+                d1_weight, d2_weight, d3_weight, d4_weight,
+                created_at
+            FROM job_portrait_4d
+            ORDER BY jd_count DESC
+            LIMIT %%s OFFSET %%s
+            ]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-04-17 21:28:39] DEBUG   cpa-agent.request | 响应: 500 - 0.005s
+[2026-04-17 21:28:41] DEBUG   cpa-agent.request | 请求: GET /api/pipeline/list
+[2026-04-17 21:28:41] DEBUG   cpa-agent.request | 响应: 404 - 0.001s
+[2026-04-17 21:30:29] INFO    cpa-agent | ==================================================
+[2026-04-17 21:30:29] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 21:30:29] INFO    cpa-agent | ==================================================
+[2026-04-17 21:30:31] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 21:31:19] INFO    cpa-agent | ==================================================
+[2026-04-17 21:31:19] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 21:31:19] INFO    cpa-agent | ==================================================
+[2026-04-17 21:31:20] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 21:32:11] INFO    cpa-agent | ==================================================
+[2026-04-17 21:32:11] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 21:32:11] INFO    cpa-agent | ==================================================
+[2026-04-17 21:32:12] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 21:32:38] INFO    cpa-agent | ==================================================
+[2026-04-17 21:32:38] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 21:32:38] INFO    cpa-agent | ==================================================
+[2026-04-17 21:32:39] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 21:32:57] INFO    cpa-agent | ==================================================
+[2026-04-17 21:32:57] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 21:32:57] INFO    cpa-agent | ==================================================
+[2026-04-17 21:32:59] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 21:33:23] INFO    cpa-agent | ==================================================
+[2026-04-17 21:33:23] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 21:33:23] INFO    cpa-agent | ==================================================
+[2026-04-17 21:33:25] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 21:33:54] INFO    cpa-agent | ==================================================
+[2026-04-17 21:33:54] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 21:33:54] INFO    cpa-agent | ==================================================
+[2026-04-17 21:33:56] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 21:33:59] DEBUG   cpa-agent.request | 请求: GET /api/graph/overview
+[2026-04-17 21:33:59] INFO    cpa-agent.db.neo4j | 创建 Neo4j 驱动: bolt://localhost:17687
+[2026-04-17 21:33:59] INFO    cpa-agent.db.neo4j | Neo4j 连接测试成功
+[2026-04-17 21:33:59] INFO    cpa-agent.db.neo4j | 获取图谱 schema: 9 种节点, 10 种关系
+[2026-04-17 21:33:59] DEBUG   cpa-agent.request | 响应: 200 - 0.085s
+[2026-04-17 21:34:01] DEBUG   cpa-agent.request | 请求: POST /api/graph/query
+[2026-04-17 21:34:01] DEBUG   cpa-agent.request | 响应: 400 - 0.000s
+[2026-04-17 21:34:04] DEBUG   cpa-agent.request | 请求: GET /api/profile/student/test_student_001
+[2026-04-17 21:34:04] INFO    cpa-agent.db.mysql | 创建 MySQL 引擎: localhost:3306/cpa_agent
+[2026-04-17 21:34:04] DEBUG   cpa-agent.db.mysql | 执行查询: 
+        SELECT
+            student_id, name, phon..., 返回 0 条
+[2026-04-17 21:34:04] DEBUG   cpa-agent.request | 响应: 404 - 0.113s
+[2026-04-17 21:34:06] DEBUG   cpa-agent.request | 请求: GET /api/profile/job/list
+[2026-04-17 21:34:06] DEBUG   cpa-agent.db.mysql | 执行查询: 
+            SELECT
+                portrait_id, p..., 返回 0 条
+[2026-04-17 21:34:06] DEBUG   cpa-agent.db.mysql | 执行查询: SELECT COUNT(*) as total FROM job_portrait_4d..., 返回 1 条
+[2026-04-17 21:34:06] DEBUG   cpa-agent.request | 响应: 200 - 0.009s
+[2026-04-17 21:34:08] DEBUG   cpa-agent.request | 请求: GET /api/pipeline/list
+[2026-04-17 21:34:08] DEBUG   cpa-agent.request | 响应: 404 - 0.000s
+[2026-04-17 21:36:42] INFO    cpa-agent | ==================================================
+[2026-04-17 21:36:42] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 21:36:42] INFO    cpa-agent | ==================================================
+[2026-04-17 21:36:44] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 21:37:14] INFO    cpa-agent | ==================================================
+[2026-04-17 21:37:14] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 21:37:14] INFO    cpa-agent | ==================================================
+[2026-04-17 21:37:16] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 21:37:34] INFO    cpa-agent | ==================================================
+[2026-04-17 21:37:34] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 21:37:34] INFO    cpa-agent | ==================================================
+[2026-04-17 21:37:36] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 21:38:53] INFO    cpa-agent | ==================================================
+[2026-04-17 21:38:53] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 21:38:53] INFO    cpa-agent | ==================================================
+[2026-04-17 21:38:54] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 21:39:34] INFO    cpa-agent | ==================================================
+[2026-04-17 21:39:34] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 21:39:34] INFO    cpa-agent | ==================================================
+[2026-04-17 21:39:36] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 21:40:15] INFO    cpa-agent | ==================================================
+[2026-04-17 21:40:15] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 21:40:15] INFO    cpa-agent | ==================================================
+[2026-04-17 21:40:16] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 21:40:18] DEBUG   cpa-agent.request | 请求: GET /api/graph/overview
+[2026-04-17 21:40:18] INFO    cpa-agent.db.neo4j | 创建 Neo4j 驱动: bolt://localhost:17687
+[2026-04-17 21:40:18] INFO    cpa-agent.db.neo4j | Neo4j 连接测试成功
+[2026-04-17 21:40:18] INFO    cpa-agent.db.neo4j | 获取图谱 schema: 9 种节点, 10 种关系
+[2026-04-17 21:40:18] DEBUG   cpa-agent.request | 响应: 200 - 0.111s
+[2026-04-17 21:40:20] DEBUG   cpa-agent.request | 请求: POST /api/graph/query
+[2026-04-17 21:40:20] DEBUG   cpa-agent.db.neo4j | 执行查询: MATCH (j:JobPortrait)-[r:REQUIRES]->(s:Skill) RETU..., 返回 5 条
+[2026-04-17 21:40:20] DEBUG   cpa-agent.request | 响应: 200 - 0.275s
+[2026-04-17 21:40:22] DEBUG   cpa-agent.request | 请求: GET /api/profile/student/test_student_001
+[2026-04-17 21:40:22] INFO    cpa-agent.db.mysql | 创建 MySQL 引擎: localhost:3306/cpa_agent
+[2026-04-17 21:40:22] DEBUG   cpa-agent.db.mysql | 执行查询: 
+        SELECT
+            student_id, name, phon..., 返回 0 条
+[2026-04-17 21:40:22] DEBUG   cpa-agent.request | 响应: 404 - 0.108s
+[2026-04-17 21:40:24] DEBUG   cpa-agent.request | 请求: GET /api/profile/job/list
+[2026-04-17 21:40:24] DEBUG   cpa-agent.db.mysql | 执行查询: 
+            SELECT
+                portrait_id, p..., 返回 2 条
+[2026-04-17 21:40:24] DEBUG   cpa-agent.db.mysql | 执行查询: SELECT COUNT(*) as total FROM job_portrait_4d..., 返回 1 条
+[2026-04-17 21:40:24] DEBUG   cpa-agent.request | 响应: 200 - 0.003s
+[2026-04-17 21:40:26] DEBUG   cpa-agent.request | 请求: GET /api/pipeline/list
+[2026-04-17 21:40:26] DEBUG   cpa-agent.request | 响应: 404 - 0.000s
+[2026-04-17 21:40:44] INFO    cpa-agent | ==================================================
+[2026-04-17 21:40:44] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 21:40:44] INFO    cpa-agent | ==================================================
+[2026-04-17 21:40:46] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 21:40:53] DEBUG   cpa-agent.request | 请求: GET /api/graph/overview
+[2026-04-17 21:40:53] INFO    cpa-agent.db.neo4j | 创建 Neo4j 驱动: bolt://localhost:17687
+[2026-04-17 21:40:53] INFO    cpa-agent.db.neo4j | Neo4j 连接测试成功
+[2026-04-17 21:40:53] INFO    cpa-agent.db.neo4j | 获取图谱 schema: 9 种节点, 10 种关系
+[2026-04-17 21:40:53] DEBUG   cpa-agent.request | 响应: 200 - 0.071s
+[2026-04-17 21:40:55] DEBUG   cpa-agent.request | 请求: POST /api/graph/query
+[2026-04-17 21:40:55] DEBUG   cpa-agent.db.neo4j | 执行查询: MATCH (j:JobPortrait)-[r:REQUIRES]->(s:Skill) RETU..., 返回 5 条
+[2026-04-17 21:40:55] DEBUG   cpa-agent.request | 响应: 200 - 0.007s
+[2026-04-17 21:40:58] DEBUG   cpa-agent.request | 请求: GET /api/profile/student/stu_demo_001
+[2026-04-17 21:40:58] INFO    cpa-agent.db.mysql | 创建 MySQL 引擎: localhost:3306/cpa_agent
+[2026-04-17 21:40:58] DEBUG   cpa-agent.db.mysql | 执行查询: 
+        SELECT
+            student_id, name, phon..., 返回 1 条
+[2026-04-17 21:40:58] DEBUG   cpa-agent.request | 响应: 200 - 0.109s
+[2026-04-17 21:41:00] DEBUG   cpa-agent.request | 请求: GET /api/profile/job/list
+[2026-04-17 21:41:00] DEBUG   cpa-agent.db.mysql | 执行查询: 
+            SELECT
+                portrait_id, p..., 返回 2 条
+[2026-04-17 21:41:00] DEBUG   cpa-agent.db.mysql | 执行查询: SELECT COUNT(*) as total FROM job_portrait_4d..., 返回 1 条
+[2026-04-17 21:41:00] DEBUG   cpa-agent.request | 响应: 200 - 0.002s
+[2026-04-17 21:41:02] DEBUG   cpa-agent.request | 请求: GET /api/pipeline/list
+[2026-04-17 21:41:02] DEBUG   cpa-agent.request | 响应: 404 - 0.000s
+[2026-04-17 21:41:04] DEBUG   cpa-agent.request | 请求: GET /api/match/result/stu_demo_001/portrait_job_001
+[2026-04-17 21:41:04] DEBUG   cpa-agent.db.mysql | 执行查询: 
+        SELECT
+            mr.id,
+            mr...., 返回 1 条
+[2026-04-17 21:41:04] DEBUG   cpa-agent.request | 响应: 200 - 0.002s
+[2026-04-17 21:41:49] INFO    cpa-agent | ==================================================
+[2026-04-17 21:41:49] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 21:41:49] INFO    cpa-agent | ==================================================
+[2026-04-17 21:41:51] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 21:42:19] INFO    cpa-agent | ==================================================
+[2026-04-17 21:42:19] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 21:42:19] INFO    cpa-agent | ==================================================
+[2026-04-17 21:42:22] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 21:42:25] DEBUG   cpa-agent.request | 请求: GET /api/graph/overview
+[2026-04-17 21:42:25] INFO    cpa-agent.db.neo4j | 创建 Neo4j 驱动: bolt://localhost:17687
+[2026-04-17 21:42:25] INFO    cpa-agent.db.neo4j | Neo4j 连接测试成功
+[2026-04-17 21:42:25] INFO    cpa-agent.db.neo4j | 获取图谱 schema: 9 种节点, 10 种关系
+[2026-04-17 21:42:25] DEBUG   cpa-agent.request | 响应: 200 - 0.091s
+[2026-04-17 21:42:27] DEBUG   cpa-agent.request | 请求: POST /api/graph/query
+[2026-04-17 21:42:27] DEBUG   cpa-agent.db.neo4j | 执行查询: MATCH (j:JobPortrait)-[r:REQUIRES]->(s:Skill) RETU..., 返回 5 条
+[2026-04-17 21:42:27] DEBUG   cpa-agent.request | 响应: 200 - 0.010s
+[2026-04-17 21:42:29] DEBUG   cpa-agent.request | 请求: GET /api/profile/student/stu_demo_001
+[2026-04-17 21:42:29] INFO    cpa-agent.db.mysql | 创建 MySQL 引擎: localhost:3306/cpa_agent
+[2026-04-17 21:42:29] DEBUG   cpa-agent.db.mysql | 执行查询: 
+        SELECT
+            student_id, name, phon..., 返回 1 条
+[2026-04-17 21:42:29] DEBUG   cpa-agent.request | 响应: 200 - 0.279s
+[2026-04-17 21:42:31] DEBUG   cpa-agent.request | 请求: GET /api/profile/job/list
+[2026-04-17 21:42:31] DEBUG   cpa-agent.db.mysql | 执行查询: 
+            SELECT
+                portrait_id, p..., 返回 2 条
+[2026-04-17 21:42:31] DEBUG   cpa-agent.db.mysql | 执行查询: SELECT COUNT(*) as total FROM job_portrait_4d..., 返回 1 条
+[2026-04-17 21:42:31] DEBUG   cpa-agent.request | 响应: 200 - 0.005s
+[2026-04-17 21:42:33] DEBUG   cpa-agent.request | 请求: GET /api/pipeline/list
+[2026-04-17 21:42:33] DEBUG   cpa-agent.request | 响应: 404 - 0.001s
+[2026-04-17 21:42:35] DEBUG   cpa-agent.request | 请求: GET /api/match/result/stu_demo_001/portrait_job_001
+[2026-04-17 21:42:35] DEBUG   cpa-agent.db.mysql | 执行查询: 
+        SELECT
+            mr.id,
+            mr...., 返回 1 条
+[2026-04-17 21:42:35] DEBUG   cpa-agent.request | 响应: 200 - 0.005s
+[2026-04-17 21:46:53] INFO    cpa-agent | ==================================================
+[2026-04-17 21:46:53] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 21:46:53] INFO    cpa-agent | ==================================================
+[2026-04-17 21:46:55] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 21:49:32] DEBUG   cpa-agent.request | 请求: GET /api/graph/overview
+[2026-04-17 21:49:32] INFO    cpa-agent.db.neo4j | 创建 Neo4j 驱动: bolt://localhost:17687
+[2026-04-17 21:49:32] INFO    cpa-agent.db.neo4j | Neo4j 连接测试成功
+[2026-04-17 21:49:32] INFO    cpa-agent.db.neo4j | 获取图谱 schema: 9 种节点, 10 种关系
+[2026-04-17 21:49:32] DEBUG   cpa-agent.request | 响应: 200 - 0.070s
+[2026-04-17 21:49:34] DEBUG   cpa-agent.request | 请求: POST /api/graph/query
+[2026-04-17 21:49:34] DEBUG   cpa-agent.db.neo4j | 执行查询: MATCH (j:JobPortrait)-[r:REQUIRES]->(s:Skill) RETU..., 返回 5 条
+[2026-04-17 21:49:34] DEBUG   cpa-agent.request | 响应: 200 - 0.006s
+[2026-04-17 21:49:36] DEBUG   cpa-agent.request | 请求: GET /api/profile/student/stu_demo_001
+[2026-04-17 21:49:36] INFO    cpa-agent.db.mysql | 创建 MySQL 引擎: localhost:3306/cpa_agent
+[2026-04-17 21:49:36] DEBUG   cpa-agent.db.mysql | 执行查询: 
+        SELECT
+            student_id, name, phon..., 返回 1 条
+[2026-04-17 21:49:36] DEBUG   cpa-agent.request | 响应: 200 - 0.110s
+[2026-04-17 21:49:38] DEBUG   cpa-agent.request | 请求: GET /api/profile/job/list
+[2026-04-17 21:49:38] DEBUG   cpa-agent.db.mysql | 执行查询: 
+            SELECT
+                portrait_id, p..., 返回 2 条
+[2026-04-17 21:49:38] DEBUG   cpa-agent.db.mysql | 执行查询: SELECT COUNT(*) as total FROM job_portrait_4d..., 返回 1 条
+[2026-04-17 21:49:38] DEBUG   cpa-agent.request | 响应: 200 - 0.002s
+[2026-04-17 21:49:40] DEBUG   cpa-agent.request | 请求: GET /api/pipeline/list
+[2026-04-17 21:49:40] DEBUG   cpa-agent.request | 响应: 404 - 0.000s
+[2026-04-17 21:49:42] DEBUG   cpa-agent.request | 请求: GET /api/match/result/stu_demo_001/portrait_job_001
+[2026-04-17 21:49:42] DEBUG   cpa-agent.db.mysql | 执行查询: 
+        SELECT
+            mr.id,
+            mr...., 返回 1 条
+[2026-04-17 21:49:42] DEBUG   cpa-agent.request | 响应: 200 - 0.005s
+[2026-04-17 21:51:59] INFO    cpa-agent | ==================================================
+[2026-04-17 21:51:59] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 21:51:59] INFO    cpa-agent | ==================================================
+[2026-04-17 21:52:00] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 21:52:42] INFO    cpa-agent | ==================================================
+[2026-04-17 21:52:42] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-17 21:52:42] INFO    cpa-agent | ==================================================
+[2026-04-17 21:52:43] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-17 21:52:46] DEBUG   cpa-agent.request | 请求: GET /api/graph/overview
+[2026-04-17 21:52:46] INFO    cpa-agent.db.neo4j | 创建 Neo4j 驱动: bolt://localhost:17687
+[2026-04-17 21:52:46] INFO    cpa-agent.db.neo4j | Neo4j 连接测试成功
+[2026-04-17 21:52:46] INFO    cpa-agent.db.neo4j | 获取图谱 schema: 9 种节点, 10 种关系
+[2026-04-17 21:52:46] DEBUG   cpa-agent.request | 响应: 200 - 0.079s
+[2026-04-17 21:52:48] DEBUG   cpa-agent.request | 请求: POST /api/graph/query
+[2026-04-17 21:52:48] DEBUG   cpa-agent.db.neo4j | 执行查询: MATCH (j:JobPortrait)-[r:REQUIRES]->(s:Skill) RETU..., 返回 5 条
+[2026-04-17 21:52:48] DEBUG   cpa-agent.request | 响应: 200 - 0.006s
+[2026-04-17 21:52:50] DEBUG   cpa-agent.request | 请求: GET /api/profile/student/stu_demo_001
+[2026-04-17 21:52:50] INFO    cpa-agent.db.mysql | 创建 MySQL 引擎: localhost:3306/cpa_agent
+[2026-04-17 21:52:50] DEBUG   cpa-agent.db.mysql | 执行查询: 
+        SELECT
+            student_id, name, phon..., 返回 1 条
+[2026-04-17 21:52:50] DEBUG   cpa-agent.request | 响应: 200 - 0.191s
+[2026-04-17 21:52:52] DEBUG   cpa-agent.request | 请求: GET /api/profile/job/list
+[2026-04-17 21:52:52] DEBUG   cpa-agent.db.mysql | 执行查询: 
+            SELECT
+                portrait_id, p..., 返回 2 条
+[2026-04-17 21:52:52] DEBUG   cpa-agent.db.mysql | 执行查询: SELECT COUNT(*) as total FROM job_portrait_4d..., 返回 1 条
+[2026-04-17 21:52:52] DEBUG   cpa-agent.request | 响应: 200 - 0.003s
+[2026-04-17 21:52:54] DEBUG   cpa-agent.request | 请求: GET /api/pipeline/list
+[2026-04-17 21:52:54] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-17 21:52:56] DEBUG   cpa-agent.request | 请求: GET /api/match/result/stu_demo_001/portrait_job_001
+[2026-04-17 21:52:56] DEBUG   cpa-agent.db.mysql | 执行查询: 
+        SELECT
+            mr.id,
+            mr...., 返回 1 条
+[2026-04-17 21:52:56] DEBUG   cpa-agent.request | 响应: 200 - 0.002s
+[2026-04-18 21:16:52] INFO    cpa-agent | ==================================================
+[2026-04-18 21:16:52] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-18 21:16:52] INFO    cpa-agent | ==================================================
+[2026-04-18 21:16:53] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-18 21:17:28] DEBUG   cpa-agent.request | 请求: POST /api/pipeline/ext/extract
+[2026-04-18 21:17:28] INFO    cpa-agent.llm | LLMClient 初始化: model=deepseek-chat, base_url=https://api.deepseek.com/v1
+[2026-04-18 21:17:32] INFO    cpa-agent.llm_skill_extractor | LLM 抽取到 6 个技能
+[2026-04-18 21:17:32] INFO    cpa-agent.db.neo4j | 创建 Neo4j 驱动: bolt://localhost:17687
+[2026-04-18 21:17:32] WARNING cpa-agent.request | 慢请求: POST /api/pipeline/ext/extract - 4.08s
+[2026-04-18 21:17:34] DEBUG   cpa-agent.request | 请求: POST /api/pipeline/ext/match
+[2026-04-18 21:17:34] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-18 21:17:36] DEBUG   cpa-agent.request | 请求: GET /api/pipeline/ext/recommend
+[2026-04-18 21:17:36] INFO    cpa-agent.db.neo4j | 创建 Neo4j 驱动: bolt://localhost:17687
+[2026-04-18 21:17:36] DEBUG   cpa-agent.request | 响应: 200 - 0.125s
+[2026-04-18 21:21:07] INFO    cpa-agent | ==================================================
+[2026-04-18 21:21:07] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-18 21:21:07] INFO    cpa-agent | ==================================================
+[2026-04-18 21:21:08] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-18 21:21:43] INFO    cpa-agent | ==================================================
+[2026-04-18 21:21:43] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-18 21:21:43] INFO    cpa-agent | ==================================================
+[2026-04-18 21:21:44] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-18 21:22:16] INFO    cpa-agent | ==================================================
+[2026-04-18 21:22:16] INFO    cpa-agent | CPA-Agent Backend 启动中...
+[2026-04-18 21:22:16] INFO    cpa-agent | ==================================================
+[2026-04-18 21:22:17] INFO    cpa-agent | CPA-Agent Backend 启动完成
+[2026-04-18 21:22:39] DEBUG   cpa-agent.request | 请求: POST /api/pipeline/ext/portrait/student
+[2026-04-18 21:22:39] DEBUG   cpa-agent.request | 响应: 200 - 0.000s
+[2026-04-18 21:22:41] DEBUG   cpa-agent.request | 请求: POST /api/pipeline/ext/portrait/job
+[2026-04-18 21:22:41] ERROR   cpa-agent.api.pipeline_ext | 生成岗位画像失败: 'name'
+[2026-04-18 21:22:41] DEBUG   cpa-agent.request | 响应: 500 - 0.001s
+[2026-04-18 21:22:43] DEBUG   cpa-agent.request | 请求: POST /api/pipeline/ext/report/match
+[2026-04-18 21:22:43] ERROR   cpa-agent.api.pipeline_ext | 生成匹配报告失败: 'name'
+[2026-04-18 21:22:43] DEBUG   cpa-agent.request | 响应: 500 - 0.001s
+[2026-04-18 21:22:45] DEBUG   cpa-agent.request | 请求: POST /api/pipeline/ext/report/career
+[2026-04-18 21:22:45] DEBUG   cpa-agent.request | 响应: 200 - 0.000s

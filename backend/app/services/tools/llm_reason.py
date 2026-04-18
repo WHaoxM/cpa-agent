@@ -3,16 +3,35 @@ Tool 5: llm_reason — LLM 自然语言推理
 职业建议、报告润色、匹配分数解释等需要 LLM 深度思考的场景
 """
 
-from typing import Dict
+from typing import Dict, Optional
 
 from .base import BaseTool
 from ...utils.logger import get_logger
+from ...utils.llm_client import LLMClient
 
 logger = get_logger('cpa-agent.tool.llm_reason')
+
+SYSTEM_PROMPT = """你是 CPA-Agent 职业规划专家，擅长：
+1. 分析学生的技能画像与岗位需求的匹配度
+2. 提供职业发展建议和学习路径规划
+3. 解释人岗匹配分数的构成和优化方向
+4. 撰写专业的职业发展报告
+
+请基于提供的上下文信息，给出专业、实用的建议。"""
 
 
 class LlmReasonTool(BaseTool):
     """LLM 自然语言推理工具"""
+
+    def __init__(self):
+        super().__init__()
+        self._llm = None
+
+    @property
+    def llm(self) -> LLMClient:
+        if self._llm is None:
+            self._llm = LLMClient()
+        return self._llm
 
     @property
     def name(self) -> str:
@@ -49,12 +68,30 @@ class LlmReasonTool(BaseTool):
         task = kwargs.get("task", "")
         context = kwargs.get("context", "")
 
+        if not task:
+            return "[llm_reason] 错误: task 参数不能为空"
+
         logger.info(f"llm_reason 执行: task={task[:100]}")
 
-        # TODO: 实现 LLM 推理
-        # 1. 构建 System Prompt (职业规划专家角色)
-        # 2. 注入 context (画像数据/匹配结果等)
-        # 3. LLMClient.chat() 生成回答
-        # 4. 返回推理结果
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT}
+        ]
 
-        return f"[llm_reason] 任务: {task}\n暂未实现, 待接入 LLMClient"
+        if context:
+            user_content = f"上下文信息:\n{context}\n\n---\n\n任务: {task}"
+        else:
+            user_content = task
+
+        messages.append({"role": "user", "content": user_content})
+
+        try:
+            result = self.llm.chat(
+                messages=messages,
+                temperature=0.7,
+                max_tokens=2048
+            )
+            logger.info(f"llm_reason 完成: 响应长度={len(result)}")
+            return result
+        except Exception as e:
+            logger.error(f"llm_reason 执行失败: {e}")
+            return f"[llm_reason] 推理失败: {str(e)}"

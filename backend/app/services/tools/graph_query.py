@@ -3,16 +3,35 @@ Tool 1: graph_query — Neo4j 知识图谱查询
 智能体根据用户意图动态生成 Cypher 查询, 驱动知识图谱可视化
 """
 
-from typing import Dict
+import json
+from typing import Dict, Any, List, Optional
 
 from .base import BaseTool
+from ...services.db import get_neo4j_client, Neo4jClient
 from ...utils.logger import get_logger
+from ...utils.llm_client import get_llm_client
 
 logger = get_logger('cpa-agent.tool.graph_query')
 
 
 class GraphQueryTool(BaseTool):
     """Neo4j 图谱查询工具 (Text-to-Cypher)"""
+
+    def __init__(self, neo4j_client: Optional[Neo4jClient] = None, llm_client=None):
+        self._neo4j = neo4j_client
+        self._llm = llm_client
+
+    @property
+    def neo4j(self) -> Neo4jClient:
+        if self._neo4j is None:
+            self._neo4j = get_neo4j_client()
+        return self._neo4j
+
+    @property
+    def llm(self):
+        if self._llm is None:
+            self._llm = get_llm_client()
+        return self._llm
 
     @property
     def name(self) -> str:
@@ -48,16 +67,152 @@ class GraphQueryTool(BaseTool):
             "query_type": "查询类型提示 (可选: path/neighbors/statistics)"
         }
 
+    def _get_schema_prompt(self) -> str:
+        """获取图谱 Schema 提示"""
+        try:
+            schema = self.neo4j.get_schema()
+            node_info = []
+            for label in schema.get("node_labels", [])[:20]:
+                count = schema.get("node_counts", {}).get(label, "N/A")
+                node_info.append(f"- {label}: {count} 个节点")
+
+            rel_info = []
+            for rel_type in schema.get("relationship_types", [])[:20]:
+                rel_info.append(f"- {rel_type}")
+
+            return f"""\
+图谱 Schema:
+节点类型 ({len(schema.get('node_labels', []))} 种):
+{chr(10).join(node_info)}
+
+关系类型 ({len(schema.get('relationship_types', []))} 种):
+{chr(10).join(rel_info)}"""
+        except Exception as e:
+            logger.warning(f"获取 schema 失败: {e}")
+            return "图谱 schema 暂不可用"
+
+    def _generate_cypher(self, user_query: str, query_type: str = "") -> str:
+        """使用 LLM 生成 Cypher 查询"""
+        schema_prompt = self._get_schema_prompt()
+
+        system_prompt = f"""\
+你是 Neo4j Cypher 查询专家。根据用户问题生成只读的 Cypher 查询语句。
+
+{schema_prompt}
+
+生成规则:
+1. 只使用 MATCH 语句进行查询
+2. 使用参数化查询避免注入
+3. 限制返回数量 (LIMIT 50)
+4. 如果用户问题不明确，先查询相关节点再深入
+
+query_type 提示: {query_type if query_type else '自动判断'}
+
+输出格式:
+只输出 Cypher 语句，不要其他解释。"""
+
+        try:
+            response = self.llm.chat(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_query}
+                ],
+                temperature=0.1,
+                max_tokens=500,
+            )
+            if response:
+                cypher = response.strip()
+                if cypher.startswith("```cypher"):
+                    cypher = cypher[9:]
+                if cypher.startswith("```"):
+                    cypher = cypher[3:]
+                if cypher.endswith("```"):
+                    cypher = cypher[:-3]
+                return cypher.strip()
+        except Exception as e:
+            logger.error(f"Cypher 生成失败: {e}")
+
+        return ""
+
+    def _format_results(
+        self,
+        nodes: List[Dict],
+        edges: List[Dict],
+    ) -> str:
+        """格式化查询结果"""
+        parts = []
+
+        if nodes:
+            parts.append(f"找到 {len(nodes)} 个节点:")
+            for i, node in enumerate(nodes[:10]):
+                labels = list(node.keys())
+                parts.append(f"  {i+1}. {node.get('n', node)}")
+            if len(nodes) > 10:
+                parts.append(f"  ... 还有 {len(nodes) - 10} 个节点")
+
+        if edges:
+            parts.append(f"\n找到 {len(edges)} 条关系:")
+            for i, edge in enumerate(edges[:10]):
+                parts.append(f"  {i+1}. {edge}")
+            if len(edges) > 10:
+                parts.append(f"  ... 还有 {len(edges) - 10} 条关系")
+
+        if not nodes and not edges:
+            parts.append("未找到匹配的数据")
+
+        return "\n".join(parts)
+
     def execute(self, **kwargs) -> str:
         query = kwargs.get("query", "")
         query_type = kwargs.get("query_type", "")
 
+        if not query:
+            return "[graph_query] 错误: query 参数不能为空"
+
         logger.info(f"graph_query 执行: query={query}, type={query_type}")
 
-        # TODO: 实现 Text-to-Cypher 流程
-        # 1. 将 Neo4j Schema (节点类型/关系类型/属性) 注入 Prompt
-        # 2. LLM 生成 Cypher (只读 MATCH 语句)
-        # 3. Neo4j driver 执行查询
-        # 4. 格式化结果为文本
+        try:
+            cypher = self._generate_cypher(query, query_type)
+            if not cypher:
+                return "[graph_query] 无法生成查询语句，请重述问题"
 
-        return f"[graph_query] 查询: {query}\n暂未实现, 待接入 Neo4j 驱动"
+            logger.debug(f"生成的 Cypher: {cypher}")
+
+            results = self.neo4j.execute_query(cypher, read_only=True)
+
+            nodes = []
+            edges = []
+
+            for record in results:
+                for value in record.values():
+                    if hasattr(value, 'labels'):
+                        nodes.append({
+                            "labels": list(value.labels()),
+                            "properties": dict(value)
+                        })
+                    elif hasattr(value, 'type'):
+                        edges.append({
+                            "type": value.type(),
+                            "start": dict(value.start_node),
+                            "end": dict(value.end_node),
+                            "properties": dict(value)
+                        })
+                    elif isinstance(value, list):
+                        for item in value:
+                            if hasattr(item, 'labels'):
+                                nodes.append({
+                                    "labels": list(item.labels()),
+                                    "properties": dict(item)
+                                })
+                            elif hasattr(item, 'type'):
+                                edges.append({
+                                    "type": item.type(),
+                                    "start": dict(item.start_node),
+                                    "end": dict(item.end_node),
+                                })
+
+            return self._format_results(nodes, edges)
+
+        except Exception as e:
+            logger.error(f"graph_query 执行失败: {e}")
+            return f"[graph_query] 执行失败: {str(e)}"

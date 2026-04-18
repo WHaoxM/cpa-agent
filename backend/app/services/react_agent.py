@@ -26,6 +26,7 @@ from .tools.db_query import DbQueryTool
 from .tools.semantic_search import SemanticSearchTool
 from .tools.pipeline_run import PipelineRunTool
 from .tools.llm_reason import LlmReasonTool
+from .tools.jd_cleaner import JdCleanerTool
 
 logger = get_logger('cpa-agent.react_agent')
 
@@ -155,7 +156,7 @@ class ReactAgent:
     """
 
     # 合法工具名称集合, 用于裸 JSON 兜底解析时校验
-    VALID_TOOL_NAMES = {"graph_query", "db_query", "semantic_search", "pipeline_run", "llm_reason"}
+    VALID_TOOL_NAMES = {"graph_query", "db_query", "semantic_search", "pipeline_run", "llm_reason", "jd_cleaner"}
 
     def __init__(
         self,
@@ -186,6 +187,7 @@ class ReactAgent:
             SemanticSearchTool(),
             PipelineRunTool(),
             LlmReasonTool(),
+            JdCleanerTool(),
         ]
         for tool in tool_instances:
             self.tools[tool.name] = tool
