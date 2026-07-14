@@ -1,0 +1,59 @@
+# 实体规则词表 — 日期/学位/角色/公司后缀关键词
+# 来源: backend/app/pipeline/entity_extractor/dictionaries/entity_patterns.py
+# 注: 正则模式 DATE_PATTERNS 保留在代码中 (ADR-0001: 算法型逻辑不做 YAML 化)
+
+degree_keywords:
+  - 博士
+  - 硕士
+  - 本科
+  - 学士
+  - 专科
+  - 大专
+  - PhD
+  - Master
+  - Bachelor
+  - Associate
+  - MBA
+  - MPA
+  - 博士后
+
+role_keywords:
+  - 负责人
+  - 核心开发者
+  - 技术负责人
+  - 项目经理
+  - 组长
+  - 工程师
+  - 开发者
+  - 实习生
+  - 研究员
+  - 助理
+  - 成员
+  - 组员
+  - 主要开发
+  - 核心成员
+  - Lead
+  - Manager
+  - Engineer
+  - Developer
+  - Intern
+
+company_suffixes:
+  - 有限公司
+  - 股份有限公司
+  - 集团
+  - 科技
+  - 网络
+  - 信息技术
+  - 实验室
+  - 研究院
+  - 研究所
+  - 大学
+  - 学院
+  - 中心
+  - 工作室
+  - Inc.
+  - Corp.
+  - Ltd.
+  - LLC
+  - Co.

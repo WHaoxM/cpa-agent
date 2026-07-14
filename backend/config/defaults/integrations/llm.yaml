@@ -1,0 +1,36 @@
+# LLM Provider Presets — repo 权威默认
+# 密钥 (api_key, LLM_BASE_URL) 保留 .env，仅 base_url/model 迁 YAML
+
+providers:
+  openai:
+    base_url: "https://api.openai.com/v1"
+    model: "gpt-4o-mini"
+
+  moonshot:
+    base_url: "https://api.moonshot.cn/v1"
+    model: "moonshot-v1-8k"
+
+  zhipu:
+    base_url: "https://open.bigmodel.cn/api/paas/v4"
+    model: "glm-4"
+
+  ollama:
+    base_url: "http://localhost:11434/v1"
+    model: "qwen2.5:latest"
+
+  vllm:
+    base_url: "http://localhost:8000/v1"
+    model: "Qwen/Qwen2.5-7B-Instruct"
+
+  lmstudio:
+    base_url: "http://localhost:1234/v1"
+    model: "local-model"
+
+  custom:
+    base_url: null
+    model: null
+
+defaults:
+  # 启动时默认 provider，.env 中 LLM_PROVIDER 可覆盖
+  provider: "openai"
+  timeout: 120

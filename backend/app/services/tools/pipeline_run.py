@@ -10,7 +10,7 @@ from typing import Dict, Optional
 
 from .base import BaseTool
 from ...utils.logger import get_logger
-from ...services.db.mysql_client import MySQLClient
+from ...services.db.mysql_client import MySQLClient, get_mysql_client
 
 logger = get_logger('cpa-agent.tool.pipeline_run')
 
@@ -33,7 +33,7 @@ class PipelineRunTool(BaseTool):
     @property
     def mysql(self) -> MySQLClient:
         if self._mysql is None:
-            self._mysql = MySQLClient()
+            self._mysql = get_mysql_client()
         return self._mysql
 
     @property
@@ -72,55 +72,65 @@ class PipelineRunTool(BaseTool):
         }
 
     def _create_task(self, pipeline: str, params: dict) -> str:
-        """创建管线任务记录"""
         task_id = f"task_{uuid.uuid4().hex[:12]}"
-        
+
         sql = """
-        INSERT INTO pipeline_task 
+        INSERT INTO pipeline_task
         (task_id, pipeline, status, params_json, student_id, job_id, triggered_by, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (:task_id, :pipeline, :status, :params_json, :student_id, :job_id, :triggered_by, :created_at)
         """
-        
+
         student_id = params.get("student_id")
         job_id = params.get("job_id")
-        
-        self.mysql.execute_write(
+
+        self.mysql.execute(
             sql,
-            (task_id, pipeline, "pending", json.dumps(params), student_id, job_id, "agent", datetime.now())
+            {
+                "task_id": task_id,
+                "pipeline": pipeline,
+                "status": "pending",
+                "params_json": json.dumps(params),
+                "student_id": student_id,
+                "job_id": job_id,
+                "triggered_by": "agent",
+                "created_at": datetime.now(),
+            },
+            commit=True
         )
-        
+
         logger.info(f"创建管线任务: task_id={task_id}, pipeline={pipeline}")
         return task_id
 
     def _run_pipeline_sync(self, pipeline: str, params: dict) -> str:
-        """同步执行管线 (简化版，实际应异步)"""
         task_id = self._create_task(pipeline, params)
-        
-        self.mysql.execute_write(
-            "UPDATE pipeline_task SET status=%s, started_at=%s WHERE task_id=%s",
-            ("running", datetime.now(), task_id)
+
+        self.mysql.execute(
+            "UPDATE pipeline_task SET status=:status, started_at=:started_at WHERE task_id=:task_id",
+            {"status": "running", "started_at": datetime.now(), "task_id": task_id},
+            commit=True
         )
-        
+
         try:
             result = self._execute_pipeline(pipeline, params)
-            
-            self.mysql.execute_write(
-                "UPDATE pipeline_task SET status=%s, completed_at=%s, result_json=%s WHERE task_id=%s",
-                ("completed", datetime.now(), json.dumps(result), task_id)
+
+            self.mysql.execute(
+                "UPDATE pipeline_task SET status=:status, completed_at=:completed_at, result_json=:result_json WHERE task_id=:task_id",
+                {"status": "completed", "completed_at": datetime.now(), "result_json": json.dumps(result), "task_id": task_id},
+                commit=True
             )
-            
+
             return f"[pipeline_run] 任务完成\n任务ID: {task_id}\n管线: {pipeline}\n结果: {result.get('summary', '处理完成')}"
-            
+
         except Exception as e:
             logger.error(f"管线执行失败: {e}")
-            self.mysql.execute_write(
-                "UPDATE pipeline_task SET status=%s, error_message=%s WHERE task_id=%s",
-                ("failed", str(e), task_id)
+            self.mysql.execute(
+                "UPDATE pipeline_task SET status=:status, error_message=:error_message WHERE task_id=:task_id",
+                {"status": "failed", "error_message": str(e), "task_id": task_id},
+                commit=True
             )
-            return f"[pipeline_run] 任务失败: {str(e)}"
+            return f"[pipeline_run] 任务失败，请稍后重试"
 
     def _execute_pipeline(self, pipeline: str, params: dict) -> dict:
-        """执行具体的管线逻辑"""
         if pipeline == "L0_parse_resume":
             return self._run_l0_parse_resume(params)
         elif pipeline == "L1_build_graph":
@@ -133,34 +143,232 @@ class PipelineRunTool(BaseTool):
             return self._run_l4_generate_report(params)
         return {"summary": "未知管线"}
 
+    def _get_student_profile(self, student_id: str) -> Optional[Dict]:
+        """从 MySQL 获取学生 profile 数据"""
+        try:
+            rows = self.mysql.fetch_all(
+                """
+                SELECT name, school, major, degree, graduation_year, profile_json
+                FROM student_profile WHERE student_id = :student_id LIMIT 1
+                """,
+                {"student_id": student_id}
+            )
+            if rows:
+                row = rows[0]
+                profile = {
+                    "name": row.get("name"),
+                    "school": row.get("school"),
+                    "major": row.get("major"),
+                    "degree": row.get("degree"),
+                    "graduation_year": row.get("graduation_year")
+                }
+                profile_json = row.get("profile_json")
+                if profile_json:
+                    if isinstance(profile_json, str):
+                        import json
+                        profile_json = json.loads(profile_json)
+                    profile["profile_json"] = profile_json
+                return profile
+        except Exception as e:
+            logger.warning(f"获取学生 profile 失败: {e}")
+        return None
+
     def _run_l0_parse_resume(self, params: dict) -> dict:
-        """L0: 简历解析"""
+        from ...pipeline.entity_extractor.l0_parser import L0ResumeParser
         student_id = params.get("student_id")
         file_path = params.get("file_path")
-        return {"summary": f"简历解析完成 (student_id={student_id})", "student_id": student_id}
+        text = params.get("text")
+
+        try:
+            parser = L0ResumeParser()
+            if file_path:
+                parse_result = parser.parse_file(file_path)
+            elif text:
+                parse_result = parser.parse_text(text)
+            else:
+                return {"success": False, "summary": "缺少 file_path 或 text 参数"}
+
+            if not parse_result.success:
+                return {"success": False, "summary": parse_result.error or "解析失败"}
+
+            return {
+                "success": True,
+                "summary": f"简历解析完成，共 {len(parse_result.blocks)} 个文本块",
+                "student_id": student_id,
+                "block_count": len(parse_result.blocks)
+            }
+        except Exception as e:
+            logger.error(f"L0 简历解析失败: {e}")
+            return {"success": False, "summary": "解析失败，请稍后重试"}
 
     def _run_l1_build_graph(self, params: dict) -> dict:
-        """L1: 知识图谱构建"""
-        return {"summary": "知识图谱构建完成"}
+        from ...pipeline.entity_extractor.nsle_pipeline import NSLEPipeline
+        from ...pipeline.entity_extractor.graph_storage import GraphStorage
+        from ...pipeline.entity_extractor.skill_extractor import extract_skills as dict_extract
+
+        student_id = params.get("student_id")
+        text = params.get("text")
+        blocks = params.get("blocks", [])
+
+        try:
+            if text:
+                pipeline = NSLEPipeline(use_deepseek=False)
+                parse_result = pipeline.run_resume_text(text)
+                skills_data = parse_result.get("skills", [])
+            elif blocks:
+                all_text = "\n".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in blocks])
+                skills_data = dict_extract(all_text)
+            else:
+                return {"success": False, "summary": "L1 构建缺少 text 或 blocks 参数"}
+
+            skill_list = [s["name"] for s in skills_data] if isinstance(skills_data, list) else []
+            if not skill_list:
+                return {"success": False, "summary": "未提取到任何技能"}
+
+            storage = GraphStorage()
+            saved_count = storage.save_skills_to_graph(
+                student_id=student_id or "unknown",
+                skills=[{"name": s} for s in skill_list],
+                source="resume"
+            )
+
+            return {
+                "success": True,
+                "summary": f"知识图谱构建完成，保存 {saved_count} 个技能节点",
+                "student_id": student_id,
+                "skill_count": saved_count
+            }
+        except Exception as e:
+            logger.error(f"L1 图谱构建失败: {e}")
+            return {"success": False, "summary": "图谱构建失败，请稍后重试"}
 
     def _run_l2_generate_portrait(self, params: dict) -> dict:
-        """L2: 画像生成"""
+        from ...pipeline.entity_extractor.portrait_generator import PortraitGenerator
+        from ...pipeline.entity_extractor.graph_storage import GraphStorage
+
         student_id = params.get("student_id")
         job_id = params.get("job_id")
-        return {"summary": f"画像生成完成 (student_id={student_id}, job_id={job_id})"}
+        skills = params.get("skills", [])
+        student_profile = params.get("student_profile")
+
+        try:
+            if not skills:
+                storage = GraphStorage()
+                graph_skills = storage.get_entity_skills(student_id or "unknown", entity_type="student")
+                skills = [{"name": s["name"], "category": s.get("category", ""), "confidence": s.get("confidence", 0.5)} for s in graph_skills]
+
+            if not skills:
+                return {"success": False, "summary": "未找到学生技能数据，请先执行 L1 构建"}
+
+            if not student_profile and student_id:
+                student_profile = self._get_student_profile(student_id)
+
+            portrait_gen = PortraitGenerator()
+            portrait = portrait_gen.generate_student_portrait(
+                student_id=student_id or "unknown",
+                skills=skills,
+                match_job_id=job_id,
+                student_profile=student_profile
+            )
+
+            return {
+                "success": True,
+                "summary": f"画像生成完成，综合得分 {portrait.get('competitiveness', 0)}",
+                "student_id": student_id,
+                "d1": portrait.get("d1_score"),
+                "d2": portrait.get("d2_score"),
+                "d3": portrait.get("d3_score"),
+                "d4": portrait.get("d4_score"),
+                "competitiveness": portrait.get("competitiveness")
+            }
+        except Exception as e:
+            logger.error(f"L2 画像生成失败: {e}")
+            return {"success": False, "summary": "画像生成失败，请稍后重试"}
 
     def _run_l3_run_match(self, params: dict) -> dict:
-        """L3: 人岗匹配"""
+        from ...pipeline.entity_extractor.matcher import SkillMatcher
+        from ...pipeline.entity_extractor.skill_matcher import SkillMatcher as SemanticMatcher
+        from ...pipeline.entity_extractor.graph_storage import GraphStorage
+
         student_id = params.get("student_id")
-        job_id = params.get("job_id")
-        return {"summary": f"匹配完成 (student_id={student_id}, job_id={job_id})"}
+        job_portrait_id = params.get("job_portrait_id") or params.get("job_id")
+        student_skills = params.get("student_skills", [])
+        job_skills = params.get("job_skills", [])
+
+        try:
+            storage = GraphStorage()
+            if not student_skills:
+                graph_skills = storage.get_entity_skills(student_id or "unknown", entity_type="student")
+                student_skills = [{"name": s["name"], "level": s.get("level", "了解"), "confidence": s.get("confidence", 0.5)} for s in graph_skills]
+
+            if not job_portrait_id:
+                return {"success": False, "summary": "缺少 job_portrait_id 参数"}
+
+            job_cypher = "MATCH (j:JobPortrait {portrait_id: $portrait_id}) MATCH (j)-[r:REQUIRES|PREFERS|BONUS]->(s:Skill) RETURN s.name as name, r.level as level"
+            from ...services.db.neo4j_client import Neo4jClient
+            neo4j = Neo4jClient()
+            job_result = neo4j.execute_query(job_cypher, {"portrait_id": job_portrait_id})
+            if not job_result:
+                return {"success": False, "summary": f"未找到岗位画像 {job_portrait_id}"}
+            job_skills = [{"name": r["name"], "level": r.get("level", "必须")} for r in job_result]
+
+            if not student_skills or not job_skills:
+                return {"success": False, "summary": "学生或岗位技能列表为空"}
+
+            matcher = SkillMatcher()
+            semantic_matcher = SemanticMatcher()
+            student_text = " ".join([s.get("name", "") for s in student_skills])
+            _, semantic_matches = semantic_matcher.match_with_semantic(student_text)
+            semantic_matches = semantic_matches or []
+
+            result = matcher.calculate_match(student_skills, job_skills, semantic_matches=semantic_matches)
+
+            return {
+                "success": True,
+                "summary": f"匹配完成，总分 {result.total_score}，匹配等级 {result.match_level}",
+                "student_id": student_id,
+                "job_portrait_id": job_portrait_id,
+                "total_score": result.total_score,
+                "d1_score": result.d1_score,
+                "d2_score": result.d2_score,
+                "d3_score": result.d3_score,
+                "d4_score": result.d4_score,
+                "skill_coverage": result.skill_coverage,
+                "matched_count": len(result.matched_skills),
+                "missing_count": len(result.missing_skills)
+            }
+        except Exception as e:
+            logger.error(f"L3 匹配失败: {e}")
+            return {"success": False, "summary": "匹配执行失败，请稍后重试"}
 
     def _run_l4_generate_report(self, params: dict) -> dict:
-        """L4: 报告生成"""
+        from ...pipeline.entity_extractor.l4_report_generator import L4ReportGenerator
+
         student_id = params.get("student_id")
-        job_id = params.get("job_id")
+        job_portrait_id = params.get("job_portrait_id") or params.get("job_id")
         report_id = f"report_{uuid.uuid4().hex[:12]}"
-        return {"summary": f"报告生成完成", "report_id": report_id}
+
+        try:
+            generator = L4ReportGenerator()
+            report_result = generator.generate(
+                student_id=student_id or "unknown",
+                job_portrait_id=job_portrait_id or "unknown",
+                report_id=report_id
+            )
+
+            if report_result.get("status") == "failed":
+                return {"success": False, "summary": report_result.get("error", "报告生成失败")}
+
+            return {
+                "success": True,
+                "summary": f"报告生成完成",
+                "report_id": report_id,
+                "student_id": student_id,
+                "job_portrait_id": job_portrait_id
+            }
+        except Exception as e:
+            logger.error(f"L4 报告生成失败: {e}")
+            return {"success": False, "summary": "报告生成失败，请稍后重试"}
 
     def execute(self, **kwargs) -> str:
         pipeline = kwargs.get("pipeline", "")

@@ -1,0 +1,277 @@
+# LLM 技能抽取辅助词典
+# 供 app/pipeline/entity_extractor/llm_skill_extractor.py 加载
+# 包含: 上下文负面词 / 软技能关键词 / 高置信度技能 / 等级置信度映射 / 软技能折扣 / 技能分类映射
+
+# ── 上下文负面词 (用于幻觉检测: level=精通/掌握 但含负面词时视为幻觉) ──
+tech_context_negative:
+  - 了解过
+  - 学习过
+  - 接触过
+  - 曾经
+  - 以前
+  - 用过
+  - 看过
+  - 读过
+  - 听说过
+  - 略微
+  - 一点
+  - not
+  - learned
+  - studied
+  - some
+  - basic
+
+# ── 软技能关键词 (用于 _detect_skill_type 判定 hard/soft) ──
+soft_skill_keywords:
+  - 沟通
+  - 团队
+  - 合作
+  - 领导
+  - 管理
+  - 协调
+  - 组织
+  - 项目管理
+  - 时间管理
+  - 计划管理
+  - 解决问题
+  - 分析
+  - 决策
+  - 表达
+  - 演示
+  - 汇报
+  - 写作
+  - 学习能力
+  - 适应能力
+  - 抗压
+  - 责任心
+  - 积极主动
+  - 创新
+  - 创造力
+  - 批判性思维
+  - 沟通技巧
+  - 人际交往
+  - 跨团队
+  - 协作
+  - leadership
+  - communication
+  - teamwork
+  - collaboration
+  - problem solving
+  - critical thinking
+  - presentation
+  - time management
+  - project management
+  - stakeholder
+
+# ── 高置信度技能集合 (防止 LLM 幻觉: 仅这些技能允许 level=精通/掌握) ──
+high_confidence_skills:
+  - Python
+  - Java
+  - JavaScript
+  - TypeScript
+  - C++
+  - C#
+  - Go
+  - Rust
+  - Vue.js
+  - React
+  - Angular
+  - Django
+  - Flask
+  - FastAPI
+  - Spring Boot
+  - MySQL
+  - PostgreSQL
+  - MongoDB
+  - Redis
+  - Elasticsearch
+  - Docker
+  - Kubernetes
+  - Jenkins
+  - Git
+  - GitHub
+  - AWS
+  - Azure
+  - GCP
+  - 阿里云
+  - 腾讯云
+  - TensorFlow
+  - PyTorch
+  - Keras
+  - Scikit-learn
+  - Linux
+  - GitLab
+  - Nginx
+  - Kafka
+  - Flink
+  - Spark
+
+# ── 等级 → 置信度映射 (用于 _calc_confidence) ──
+level_confidence_mapping:
+  精通: 0.95
+  掌握: 0.80
+  熟悉: 0.65
+  了解: 0.45
+
+# ── 软技能折扣系数 (skill_type=soft 时 base *= 该值) ──
+soft_skill_discount: 0.8
+
+# ── 默认置信度 (level 不在 mapping 中时使用) ──
+default_confidence: 0.5
+
+# ── 技能分类映射 (供 _categorize 使用: skill_name → category) ──
+# 与 skill_extractor_lexicon.yaml 的 14 分类不同 — 此处是 LLM 抽取的简化分类
+category_map:
+  编程语言:
+    - Python
+    - Java
+    - JavaScript
+    - TypeScript
+    - Go
+    - Rust
+    - C++
+    - C#
+    - PHP
+    - Ruby
+    - Swift
+    - Kotlin
+    - Shell
+    - Bash
+    - R
+    - MATLAB
+    - Perl
+    - Lua
+    - Scala
+    - Dart
+  前端:
+    - Vue.js
+    - React
+    - Angular
+    - Svelte
+    - jQuery
+    - Bootstrap
+    - Tailwind
+    - Element UI
+    - Ant Design
+    - Next.js
+    - Nuxt.js
+    - HTML
+    - CSS
+    - Sass
+    - Webpack
+    - Vite
+  后端框架:
+    - Django
+    - Flask
+    - FastAPI
+    - Spring
+    - Spring Boot
+    - Express
+    - NestJS
+    - Koa
+    - Laravel
+    - Rails
+    - Gin
+    - Beego
+  数据库:
+    - MySQL
+    - PostgreSQL
+    - MongoDB
+    - Redis
+    - Elasticsearch
+    - Oracle
+    - SQLite
+    - Cassandra
+    - DynamoDB
+    - Neo4j
+    - Memcached
+    - ClickHouse
+    - Hive
+    - HBase
+    - TiDB
+  DevOps:
+    - Docker
+    - Kubernetes
+    - Jenkins
+    - GitLab CI
+    - GitHub Actions
+    - Ansible
+    - Terraform
+    - Prometheus
+    - Grafana
+    - ELK
+    - Kibana
+    - Helm
+    - Istio
+    - Argo CD
+    - Nginx
+    - Apache
+    - Tomcat
+  AI/ML:
+    - TensorFlow
+    - PyTorch
+    - Keras
+    - Scikit-learn
+    - Pandas
+    - NumPy
+    - OpenCV
+    - Hugging Face
+    - Transformers
+    - LangChain
+    - LLaMA
+    - BERT
+    - GPT
+    - XGBoost
+    - LightGBM
+    - OpenAI
+    - vLLM
+    - Ollama
+    - DeepSeek
+    - Qwen
+    - RAG
+    - LoRA
+    - LangGraph
+  大数据:
+    - Hadoop
+    - Spark
+    - Flink
+    - Kafka
+    - Storm
+    - Beam
+    - Hive
+    - HBase
+    - Doris
+    - Presto
+    - Trino
+    - Kylin
+  云计算:
+    - AWS
+    - Azure
+    - GCP
+    - 阿里云
+    - 腾讯云
+    - 华为云
+    - UCloud
+    - OBS
+    - OSS
+    - S3
+    - ECS
+    - Lambda
+    - ACK
+    - EKS
+    - GKE
+  工具:
+    - Git
+    - GitHub
+    - GitLab
+    - SVN
+    - JIRA
+    - Confluence
+    - Docker
+    - Nginx
+    - Linux
+    - Vim
+    - Pycharm
+    - VSCode
+    - Cursor
+    - Windsurf

@@ -4,7 +4,7 @@
 
 from datetime import datetime
 from typing import Optional, Dict, Any
-from sqlalchemy import Column, String, Text, JSON, Integer, Float, DateTime, SmallInteger
+from sqlalchemy import Column, String, Text, JSON, Integer, Float, DateTime, SmallInteger, Index, UniqueConstraint, ForeignKey
 from sqlalchemy.orm import relationship
 
 from .base import Base
@@ -13,6 +13,13 @@ from .base import Base
 class StudentProfile(Base):
     """学生简历表 (L0 输出)"""
     __tablename__ = 'student_profile'
+    __table_args__ = (
+        Index('idx_name', 'name'),
+        Index('idx_degree', 'degree'),
+        Index('idx_school', 'school'),
+        Index('idx_major', 'major'),
+        Index('idx_graduation', 'graduation_year'),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     student_id = Column(String(64), unique=True, nullable=False, comment='学生唯一ID')
@@ -65,22 +72,28 @@ class StudentProfile(Base):
 class StudentPortrait4D(Base):
     """学生四维画像表 (L2 输出)"""
     __tablename__ = 'student_portrait_4d'
+    __table_args__ = (
+        UniqueConstraint('student_id', 'target_job_id', name='uk_student_job'),
+        Index('idx_competitiveness', 'competitiveness'),
+        Index('idx_level', 'competitiveness_lvl'),
+        Index('idx_skill_coverage', 'skill_coverage'),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    student_id = Column(String(64), nullable=False, comment='→ student_profile.student_id')
+    student_id = Column(String(64), ForeignKey('student_profile.student_id'), nullable=False, comment='→ student_profile.student_id')
     target_job_id = Column(String(64), comment='目标岗位ID')
 
-    d1_score = Column(Float, default=0, comment='D1 基础要求得分 0-100')
-    d2_score = Column(Float, default=0, comment='D2 职业技能得分 0-100')
-    d3_score = Column(Float, default=0, comment='D3 职业素养得分 0-100')
-    d4_score = Column(Float, default=0, comment='D4 发展潜力得分 0-100')
+    d1_score = Column(Float, nullable=False, default=0, comment='D1 基础要求得分 0-100')
+    d2_score = Column(Float, nullable=False, default=0, comment='D2 职业技能得分 0-100')
+    d3_score = Column(Float, nullable=False, default=0, comment='D3 职业素养得分 0-100')
+    d4_score = Column(Float, nullable=False, default=0, comment='D4 发展潜力得分 0-100')
 
-    competitiveness = Column(Float, default=0, comment='综合得分')
+    competitiveness = Column(Float, nullable=False, default=0, comment='综合得分')
     competitiveness_lvl = Column(String(10), comment='极强/强/中等/偏弱/弱')
-    completeness = Column(Float, default=0, comment='字段填充率 0-100')
+    completeness = Column(Float, nullable=False, default=0, comment='字段填充率 0-100')
 
     skill_coverage = Column(Float, comment='技能覆盖率 0-1 (R-03 ≥0.8)')
-    skill_count = Column(Integer, default=0, comment='技能总数')
+    skill_count = Column(Integer, nullable=False, default=0, comment='技能总数')
 
     d3_confidence = Column(Float, comment='D3 Shannon 熵映射 0-1')
 

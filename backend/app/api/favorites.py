@@ -7,6 +7,7 @@ import json
 from flask import request, jsonify
 
 from . import favorites_bp
+from ._helpers import safe_error
 from ..services.db import get_mysql_client
 from ..utils.logger import get_logger
 
@@ -30,30 +31,29 @@ def list_saved_jobs():
         return jsonify({"success": True, "data": results})
 
     except Exception as e:
-        logger.error(f"获取收藏岗位失败: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify(safe_error("获取收藏岗位", e)), 500
 
 
 @favorites_bp.route('/saved-jobs', methods=['POST'])
 def save_job():
     """收藏岗位"""
     try:
-        data = request.get_json()
+        data = request.get_json() or {}
         mysql = get_mysql_client()
 
-        job_id = f"saved_{uuid.uuid4().hex[:12]}"
+        job_id = data.get('job_id') or f"job_{uuid.uuid4().hex[:12]}"
         sql = """
         INSERT INTO saved_job
-        (id, user_id, job_title, company, industry, salary, location, match_score, required_skills, saved_at)
-        VALUES (:id, :user_id, :job_title, :company, :industry, :salary, :location, :match_score, :required_skills, NOW())
+        (job_id, user_id, job_title, company, industry, salary, location, match_score, required_skills)
+        VALUES (:job_id, :user_id, :job_title, :company, :industry, :salary, :location, :match_score, :required_skills)
         """
 
         required_skills = data.get('required_skills', [])
         if isinstance(required_skills, list):
-            required_skills = json.dumps(required_skills)
+            required_skills = json.dumps(required_skills, ensure_ascii=False)
 
         mysql.execute_write(sql, {
-            "id": job_id,
+            "job_id": job_id,
             "user_id": data.get('user_id'),
             "job_title": data.get('job_title'),
             "company": data.get('company'),
@@ -64,11 +64,10 @@ def save_job():
             "required_skills": required_skills
         })
 
-        return jsonify({"success": True, "data": {"id": job_id, "message": "岗位已收藏"}})
+        return jsonify({"success": True, "data": {"job_id": job_id, "message": "岗位已收藏"}})
 
     except Exception as e:
-        logger.error(f"收藏岗位失败: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify(safe_error("收藏岗位", e)), 500
 
 
 @favorites_bp.route('/saved-jobs/<job_id>', methods=['DELETE'])
@@ -76,14 +75,13 @@ def unsave_job(job_id: str):
     """取消收藏"""
     try:
         mysql = get_mysql_client()
-        sql = "DELETE FROM saved_job WHERE id = :job_id"
+        sql = "DELETE FROM saved_job WHERE job_id = :job_id"
         mysql.execute_write(sql, {"job_id": job_id})
 
         return jsonify({"success": True, "data": {"message": f"岗位 {job_id} 已取消收藏"}})
 
     except Exception as e:
-        logger.error(f"取消收藏失败: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify(safe_error("取消收藏", e)), 500
 
 
 @favorites_bp.route('/target-roles', methods=['GET'])
@@ -103,25 +101,27 @@ def list_target_roles():
         return jsonify({"success": True, "data": results})
 
     except Exception as e:
-        logger.error(f"获取目标职业失败: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify(safe_error("获取目标职业", e)), 500
 
 
 @favorites_bp.route('/target-roles', methods=['POST'])
 def add_target_role():
     """添加目标职业方向"""
     try:
-        data = request.get_json()
+        data = request.get_json() or {}
         mysql = get_mysql_client()
 
-        sql = "INSERT INTO target_role (user_id, role, saved_at) VALUES (:user_id, :role, NOW())"
-        mysql.execute_write(sql, {"user_id": data.get('user_id'), "role": data.get('role')})
+        sql = "INSERT INTO target_role (user_id, role_name, priority) VALUES (:user_id, :role_name, :priority)"
+        mysql.execute_write(sql, {
+            "user_id": data.get('user_id'),
+            "role_name": data.get('role') or data.get('role_name'),
+            "priority": data.get('priority', 1),
+        })
 
         return jsonify({"success": True, "data": {"message": "目标职业已添加"}})
 
     except Exception as e:
-        logger.error(f"添加目标职业失败: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify(safe_error("添加目标职业", e)), 500
 
 
 @favorites_bp.route('/target-roles/<role>', methods=['DELETE'])
@@ -131,14 +131,13 @@ def remove_target_role(role: str):
         mysql = get_mysql_client()
         user_id = request.args.get('user_id')
 
-        sql = "DELETE FROM target_role WHERE role = :role AND user_id = :user_id"
+        sql = "DELETE FROM target_role WHERE role_name = :role AND user_id = :user_id"
         mysql.execute_write(sql, {"role": role, "user_id": user_id})
 
         return jsonify({"success": True, "data": {"message": f"目标职业 {role} 已移除"}})
 
     except Exception as e:
-        logger.error(f"移除目标职业失败: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify(safe_error("移除目标职业", e)), 500
 
 
 @favorites_bp.route('/target-role-market/<role>', methods=['GET'])
@@ -149,13 +148,13 @@ def get_role_market(role: str):
 
         sql = """
         SELECT
-            role,
+            position_name as role,
             AVG(salary_min) as avg_salary_min,
             AVG(salary_max) as avg_salary_max,
             COUNT(*) as demand_count
         FROM job_posting
-        WHERE position_name LIKE :role
-        GROUP BY role
+        WHERE position_name LIKE :role AND is_it_position = 1
+        GROUP BY position_name
         """
 
         results = mysql.execute(sql, {"role": f"%{role}%"})
@@ -185,5 +184,4 @@ def get_role_market(role: str):
         })
 
     except Exception as e:
-        logger.error(f"获取职业市场信息失败: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify(safe_error("获取职业市场信息", e)), 500

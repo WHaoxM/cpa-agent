@@ -9,6 +9,8 @@ from typing import Optional, Dict, Any, List
 
 from openai import OpenAI
 
+import httpx
+
 from ..config import Config
 from .logger import get_logger
 from .retry import retry_with_backoff
@@ -17,27 +19,43 @@ logger = get_logger('cpa-agent.llm')
 
 
 class LLMClient:
-    """LLM 客户端 — 统一 OpenAI SDK 格式"""
+    """LLM 客户端 — 标准 OpenAI API 格式, 支持所有兼容提供商"""
 
     def __init__(
         self,
+        provider: Optional[str] = None,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        timeout: Optional[int] = None
     ):
-        self.api_key = api_key or Config.LLM_API_KEY
-        self.base_url = base_url or Config.LLM_BASE_URL
-        self.model = model or Config.LLM_MODEL_NAME
+        provider_config = Config.get_provider_config()
+
+        self.provider = provider or provider_config['provider']
+        self.api_key = api_key or provider_config['api_key']
+        self.base_url = base_url or provider_config['base_url']
+        self.model = model or provider_config['model']
+        self.timeout = timeout or provider_config['timeout']
 
         if not self.api_key:
             raise ValueError("LLM_API_KEY 未配置")
 
+        if not self.base_url:
+            raise ValueError("LLM_BASE_URL 未配置, 请设置 LLM_PROVIDER 或 LLM_BASE_URL")
+
+        if not self.model:
+            raise ValueError("LLM_MODEL_NAME 未配置, 请设置 LLM_PROVIDER 或 LLM_MODEL_NAME")
+
         self.client = OpenAI(
             api_key=self.api_key,
-            base_url=self.base_url
+            base_url=self.base_url,
+            timeout=httpx.Timeout(self.timeout, connect=10.0)
         )
 
-        logger.info(f"LLMClient 初始化: model={self.model}, base_url={self.base_url}")
+        logger.info(
+            f"LLMClient 初始化: provider={self.provider}, "
+            f"model={self.model}, base_url={self.base_url}, timeout={self.timeout}s"
+        )
 
     @retry_with_backoff(max_retries=3, initial_delay=1.0, backoff_factor=2.0)
     def chat(
@@ -72,7 +90,11 @@ class LLMClient:
             return content
 
         except Exception as e:
-            logger.error(f"LLM 调用失败: {e}")
+            error_msg = str(e)
+            if "timed out" in error_msg.lower() or "timeout" in error_msg.lower():
+                logger.error(f"LLM 请求超时 ({self.timeout}s): {e}")
+            else:
+                logger.error(f"LLM 调用失败: {e}")
             raise
 
     def chat_json(

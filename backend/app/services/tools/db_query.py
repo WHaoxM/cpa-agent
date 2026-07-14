@@ -4,7 +4,7 @@ Tool 2: db_query — MySQL 结构化数据查询
 """
 
 import json
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 from .base import BaseTool
 from ...services.db import get_mysql_client, MySQLClient
@@ -16,34 +16,52 @@ logger = get_logger('cpa-agent.tool.db_query')
 class DbQueryTool(BaseTool):
     """MySQL 业务数据查询工具"""
 
+    ALLOWED_TABLES = frozenset({
+        "student_profile",
+        "student_portrait_4d",
+        "job_posting",
+        "job_portrait_4d",
+        "match_result",
+        "skill_gap",
+        "career_path",
+        "career_report",
+        "conversation",
+        "conversation_message",
+        "pipeline_task",
+    })
+
     QUERY_TEMPLATES = {
         "student_profile": {
-            "get_by_id": "SELECT * FROM student_profile WHERE student_id = {student_id}",
-            "list": "SELECT * FROM student_profile LIMIT {limit}",
+            "get_by_id": "SELECT * FROM student_profile WHERE student_id = :student_id",
+            "list": "SELECT * FROM student_profile LIMIT :limit",
         },
         "student_portrait_4d": {
-            "get_by_id": "SELECT * FROM student_portrait_4d WHERE student_id = {student_id}",
+            "get_by_id": "SELECT * FROM student_portrait_4d WHERE student_id = :student_id",
         },
-        "job_portrait": {
-            "list": "SELECT * FROM job_portrait LIMIT {limit}",
-            "get_by_id": "SELECT * FROM job_portrait WHERE portrait_id = {portrait_id}",
+        "job_posting": {
+            "list": "SELECT * FROM job_posting LIMIT :limit",
+            "get_by_id": "SELECT * FROM job_posting WHERE job_id = :job_id",
         },
         "job_portrait_4d": {
-            "get_by_id": "SELECT * FROM job_portrait_4d WHERE portrait_id = {portrait_id}",
+            "list": "SELECT * FROM job_portrait_4d LIMIT :limit",
+            "get_by_id": "SELECT * FROM job_portrait_4d WHERE portrait_id = :portrait_id",
         },
         "match_result": {
-            "get_by_student_job": "SELECT * FROM match_result WHERE student_id = {student_id} AND job_id = {job_id}",
-            "list_by_student": "SELECT * FROM match_result WHERE student_id = {student_id} ORDER BY created_at DESC LIMIT {limit}",
+            "get_by_student_job": "SELECT * FROM match_result WHERE student_id = :student_id AND job_portrait_id = :job_portrait_id",
+            "list_by_student": "SELECT * FROM match_result WHERE student_id = :student_id ORDER BY created_at DESC LIMIT :limit",
         },
         "skill_gap": {
-            "get_by_student_job": "SELECT * FROM skill_gap WHERE student_id = {student_id} AND job_id = {job_id}",
+            "get_by_student_job": "SELECT * FROM skill_gap WHERE student_id = :student_id AND job_portrait_id = :job_portrait_id",
+        },
+        "career_path": {
+            "get_by_student_job": "SELECT * FROM career_path WHERE student_id = :student_id AND job_portrait_id = :job_portrait_id",
         },
         "career_report": {
-            "get_by_id": "SELECT * FROM career_report WHERE report_id = {report_id}",
-            "list_by_student": "SELECT * FROM career_report WHERE student_id = {student_id} ORDER BY created_at DESC LIMIT {limit}",
+            "get_by_id": "SELECT * FROM career_report WHERE report_id = :report_id",
+            "list_by_student": "SELECT * FROM career_report WHERE student_id = :student_id ORDER BY created_at DESC LIMIT :limit",
         },
-        "conversation_history": {
-            "list_by_session": "SELECT * FROM conversation_history WHERE session_id = {session_id} ORDER BY created_at ASC",
+        "conversation_message": {
+            "list_by_session": "SELECT * FROM conversation_message WHERE session_id = :session_id ORDER BY created_at ASC",
         },
     }
 
@@ -73,8 +91,9 @@ class DbQueryTool(BaseTool):
 - job_portrait_4d: 岗位四维需求画像
 - match_result: 人岗匹配结果 (四维得分 + 总分 + 是否匹配)
 - skill_gap: 技能差距分析
+- career_path: 职业路径推荐
 - career_report: 职业发展报告
-- conversation_history: 对话历史
+- conversation_message: 对话消息
 
 【使用场景】
 - "我的匹配结果怎么样"
@@ -92,8 +111,7 @@ class DbQueryTool(BaseTool):
             "table_hint": "目标表提示 (可选: student/job/match/report/conversation)"
         }
 
-    def _guess_table(self, query: str, table_hint: str = "") -> Optional[tuple]:
-        """根据查询内容和提示猜测目标表和查询类型"""
+    def _guess_table(self, query: str, table_hint: str = "") -> Optional[Tuple[str, str]]:
         query_lower = query.lower()
         hint_lower = table_hint.lower()
 
@@ -105,7 +123,7 @@ class DbQueryTool(BaseTool):
         if "岗位" in query or "job" in hint_lower:
             if "画像" in query or "portrait" in hint_lower:
                 return "job_portrait_4d", "get_by_id"
-            return "job_portrait", "get_by_id"
+            return "job_posting", "get_by_id"
 
         if "匹配" in query or "match" in hint_lower:
             return "match_result", "get_by_student_job"
@@ -113,33 +131,32 @@ class DbQueryTool(BaseTool):
         if "技能" in query or "差距" in query or "gap" in hint_lower:
             return "skill_gap", "get_by_student_job"
 
+        if "路径" in query or "path" in hint_lower:
+            return "career_path", "get_by_student_job"
+
         if "报告" in query or "report" in hint_lower:
             return "career_report", "list_by_student"
 
         if "对话" in query or "历史" in query or "conversation" in hint_lower:
-            return "conversation_history", "list_by_session"
+            return "conversation_message", "list_by_session"
 
         return None
 
-    def _build_query(self, table: str, query_type: str, params: Dict[str, Any]) -> str:
-        """构建 SQL 查询"""
-        template_key = f"{table}.{query_type}"
-        template = self.QUERY_TEMPLATES.get(template_key)
+    def _build_query(self, table: str, query_type: str, params: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+        if table not in self.ALLOWED_TABLES:
+            raise ValueError(f"非法表名: {table}")
 
+        templates = self.QUERY_TEMPLATES.get(table)
+        if not templates:
+            return f"SELECT * FROM {table} LIMIT :limit", {"limit": 10}
+
+        template = templates.get(query_type)
         if not template:
-            return f"SELECT * FROM {table} LIMIT 10"
+            return f"SELECT * FROM {table} LIMIT :limit", {"limit": 10}
 
-        sql = template
-        for key, value in params.items():
-            if isinstance(value, str):
-                sql = sql.replace(f"{{{key}}}", f"'{value}'")
-            else:
-                sql = sql.replace(f"{{{key}}}", str(value))
-
-        return sql
+        return template, params
 
     def _format_results(self, results: List[Dict[str, Any]], table: str) -> str:
-        """格式化查询结果"""
         if not results:
             return f"表中没有数据: {table}"
 
@@ -167,26 +184,28 @@ class DbQueryTool(BaseTool):
             guessed = self._guess_table(query, table_hint)
 
             if not guessed:
-                tables = self.mysql.get_tables()
-                return f"[db_query] 无法确定查询目标表。可用表: {', '.join(tables[:10])}"
+                return f"[db_query] 无法确定查询目标表。可用表: {', '.join(sorted(self.ALLOWED_TABLES))}"
 
             table, query_type = guessed
 
             params = {}
-            for key in ["student_id", "job_id", "portrait_id", "report_id", "session_id"]:
+            for key in ["student_id", "job_portrait_id", "portrait_id", "report_id", "session_id", "job_id"]:
                 if key in kwargs:
                     params[key] = kwargs[key]
 
             if not params:
                 params["limit"] = 5
 
-            sql = self._build_query(table, query_type, params)
-            logger.debug(f"执行的 SQL: {sql}")
+            sql, sql_params = self._build_query(table, query_type, params)
+            logger.debug(f"执行的 SQL: {sql}, 参数: {sql_params}")
 
-            results = self.mysql.execute(sql)
+            results = self.mysql.execute(sql, parameters=sql_params)
 
             return self._format_results(results, table)
 
+        except ValueError as e:
+            logger.error(f"db_query 安全校验失败: {e}")
+            return f"[db_query] 安全校验失败"
         except Exception as e:
             logger.error(f"db_query 执行失败: {e}")
-            return f"[db_query] 执行失败: {str(e)}"
+            return f"[db_query] 执行失败，请稍后重试"

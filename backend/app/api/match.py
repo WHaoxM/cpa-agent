@@ -7,8 +7,10 @@ import uuid
 from flask import request, jsonify
 
 from . import match_bp
+from ._helpers import build_dimensions_d1_d4, build_sub_dimensions, parse_json_field, safe_error
 from ..services.db import get_mysql_client
 from ..utils.logger import get_logger
+from ..exceptions import ErrorCode
 
 logger = get_logger('cpa-agent.api.match')
 
@@ -30,14 +32,39 @@ def run_match():
 
     logger.info(f"触发人岗匹配: student_id={student_id}, job_portrait_id={job_portrait_id}")
 
-    return jsonify({
-        "success": True,
-        "data": {
-            "task_id": task_id,
-            "status": "pending",
-            "message": "人岗匹配任务已创建，请通过 task_id 查询进度"
+    try:
+        from ..services.tools.pipeline_run import PipelineRunTool
+
+        pipeline_tool = PipelineRunTool()
+        params = {
+            "student_id": student_id,
+            "job_portrait_id": job_portrait_id
         }
-    })
+
+        result = pipeline_tool._run_l3_run_match(params)
+
+        if result.get("success"):
+            return jsonify({
+                "success": True,
+                "data": {
+                    "task_id": task_id,
+                    "status": "completed",
+                    "result": result
+                }
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "error": result.get("summary", "匹配执行失败")
+            }), 500
+
+    except Exception as e:
+        logger.error(f"人岗匹配执行失败: {e}")
+        return jsonify({
+            "success": False,
+            "error": "匹配执行失败，请稍后重试",
+            "code": ErrorCode.INTERNAL_ERROR.value
+        }), 500
 
 
 @match_bp.route('/result/<student_id>/<job_portrait_id>', methods=['GET'])
@@ -55,6 +82,12 @@ def get_match_result(student_id: str, job_portrait_id: str):
             mr.d2_match,
             mr.d3_match,
             mr.d4_match,
+            mr.d5_match,
+            mr.d6_match,
+            mr.d7_match,
+            mr.d8_match,
+            mr.d9_match,
+            mr.d10_match,
             mr.total_score,
             mr.d1_pass,
             mr.skill_coverage,
@@ -84,13 +117,17 @@ def get_match_result(student_id: str, job_portrait_id: str):
 
         result = results[0]
 
-        import json
-        result_json = result.get('result_json')
-        if isinstance(result_json, str):
-            try:
-                result['result_json'] = json.loads(result_json)
-            except:
-                pass
+        result['result_json'] = parse_json_field(result.get('result_json'))
+
+        # 构造 D1-D4 维度 (match 特有 passed/skill_coverage 字段在 helper 返回基础上补充)
+        dimensions = build_dimensions_d1_d4(
+            result.get('d1_match', 0),
+            result.get('d2_match', 0),
+            result.get('d3_match', 0),
+            result.get('d4_match', 0),
+        )
+        dimensions["D1"]["passed"] = result.get('d1_pass', False)
+        dimensions["D2"]["skill_coverage"] = result.get('skill_coverage', 0)
 
         return jsonify({
             "success": True,
@@ -100,30 +137,16 @@ def get_match_result(student_id: str, job_portrait_id: str):
                 "school": result.get('school'),
                 "job_portrait_id": result['job_portrait_id'],
                 "position_name": result.get('position_name'),
-                "dimensions": {
-                    "D1": {
-                        "name": "基础要求",
-                        "score": result.get('d1_match', 0),
-                        "passed": result.get('d1_pass', False),
-                        "description": "学历、学校、专业等基础条件是否满足"
-                    },
-                    "D2": {
-                        "name": "职业技能",
-                        "score": result.get('d2_match', 0),
-                        "skill_coverage": result.get('skill_coverage', 0),
-                        "description": "技术技能匹配程度"
-                    },
-                    "D3": {
-                        "name": "职业素养",
-                        "score": result.get('d3_match', 0),
-                        "description": "沟通、团队、领导力等软技能"
-                    },
-                    "D4": {
-                        "name": "发展潜力",
-                        "score": result.get('d4_match', 0),
-                        "description": "学习能力、成长空间、潜力评估"
-                    }
-                },
+                "dimensions": dimensions,
+                "sub_dimensions": build_sub_dimensions(
+                    result.get('d2_match', 0),
+                    result.get('d5_match') or 0,
+                    result.get('d6_match') or 0,
+                    result.get('d7_match') or 0,
+                    result.get('d8_match') or 0,
+                    result.get('d9_match') or 0,
+                    result.get('d10_match') or 0,
+                ),
                 "total_score": result.get('total_score', 0),
                 "is_matched": result.get('is_matched', False),
                 "match_level": result.get('match_level'),
@@ -132,11 +155,7 @@ def get_match_result(student_id: str, job_portrait_id: str):
         })
 
     except Exception as e:
-        logger.error(f"获取匹配结果失败: {e}")
-        return jsonify({
-            "success": False,
-            "error": f"查询失败: {str(e)}"
-        }), 500
+        return jsonify(safe_error("获取匹配结果", e)), 500
 
 
 @match_bp.route('/skill-gap/<student_id>/<job_portrait_id>', methods=['GET'])
@@ -176,14 +195,9 @@ def get_skill_gap(student_id: str, job_portrait_id: str):
 
         import json
         gap_json = gap.get('gap_json')
-        gaps = []
-        if isinstance(gap_json, str):
-            try:
-                gaps = json.loads(gap_json)
-            except:
-                pass
-        elif isinstance(gap_json, list):
-            gaps = gap_json
+        gaps = parse_json_field(gap_json, default=[])
+        if not isinstance(gaps, list):
+            gaps = []
 
         return jsonify({
             "success": True,
@@ -203,7 +217,8 @@ def get_skill_gap(student_id: str, job_portrait_id: str):
         logger.error(f"获取技能差距失败: {e}")
         return jsonify({
             "success": False,
-            "error": f"查询失败: {str(e)}"
+            "error": "查询失败，请稍后重试",
+            "code": ErrorCode.INTERNAL_ERROR.value
         }), 500
 
 
@@ -265,14 +280,9 @@ def get_career_recommendation(student_id: str):
 
         import json
         path_json = path.get('path_json')
-        paths = []
-        if isinstance(path_json, str):
-            try:
-                paths = json.loads(path_json)
-            except:
-                pass
-        elif isinstance(path_json, list):
-            paths = path_json
+        paths = parse_json_field(path_json, default=[])
+        if not isinstance(paths, list):
+            paths = []
 
         return jsonify({
             "success": True,
@@ -292,7 +302,8 @@ def get_career_recommendation(student_id: str):
         logger.error(f"获取职业推荐失败: {e}")
         return jsonify({
             "success": False,
-            "error": f"查询失败: {str(e)}"
+            "error": "查询失败，请稍后重试",
+            "code": ErrorCode.INTERNAL_ERROR.value
         }), 500
 
 
@@ -310,6 +321,16 @@ def list_match_results(student_id: str):
             mr.id,
             mr.student_id,
             mr.job_portrait_id,
+            mr.d1_match,
+            mr.d2_match,
+            mr.d3_match,
+            mr.d4_match,
+            mr.d5_match,
+            mr.d6_match,
+            mr.d7_match,
+            mr.d8_match,
+            mr.d9_match,
+            mr.d10_match,
             mr.total_score,
             mr.is_matched,
             mr.match_level,
@@ -330,6 +351,18 @@ def list_match_results(student_id: str):
             "offset": offset
         })
 
+        # 构造 sub_dimensions 字段 (与 /result 端点保持一致)
+        for row in results:
+            row['sub_dimensions'] = build_sub_dimensions(
+                row.get('d2_match', 0),
+                row.get('d5_match') or 0,
+                row.get('d6_match') or 0,
+                row.get('d7_match') or 0,
+                row.get('d8_match') or 0,
+                row.get('d9_match') or 0,
+                row.get('d10_match') or 0,
+            )
+
         count_sql = "SELECT COUNT(*) as total FROM match_result WHERE student_id = :student_id"
         count_result = mysql.execute(count_sql, {"student_id": student_id})
         total = count_result[0]['total'] if count_result else 0
@@ -344,8 +377,4 @@ def list_match_results(student_id: str):
         })
 
     except Exception as e:
-        logger.error(f"获取匹配结果列表失败: {e}")
-        return jsonify({
-            "success": False,
-            "error": f"查询失败: {str(e)}"
-        }), 500
+        return jsonify(safe_error("获取匹配结果列表", e)), 500

@@ -1,0 +1,93 @@
+# ===========================================
+# CPA-Agent 项目根 .gitignore
+# ===========================================
+
+# ── 模型缓存 (分层结构) ──
+# 保留目录结构 (.gitkeep), 忽略实际模型文件
+models/embeddings/*
+!models/embeddings/.gitkeep
+models/llm/*
+!models/llm/.gitkeep
+models/mineru/*
+!models/mineru/.gitkeep
+models/yolo/*
+!models/yolo/.gitkeep
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ── 虚拟环境 ──
+venv/
+env/
+ENV/
+.venv/
+
+# ── 环境变量 ──
+.env
+.env.local
+.env.*.local
+backend/.env
+
+# ── IDE ──
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── 日志 ──
+*.log
+logs/
+!logs/.gitkeep
+
+# ── 上传文件 ──
+uploads/
+!uploads/.gitkeep
+
+# ── 数据库文件 ──
+*.db
+*.sqlite
+*.sqlite3
+milvus_data/
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+
+# ── AI 编辑器配置 (个人 IDE 配置, 非项目源码) ──
+.trae/
+.agents/
+.claude/
+.windsurf/
+.playwright-mcp/
+skills-lock.json
+
+# ── 历史归档 (早期原型/第三方项目/个人交付物) ──
+archive/
+
+# ── 个人论文文档 ──
+网挑文档第七版.docx
+
+# ── 真实业务数据 (含敏感信息且体积大) ──
+cleaning_data/jd_data.json
+
+# ── 前端演示仓库 (独立仓库, 不作为子目录提交) ──
+vue-kecheng/

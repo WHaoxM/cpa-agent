@@ -1,0 +1,44 @@
+# 岗位名词典 — 具体职位名 (用于 KB 智能上传 fallback 关键词匹配)
+# 与 entity_patterns.yaml 的 role_keywords 区分:
+#   - role_keywords: 泛化角色关键词 ("工程师"/"实习生"/"负责人")
+#   - position_names: 具体岗位名 ("算法工程师"/"RAG工程师"/"前端开发")
+
+position_categories:
+  ai_algorithm:
+    - 算法工程师
+    - 大模型算法工程师
+    - AI智能体工程师
+    - MLOps工程师
+    - RAG工程师
+    - 提示词工程师
+    - 具身智能工程师
+    - 机器人算法工程师
+
+  software_development:
+    - 前端开发
+    - 后端开发
+    - 全栈开发
+    - 移动端开发
+    - 客户端开发
+
+  data_engineering:
+    - 数据分析师
+    - 数据工程师
+    - 数据科学家
+    - 数据挖掘工程师
+
+  infrastructure:
+    - AI Infra工程师
+    - DevOps工程师
+    - 平台工程师
+    - SRE工程师
+
+  security:
+    - 网络安全工程师
+    - AI安全工程师
+    - 安全研究员
+
+  product:
+    - 产品经理
+    - AI产品经理
+    - 数据产品经理

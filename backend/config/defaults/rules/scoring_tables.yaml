@@ -1,0 +1,170 @@
+# 画像评分表 — repo 权威默认（阶段一 workspace 不可覆盖）
+
+scoring_tables:
+  degree_score:
+    博士: 30
+    硕士: 24
+    本科: 18
+    专科: 10
+    高中及以下: 3
+    "": 0
+
+  school_tier_score:
+    "985": 15
+    "211": 12
+    双一流: 10
+    一本: 8
+    二本: 5
+    三本: 3
+    专科院校: 2
+    "": 0
+
+  major_category_score:
+    计算机科学与技术: 25
+    软件工程: 25
+    人工智能: 25
+    数据科学: 23
+    信息安全: 23
+    网络工程: 22
+    物联网工程: 20
+    电子信息: 18
+    数学: 15
+    统计: 15
+    物理: 12
+    其他理工: 10
+    文科: 5
+    "": 0
+
+  competition_score:
+    国家级特等: 25
+    国家级一等: 25
+    国家级二等: 20
+    国家级三等: 16
+    省级一等: 18
+    省级二等: 12
+    省级三等: 8
+    校级一等: 5
+    校级二等: 3
+    校级三等: 2
+    其他: 2
+    "": 0
+
+  research_score:
+    CCF-A: 25
+    CCF-B: 18
+    SCI一区: 22
+    SCI二区: 16
+    EI: 10
+    核心期刊: 8
+    专利: 8
+    软著: 3
+    其他: 2
+    "": 0
+
+  leadership_score:
+    学生会主席: 20
+    学生会副主席: 16
+    部长: 12
+    班干部: 8
+    项目负责人: 10
+    社团负责人: 8
+    技术负责人: 10
+    其他: 3
+    "": 0
+
+  d1_sub_max:
+    sub_degree: 30
+    sub_school: 15
+    sub_major: 25
+    sub_cert: 15
+    sub_language: 15
+
+  d2_sub_max:
+    sub_skill: 35
+    sub_project: 35
+    sub_internship: 30
+
+  d4_sub_max:
+    sub_competition: 25
+    sub_research: 25
+    sub_academic: 25
+    sub_leadership: 25
+
+  # ── portrait_generator.py 专用 (P2 迁移) ──────────────────────
+  # 供 app/pipeline/entity_extractor/portrait_generator.py 加载
+
+  # D3 素养项等级 → 评分 (用于 _score_quality_item)
+  d3_quality_level_score:
+    "强": 20
+    "中": 12
+    "弱": 5
+
+  # D3 子维度默认权重 (用于 _calc_job_d3)
+  d3_sub_weights:
+    communication: 0.25
+    teamwork: 0.30
+    stress_tolerance: 0.20
+    responsibility: 0.25
+
+  # D3 子维度默认 required 标志
+  d3_sub_required:
+    communication: false
+    teamwork: true
+    stress_tolerance: false
+    responsibility: true
+
+  # D4 子维度默认权重 (用于 _calc_job_d4)
+  d4_sub_weights:
+    innovation: 0.30
+    learning: 0.30
+    leadership: 0.20
+
+  # D4 其他默认参数
+  d4_defaults:
+    internship_preferred: true
+    project_count_min: 1
+
+  # 技能分类 → 权重 (用于 _get_category_weight)
+  skill_category_weights:
+    编程语言: 1.0
+    后端框架: 0.9
+    前端: 0.85
+    数据库: 0.9
+    DevOps: 0.8
+    AI/ML: 0.95
+    大数据: 0.9
+    云计算: 0.8
+    其他: 0.5
+    programming_languages: 1.0
+    databases: 0.9
+    web_frameworks: 0.9
+    ai_ml: 0.95
+    devops: 0.8
+
+  # 技能分类权重默认值 (未在 skill_category_weights 中列出时使用)
+  skill_category_weight_default: 0.6
+
+  # 技能等级 → 权重 (用于 _get_level_weight)
+  skill_level_weights:
+    精通: 1.2
+    掌握: 1.05
+    熟悉: 0.9
+    了解: 0.55
+    入门: 0.35
+
+  # 技能等级权重默认值
+  skill_level_weight_default: 0.8
+
+  # 学术评分阈值 (用于 _academic_score)
+  academic_score:
+    gpa_thresholds:
+      - { min: 3.8, score: 25 }
+      - { min: 3.5, score: 18 }
+      - { min: 3.0, score: 12 }
+      - { min: 2.5, score: 6 }
+    rank_pct_thresholds:
+      - { max: 5, score: 25 }
+      - { max: 10, score: 20 }
+      - { max: 20, score: 15 }
+      - { max: 30, score: 10 }
+

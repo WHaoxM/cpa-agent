@@ -25,18 +25,16 @@ class LoggingMiddleware:
         app.before_request(self.before_request)
         app.after_request(self.after_request)
 
-    @staticmethod
-    def before_request():
+    def before_request(self):
         """请求前处理"""
         g.start_time = time.time()
         logger.debug(f"请求开始: {request.method} {request.path}")
 
-    @staticmethod
-    def after_request(response):
+    def after_request(self, response):
         """请求后处理"""
         if hasattr(g, 'start_time'):
             elapsed = time.time() - g.start_time
-            
+
             log_data = {
                 'method': request.method,
                 'path': request.path,
@@ -58,13 +56,8 @@ def log_function_call(func):
     def wrapper(*args, **kwargs):
         logger.debug(f"调用函数: {func.__name__}")
         start = time.time()
-        try:
-            result = func(*args, **kwargs)
-            elapsed = time.time() - start
-            logger.debug(f"函数完成: {func.__name__}, 耗时: {elapsed*1000:.2f}ms")
-            return result
-        except Exception as e:
-            elapsed = time.time() - start
-            logger.error(f"函数异常: {func.__name__}, 耗时: {elapsed*1000:.2f}ms, 错误: {e}")
-            raise
+        result = func(*args, **kwargs)
+        elapsed = time.time() - start
+        logger.debug(f"函数完成: {func.__name__}, 耗时: {elapsed*1000:.2f}ms")
+        return result
     return wrapper

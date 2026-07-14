@@ -4,6 +4,7 @@ Redis 客户端
 """
 
 import json
+import threading
 from typing import Optional, Any, List
 
 import redis
@@ -189,6 +190,21 @@ class RedisClient:
             logger.error(f"Redis HGETALL 失败: {e}")
             return {}
 
+    def hscan(self, name: str, cursor: int = 0, match: Optional[str] = None, count: Optional[int] = None) -> tuple:
+        """增量迭代哈希键值"""
+        try:
+            cursor, result = self._get_client().hscan(name, cursor=cursor, match=match, count=count)
+            decoded = {}
+            for k, v in result.items():
+                try:
+                    decoded[k] = json.loads(v)
+                except (json.JSONDecodeError, TypeError):
+                    decoded[k] = v
+            return cursor, decoded
+        except Exception as e:
+            logger.error(f"Redis HSCAN 失败: {e}")
+            return 0, {}
+
     def hdel(self, name: str, *keys: str) -> int:
         """删除哈希键"""
         try:
@@ -257,11 +273,14 @@ class RedisClient:
 
 
 _redis_client: Optional[RedisClient] = None
+_redis_client_lock = threading.Lock()
 
 
 def get_redis_client() -> RedisClient:
-    """获取全局 Redis 客户端单例"""
+    """获取全局 Redis 客户端单例（线程安全）"""
     global _redis_client
     if _redis_client is None:
-        _redis_client = RedisClient()
+        with _redis_client_lock:
+            if _redis_client is None:
+                _redis_client = RedisClient()
     return _redis_client

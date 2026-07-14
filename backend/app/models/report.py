@@ -4,7 +4,7 @@
 
 from datetime import datetime
 from typing import Dict, Any
-from sqlalchemy import Column, String, JSON, Integer, Float, DateTime
+from sqlalchemy import Column, String, JSON, Integer, Float, DateTime, Index
 
 from .base import Base
 
@@ -12,6 +12,11 @@ from .base import Base
 class CareerReport(Base):
     """职业发展报告表 (L4 输出)"""
     __tablename__ = 'career_report'
+    __table_args__ = (
+        Index('idx_student', 'student_id'),
+        Index('idx_status', 'status'),
+        Index('idx_created', 'created_at'),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     report_id = Column(String(64), unique=True, nullable=False, comment='报告唯一ID')
@@ -19,7 +24,7 @@ class CareerReport(Base):
     job_portrait_id = Column(String(64), nullable=False, comment='→ job_portrait_4d.portrait_id')
 
     title = Column(String(200), comment='报告标题')
-    status = Column(String(20), default='pending', comment='pending/generating/completed/failed')
+    status = Column(String(20), nullable=False, default='pending', comment='pending/generating/completed/failed')
 
     ch1_json = Column(JSON, comment='Ch1 个人画像摘要')
     ch2_json = Column(JSON, comment='Ch2 目标岗位分析')

@@ -1,0 +1,308 @@
+# Prompt Registry — 单一索引
+# 每个 prompt_id 一个文件夹，层文件固定命名 base.md / tone.md
+# workspace 只允许覆盖 tone.md (经 PromptLoader 合并)
+
+prompts:
+  - id: agent.chat.system
+    description: ReAct Agent 对话系统提示词 (工具调用 + 阶段感知)
+    base: agent.chat.system/base.md
+    tone: agent.chat.system/tone.md
+    consumers:
+      - app.services.react_agent
+    variables:
+      - tools_description
+
+  # ------------------------------------------------------------------
+  # entity_extractor — 简历抽取 (Qwen3-0.6B 极简指令)
+  # ------------------------------------------------------------------
+  - id: entity.resume.system
+    description: 简历抽取系统提示词 — 强制 XML 标签规则
+    base: entity.resume.system/base.md
+    tone: entity.resume.system/tone.md
+    consumers:
+      - app.pipeline.entity_extractor.prompts.resume_prompts
+
+  - id: entity.resume.user.basic_info
+    description: 简历基本信息抽取
+    base: entity.resume.user.basic_info/base.md
+    tone: entity.resume.user.basic_info/tone.md
+    consumers:
+      - app.pipeline.entity_extractor.prompts.resume_prompts
+    variables:
+      - indexed_text
+
+  - id: entity.resume.user.education
+    description: 简历教育经历抽取
+    base: entity.resume.user.education/base.md
+    tone: entity.resume.user.education/tone.md
+    consumers:
+      - app.pipeline.entity_extractor.prompts.resume_prompts
+    variables:
+      - indexed_text
+      - confirmed
+
+  - id: entity.resume.user.experience
+    description: 简历工作/项目经历抽取
+    base: entity.resume.user.experience/base.md
+    tone: entity.resume.user.experience/tone.md
+    consumers:
+      - app.pipeline.entity_extractor.prompts.resume_prompts
+    variables:
+      - indexed_text
+      - confirmed
+
+  - id: entity.resume.user.skills
+    description: 简历技能抽取
+    base: entity.resume.user.skills/base.md
+    tone: entity.resume.user.skills/tone.md
+    consumers:
+      - app.pipeline.entity_extractor.prompts.resume_prompts
+    variables:
+      - indexed_text
+      - constraint
+
+  # ------------------------------------------------------------------
+  # entity_extractor — JD 抽取
+  # ------------------------------------------------------------------
+  - id: entity.jd.system
+    description: JD 抽取系统提示词 — JSON-only 严格模式
+    base: entity.jd.system/base.md
+    tone: entity.jd.system/tone.md
+    consumers:
+      - app.pipeline.entity_extractor.prompts.jd_prompts
+
+  - id: entity.jd.user.job_info
+    description: JD 职位基本信息抽取
+    base: entity.jd.user.job_info/base.md
+    tone: entity.jd.user.job_info/tone.md
+    consumers:
+      - app.pipeline.entity_extractor.prompts.jd_prompts
+    variables:
+      - jd_text
+
+  - id: entity.jd.user.requirements
+    description: JD 任职要求抽取
+    base: entity.jd.user.requirements/base.md
+    tone: entity.jd.user.requirements/tone.md
+    consumers:
+      - app.pipeline.entity_extractor.prompts.jd_prompts
+    variables:
+      - jd_text
+      - constraints
+
+  - id: entity.jd.user.description
+    description: JD 职责/描述抽取
+    base: entity.jd.user.description/base.md
+    tone: entity.jd.user.description/tone.md
+    consumers:
+      - app.pipeline.entity_extractor.prompts.jd_prompts
+    variables:
+      - jd_text
+
+  # ------------------------------------------------------------------
+  # tool.llm_reason — ReAct Agent 推理工具
+  # ------------------------------------------------------------------
+  - id: tool.llm_reason.system
+    description: llm_reason 工具系统提示词（职业规划专家）
+    base: tool.llm_reason.system/base.md
+    tone: tool.llm_reason.system/tone.md
+    consumers:
+      - app.services.tools.llm_reason
+
+  # ------------------------------------------------------------------
+  # entity_normalizer — OOV 闭环 LLM 归一化
+  # ------------------------------------------------------------------
+  - id: entity.normalize.user.award
+    description: 奖项级别归一化（国家级/省级/校级）
+    base: entity.normalize.user.award/base.md
+    tone: entity.normalize.user.award/tone.md
+    consumers:
+      - app.services.entity_normalizer
+    variables:
+      - name
+      - ctx
+
+  - id: entity.normalize.user.generic
+    description: 通用实体（技能/职位/专业/证书）归一化
+    base: entity.normalize.user.generic/base.md
+    tone: entity.normalize.user.generic/tone.md
+    consumers:
+      - app.services.entity_normalizer
+    variables:
+      - label
+      - name
+      - ctx
+
+  # ------------------------------------------------------------------
+  # text_cyber — Text-to-Cypher 三段 prompt
+  # ------------------------------------------------------------------
+  - id: cypher.intent.user
+    description: Cypher 意图理解（节点/关系/路径/聚合/Schema/相似度）
+    base: cypher.intent.user/base.md
+    tone: cypher.intent.user/tone.md
+    consumers:
+      - app.validators.text_cyber
+    variables:
+      - query
+
+  - id: cypher.generate.user
+    description: 自然语言 → Cypher (READ-ONLY 安全约束)
+    base: cypher.generate.user/base.md
+    tone: cypher.generate.user/tone.md
+    consumers:
+      - app.validators.text_cyber
+    variables:
+      - query
+
+  - id: cypher.rewrite.user
+    description: Cypher 查询结果 → 自然语言中文回复
+    base: cypher.rewrite.user/base.md
+    tone: cypher.rewrite.user/tone.md
+    consumers:
+      - app.validators.text_cyber
+    variables:
+      - original_query
+      - result_json
+
+  # ------------------------------------------------------------------
+  # l4_report_generator — 报告 LLM 摘要
+  # ------------------------------------------------------------------
+  - id: report.summary.user
+    description: 人岗匹配报告 100 字摘要生成
+    base: report.summary.user/base.md
+    tone: report.summary.user/tone.md
+    consumers:
+      - app.pipeline.entity_extractor.l4_report_generator
+    variables:
+      - match_score
+      - match_level
+      - skill_coverage_pct
+      - matched_skills
+      - missing_skills
+      - gap_lines
+
+  # ------------------------------------------------------------------
+  # graph_query tool — 携带 schema 上下文的 Cypher 生成
+  # ------------------------------------------------------------------
+  - id: tool.graph_query.system
+    description: graph_query 工具系统提示词（携带动态 Neo4j schema）
+    base: tool.graph_query.system/base.md
+    tone: tool.graph_query.system/tone.md
+    consumers:
+      - app.services.tools.graph_query
+    variables:
+      - schema
+      - query_type
+
+  # ------------------------------------------------------------------
+  # langgraph_agent — 备用 agent 系统提示词（基于 LangGraph 状态机）
+  # ------------------------------------------------------------------
+  - id: agent.langgraph.system
+    description: LangGraph Agent 系统提示词（含用户阶段感知）
+    base: agent.langgraph.system/base.md
+    tone: agent.langgraph.system/tone.md
+    consumers:
+      - app.services.langgraph_agent
+
+  # ------------------------------------------------------------------
+  # llm_skill_extractor — LLM 技能抽取 prompt
+  # ------------------------------------------------------------------
+  - id: entity.skill_extractor.user
+    description: LLM 技能抽取（硬技能 + 软技能 + 掌握程度）
+    base: entity.skill_extractor.user/base.md
+    tone: entity.skill_extractor.user/tone.md
+    consumers:
+      - app.pipeline.entity_extractor.llm_skill_extractor
+    variables:
+      - text
+
+  # ------------------------------------------------------------------
+  # nsle_pipeline — DeepSeek 版本 LLM 抽取 prompt
+  # ------------------------------------------------------------------
+  - id: pipeline.nsle.extract.skills.user
+    description: NS-LE 简历技能抽取（技能数组 + reasoning）
+    base: pipeline.nsle.extract.skills.user/base.md
+    tone: pipeline.nsle.extract.skills.user/tone.md
+    consumers:
+      - app.pipeline.entity_extractor.nsle_pipeline
+    variables:
+      - text
+
+  - id: pipeline.nsle.extract.experience.user
+    description: NS-LE 工作经历抽取
+    base: pipeline.nsle.extract.experience.user/base.md
+    tone: pipeline.nsle.extract.experience.user/tone.md
+    consumers:
+      - app.pipeline.entity_extractor.nsle_pipeline
+    variables:
+      - text
+
+  - id: pipeline.nsle.extract.education.user
+    description: NS-LE 教育经历抽取
+    base: pipeline.nsle.extract.education.user/base.md
+    tone: pipeline.nsle.extract.education.user/tone.md
+    consumers:
+      - app.pipeline.entity_extractor.nsle_pipeline
+    variables:
+      - text
+
+  - id: pipeline.nsle.extract.certificates.user
+    description: NS-LE 证书与资格认证抽取
+    base: pipeline.nsle.extract.certificates.user/base.md
+    tone: pipeline.nsle.extract.certificates.user/tone.md
+    consumers:
+      - app.pipeline.entity_extractor.nsle_pipeline
+    variables:
+      - text
+
+  # ------------------------------------------------------------------
+  # admin_kb — 知识库智能上传实体解析
+  # ------------------------------------------------------------------
+  - id: admin.kb.extract_entities.user
+    description: 知识库上传内容实体解析（技能/职业/关系/薪资/需求）
+    base: admin.kb.extract_entities.user/base.md
+    tone: admin.kb.extract_entities.user/tone.md
+    consumers:
+      - app.api.admin_kb
+    variables:
+      - source_type
+      - content
+
+  # ------------------------------------------------------------------
+  # scripts/ — 冷启动脚本 prompt (向量化种子数据)
+  # ------------------------------------------------------------------
+  - id: script.vector.skill_enrich.user
+    description: generate_vectors.py 技能语义丰富化 (150-200 字)
+    base: script.vector.skill_enrich.user/base.md
+    tone: script.vector.skill_enrich.user/tone.md
+    consumers:
+      - scripts.generate_vectors
+    variables:
+      - name
+      - cat
+      - sub
+      - tier
+
+  - id: script.vector.jd_chunk.user
+    description: generate_vectors.py JD 切片向量化 (200-300 字)
+    base: script.vector.jd_chunk.user/base.md
+    tone: script.vector.jd_chunk.user/tone.md
+    consumers:
+      - scripts.generate_vectors
+    variables:
+      - position
+      - company
+      - category
+
+  - id: script.vector.skill_seed_enrich.user
+    description: seed_skill_vectors.py 种子技能丰富化 (含 orig 字段)
+    base: script.vector.skill_seed_enrich.user/base.md
+    tone: script.vector.skill_seed_enrich.user/tone.md
+    consumers:
+      - scripts.seed_skill_vectors
+    variables:
+      - name
+      - cat
+      - sub
+      - tier
+      - orig

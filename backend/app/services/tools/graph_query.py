@@ -1,9 +1,14 @@
 """
 Tool 1: graph_query — Neo4j 知识图谱查询
 智能体根据用户意图动态生成 Cypher 查询, 驱动知识图谱可视化
+
+安全说明:
+- LLM 生成的 Cypher 必须经过 _validate_cypher() 验证
+- 禁止的关键字: DETACH/DELETE/DROP/CREATE/SET/REMOVE/MERGE
 """
 
 import json
+import re
 from typing import Dict, Any, List, Optional
 
 from .base import BaseTool
@@ -12,6 +17,16 @@ from ...utils.logger import get_logger
 from ...utils.llm_client import get_llm_client
 
 logger = get_logger('cpa-agent.tool.graph_query')
+
+FORBIDDEN_KEYWORDS = frozenset({
+    'DETACH', 'DELETE', 'DROP', 'CREATE', 'SET', 'REMOVE', 'MERGE',
+    'CALL', 'LOAD', 'FOREACH', 'UNWIND', 'BEGIN', 'COMMIT', 'ROLLBACK'
+})
+
+SAFE_PATTERNS = frozenset({
+    'MATCH', 'OPTIONAL MATCH', 'WHERE', 'RETURN', 'WITH', 'ORDER BY',
+    'SKIP', 'LIMIT', 'COUNT', 'COLLECT', 'DISTINCT', 'UNWIND'
+})
 
 
 class GraphQueryTool(BaseTool):
@@ -95,21 +110,11 @@ class GraphQueryTool(BaseTool):
         """使用 LLM 生成 Cypher 查询"""
         schema_prompt = self._get_schema_prompt()
 
-        system_prompt = f"""\
-你是 Neo4j Cypher 查询专家。根据用户问题生成只读的 Cypher 查询语句。
-
-{schema_prompt}
-
-生成规则:
-1. 只使用 MATCH 语句进行查询
-2. 使用参数化查询避免注入
-3. 限制返回数量 (LIMIT 50)
-4. 如果用户问题不明确，先查询相关节点再深入
-
-query_type 提示: {query_type if query_type else '自动判断'}
-
-输出格式:
-只输出 Cypher 语句，不要其他解释。"""
+        system_prompt = load_prompt(
+            "tool.graph_query.system",
+            schema=schema_prompt,
+            query_type=query_type if query_type else "自动判断",
+        )
 
         try:
             response = self.llm.chat(
@@ -162,6 +167,34 @@ query_type 提示: {query_type if query_type else '自动判断'}
 
         return "\n".join(parts)
 
+    def _validate_cypher(self, cypher: str) -> tuple:
+        """
+        验证 Cypher 安全性
+
+        Returns:
+            (is_valid, error_message)
+        """
+        if not cypher or not cypher.strip():
+            return False, "Cypher 为空"
+
+        cypher_upper = cypher.upper()
+
+        has_safe_start = any(cypher_upper.strip().startswith(pattern.lower()) for pattern in SAFE_PATTERNS)
+        if not has_safe_start:
+            return False, f"查询必须以 MATCH/RETURN 等开头，当前: {cypher[:50]}..."
+
+        for keyword in FORBIDDEN_KEYWORDS:
+            if re.search(r'\b' + keyword + r'\b', cypher_upper):
+                return False, f"查询包含禁止关键字: {keyword}"
+
+        comment_pattern = r'(//.*?$|/\*.*?\*/|#.*?$)'
+        clean_cypher = re.sub(comment_pattern, '', cypher_upper, flags=re.MULTILINE)
+        for keyword in FORBIDDEN_KEYWORDS:
+            if keyword in clean_cypher:
+                return False, f"查询包含禁止关键字: {keyword}"
+
+        return True, ""
+
     def execute(self, **kwargs) -> str:
         query = kwargs.get("query", "")
         query_type = kwargs.get("query_type", "")
@@ -175,6 +208,11 @@ query_type 提示: {query_type if query_type else '自动判断'}
             cypher = self._generate_cypher(query, query_type)
             if not cypher:
                 return "[graph_query] 无法生成查询语句，请重述问题"
+
+            is_valid, error_msg = self._validate_cypher(cypher)
+            if not is_valid:
+                logger.warning(f"Cypher 安全校验失败: {error_msg}")
+                return f"[graph_query] 安全校验失败: {error_msg}"
 
             logger.debug(f"生成的 Cypher: {cypher}")
 
@@ -215,4 +253,4 @@ query_type 提示: {query_type if query_type else '自动判断'}
 
         except Exception as e:
             logger.error(f"graph_query 执行失败: {e}")
-            return f"[graph_query] 执行失败: {str(e)}"
+            return f"[graph_query] 执行失败，请稍后重试"

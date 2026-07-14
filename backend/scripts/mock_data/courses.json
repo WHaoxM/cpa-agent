@@ -1,0 +1,2384 @@
+[
+  {
+    "course_id": "course_001",
+    "title": "Vue 3 前端开发实战",
+    "description": "从零开始学习 Vue 3，掌握现代前端开发技术栈，包括 Composition API、Pinia、Vue Router 等核心技术。",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 5,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=1",
+    "skill_tags": [
+      "专业技能",
+      "学习能力"
+    ],
+    "external_url": ""
+  },
+  {
+    "course_id": "course_002",
+    "title": "TypeScript 进阶开发",
+    "description": "深入学习 TypeScript 高级特性，掌握类型体操、泛型编程等进阶技术。",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 3.1,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=2",
+    "skill_tags": [
+      "专业技能",
+      "创新能力"
+    ],
+    "external_url": ""
+  },
+  {
+    "course_id": "course_003",
+    "title": "Node.js 后端开发",
+    "description": "学习 Node.js 服务端开发，掌握 Express、Koa 等主流框架。",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 3.3,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=3",
+    "skill_tags": [
+      "专业技能",
+      "实习能力"
+    ],
+    "external_url": ""
+  },
+  {
+    "course_id": "course_004",
+    "title": "Python 人工智能入门",
+    "description": "从零开始学习 Python 和人工智能基础，包括机器学习算法和深度学习框架。",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 4.1,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=4",
+    "skill_tags": [
+      "专业技能",
+      "创新能力",
+      "学习能力"
+    ],
+    "external_url": ""
+  },
+  {
+    "course_id": "course_005",
+    "title": "MySQL 数据库设计与优化",
+    "description": "深入学习 MySQL 数据库设计、SQL 优化和高可用架构。",
+    "category": "cat_004",
+    "difficulty": "beginner",
+    "duration_hours": 2.8,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=5",
+    "skill_tags": [],
+    "external_url": ""
+  },
+  {
+    "course_id": "course_100",
+    "title": "Git 版本控制与团队协作",
+    "description": "掌握 Git 分支管理、冲突解决、Gitflow 工作流与团队协作最佳实践",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 1.5,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=101",
+    "skill_tags": [
+      "Git"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1HM411377j/"
+  },
+  {
+    "course_id": "course_101",
+    "title": "Linux 系统基础与运维",
+    "description": "从零掌握 Linux 常用命令、Shell 脚本编写与服务管理",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 15,
+    "instructor": "张老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=102",
+    "skill_tags": [
+      "Linux 基础",
+      "Linux",
+      "Linux 系统编程",
+      "Shell 脚本",
+      "Linux/Shell"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1n84y1i7td/"
+  },
+  {
+    "course_id": "course_102",
+    "title": "Docker 容器化与 Kubernetes 入门",
+    "description": "学习 Docker 容器化部署与 Kubernetes 集群基础管理",
+    "category": "cat_005",
+    "difficulty": "beginner",
+    "duration_hours": 18,
+    "instructor": "陈老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=103",
+    "skill_tags": [
+      "Docker",
+      "Docker 基础",
+      "Docker 容器化",
+      "Docker/K8s 部署",
+      "Docker 容器化（Dockerfile/Compose）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1gr4y1U7CY/"
+  },
+  {
+    "course_id": "course_103",
+    "title": "Python 编程基础与进阶",
+    "description": "从基础语法到面向对象、异常处理、文件操作与第三方库使用",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 20,
+    "instructor": "吴老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=104",
+    "skill_tags": [
+      "Python",
+      "Python 3"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1tDsgzxECr/"
+  },
+  {
+    "course_id": "course_104",
+    "title": "SQL 数据库查询与优化",
+    "description": "掌握 SQL 语法、索引原理、查询优化与实际业务场景应用",
+    "category": "cat_004",
+    "difficulty": "beginner",
+    "duration_hours": 25,
+    "instructor": "李老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=105",
+    "skill_tags": [
+      "SQL",
+      "MySQL",
+      "SQL 数据校验",
+      "SQL 数据查询"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1iF411z7Pu/"
+  },
+  {
+    "course_id": "course_105",
+    "title": "Redis 缓存实战",
+    "description": "学习 Redis 数据结构、持久化、分布式锁与高可用方案",
+    "category": "cat_004",
+    "difficulty": "beginner",
+    "duration_hours": 2.5,
+    "instructor": "李老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=106",
+    "skill_tags": [
+      "Redis 基础",
+      "Redis 缓存",
+      "Redis",
+      "Redis 状态管理",
+      "MySQL/Redis"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Jj411D7oG/"
+  },
+  {
+    "course_id": "course_106",
+    "title": "TypeScript 全栈类型编程",
+    "description": "深入学习 TypeScript 类型系统、泛型、装饰器与工程化实践",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 8,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=107",
+    "skill_tags": [
+      "TypeScript",
+      "TypeScript 强类型",
+      "TypeScript 高级泛型"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Xy4y1v7S2/"
+  },
+  {
+    "course_id": "course_107",
+    "title": "CI/CD 持续集成与部署",
+    "description": "搭建 Jenkins/GitLab CI 流水线，实现自动化构建、测试与部署",
+    "category": "cat_005",
+    "difficulty": "beginner",
+    "duration_hours": 10,
+    "instructor": "陈老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=108",
+    "skill_tags": [
+      "CI/CD",
+      "CI 集成触发"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV16z4y1378W/"
+  },
+  {
+    "course_id": "course_108",
+    "title": "HTML 与 CSS 网页开发基础",
+    "description": "系统学习 HTML5 语义化标签、CSS3 布局与响应式设计",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 40,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=109",
+    "skill_tags": [
+      "HTML/CSS"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV14J4114768/"
+  },
+  {
+    "course_id": "course_109",
+    "title": "JavaScript 核心与 ES6+ 特性",
+    "description": "从基础语法到闭包、原型链、Promise、async/await 等进阶特性",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 30,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=110",
+    "skill_tags": [
+      "JavaScript"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Y84y1L7Nn/"
+  },
+  {
+    "course_id": "course_110",
+    "title": "Vue 3 Composition API 实战",
+    "description": "系统学习 Vue 3 响应式原理、组件设计模式与 Pinia 状态管理",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 20,
+    "instructor": "周老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=111",
+    "skill_tags": [
+      "Vue 3",
+      "Vue 基础",
+      "Vue 3 / React"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Zy4y1K7SH/"
+  },
+  {
+    "course_id": "course_111",
+    "title": "Element Plus 企业级 UI 实战",
+    "description": "基于 Element Plus 构建企业级中后台界面，掌握表单、表格、弹窗等高频组件",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 5,
+    "instructor": "周老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=112",
+    "skill_tags": [
+      "Element Plus"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1ra4y1H7ih/"
+  },
+  {
+    "course_id": "course_112",
+    "title": "Vite 现代前端工程化",
+    "description": "掌握 Vite 构建原理、插件开发、多环境配置与工程化最佳实践",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 6,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=113",
+    "skill_tags": [
+      "Vite",
+      "工程化体系",
+      "Vite/CRA",
+      "Webpack/Vite 深度配置"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1GK4y1S7Zy/"
+  },
+  {
+    "course_id": "course_113",
+    "title": "前端性能优化实战",
+    "description": "从加载优化到渲染优化，系统提升 Web 应用性能",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 8,
+    "instructor": "周老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=114",
+    "skill_tags": [
+      "性能优化"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Bp4y1C7Rx/"
+  },
+  {
+    "course_id": "course_114",
+    "title": "SSR 服务端渲染与 Nuxt 实战",
+    "description": "掌握 Vue SSR 原理与 Nuxt 3 框架开发全栈应用",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 5,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=115",
+    "skill_tags": [
+      "SSR"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1ra4y1H7ih/"
+  },
+  {
+    "course_id": "course_115",
+    "title": "微前端架构设计与落地",
+    "description": "学习 qiankun/Module Federation 等方案，实现大型前端应用拆分",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "周老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=116",
+    "skill_tags": [
+      "微前端",
+      "微前端（Module Federation）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Zy4y1K7SH/"
+  },
+  {
+    "course_id": "course_116",
+    "title": "RESTful API 设计与前后端联调",
+    "description": "学习 RESTful 规范、Axios 封装、Mock 数据与接口联调技巧",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 6,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=117",
+    "skill_tags": [
+      "REST API"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Y84y1L7Nn/"
+  },
+  {
+    "course_id": "course_117",
+    "title": "React 18 Hooks 深度实战",
+    "description": "系统掌握 React 18 Hooks、Concurrent 特性与组件设计模式",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 10,
+    "instructor": "周老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=118",
+    "skill_tags": [
+      "React 18 Hooks",
+      "Vue 3 / React",
+      "React 基础（JSX/函数组件）",
+      "useState/useEffect Hooks",
+      "React Router 基础"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1wy4y1D7JT/"
+  },
+  {
+    "course_id": "course_118",
+    "title": "Redux Toolkit 与 Zustand 状态管理",
+    "description": "对比学习 Redux Toolkit 与 Zustand，掌握 React 状态管理最佳实践",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "周老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=119",
+    "skill_tags": [
+      "Redux Toolkit/Zustand"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1wy4y1D7JT/"
+  },
+  {
+    "course_id": "course_119",
+    "title": "React Router 6 路由实战",
+    "description": "掌握 React Router 6 嵌套路由、数据加载与权限控制",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 3,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=120",
+    "skill_tags": [
+      "React Router 6"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1wy4y1D7JT/"
+  },
+  {
+    "course_id": "course_120",
+    "title": "Ant Design 企业级组件开发",
+    "description": "基于 Ant Design 构建企业级 React 应用，掌握主题定制与高级用法",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "周老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=121",
+    "skill_tags": [
+      "Ant Design"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1wy4y1D7JT/"
+  },
+  {
+    "course_id": "course_121",
+    "title": "Next.js SSR/ISR 全栈开发",
+    "description": "使用 Next.js 构建 SEO 友好的全栈 React 应用",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 7,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=122",
+    "skill_tags": [
+      "Next.js SSR/ISR",
+      "SSR（Next.js BFF）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1wy4y1D7JT/"
+  },
+  {
+    "course_id": "course_122",
+    "title": "GraphQL 与 tRPC 现代接口设计",
+    "description": "对比学习 GraphQL 与 tRPC，构建类型安全的前后端接口",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "周老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=123",
+    "skill_tags": [
+      "GraphQL/tRPC",
+      "GraphQL/Apollo"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Y84y1L7Nn/"
+  },
+  {
+    "course_id": "course_123",
+    "title": "前端测试体系（Jest + Playwright）",
+    "description": "搭建单元测试与 E2E 测试体系，提升代码质量与发布信心",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 10,
+    "instructor": "周老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=124",
+    "skill_tags": [
+      "Jest 单元测试",
+      "Playwright E2E",
+      "Playwright"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Gw411N73T/"
+  },
+  {
+    "course_id": "course_124",
+    "title": "D3.js 数据可视化开发",
+    "description": "从零掌握 D3.js 数据绑定、比例尺、坐标轴与交互式图表开发",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 12,
+    "instructor": "周老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=125",
+    "skill_tags": [
+      "D3.js",
+      "数据可视化",
+      "D3.js 基础（scale/axis/shape）",
+      "D3.js 高级布局（力导向/层级/地理）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Tp4y1y7vv/"
+  },
+  {
+    "course_id": "course_125",
+    "title": "ECharts 图表与大屏实战",
+    "description": "使用 ECharts 构建业务图表与数据大屏，掌握主题定制与性能优化",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 12,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=126",
+    "skill_tags": [
+      "ECharts",
+      "BI 可视化",
+      "ECharts 5 配置与事件",
+      "ECharts 自定义系列与渲染器",
+      "Apache ECharts 源码级定制"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Da4y1N7kM/"
+  },
+  {
+    "course_id": "course_126",
+    "title": "Three.js 3D 可视化入门",
+    "description": "学习 Three.js 场景搭建、几何体、材质、光照与相机控制",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 20,
+    "instructor": "周老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=127",
+    "skill_tags": [
+      "Three.js",
+      "3D 视觉",
+      "WebGL/Three.js 三维可视化"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Gg411X7FY/"
+  },
+  {
+    "course_id": "course_127",
+    "title": "Canvas 与 SVG 图形编程",
+    "description": "深入 Canvas 2D 绑制与 SVG 矢量图形，实现自定义可视化组件",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 6,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=128",
+    "skill_tags": [
+      "Canvas/SVG",
+      "SVG 与 Canvas 绘图原理"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Da4y1N7kM/"
+  },
+  {
+    "course_id": "course_128",
+    "title": "WebGL 高性能渲染实战",
+    "description": "深入 WebGL 渲染管线、着色器编程与 GPU 加速技术",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 8,
+    "instructor": "周老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=129",
+    "skill_tags": [
+      "WebGL"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Gg411X7FY/"
+  },
+  {
+    "course_id": "course_129",
+    "title": "可视化低代码平台开发",
+    "description": "从架构到实现，构建拖拽式数据可视化搭建平台",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 5,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=130",
+    "skill_tags": [
+      "可视化低代码"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Bp4y1C7Rx/"
+  },
+  {
+    "course_id": "course_130",
+    "title": "Java SE 核心编程",
+    "description": "系统学习 Java 语法、面向对象、集合框架、IO 与多线程基础",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 100,
+    "instructor": "张老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=131",
+    "skill_tags": [
+      "Java SE 核心"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1PY411e7J6/"
+  },
+  {
+    "course_id": "course_131",
+    "title": "Spring Boot 实战开发",
+    "description": "基于 Spring Boot 快速构建企业级 RESTful 服务",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 30,
+    "instructor": "张老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=132",
+    "skill_tags": [
+      "Spring Boot 2/3",
+      "Spring Boot"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV19K4y1L7MT/"
+  },
+  {
+    "course_id": "course_132",
+    "title": "MyBatis-Plus 数据持久层",
+    "description": "掌握 MyBatis-Plus CRUD、条件构造器、分页插件与代码生成",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 6,
+    "instructor": "张老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=133",
+    "skill_tags": [
+      "MyBatis-Plus",
+      "MyBatis/JPA"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV19K4y1L7MT/"
+  },
+  {
+    "course_id": "course_133",
+    "title": "Spring Cloud 微服务架构",
+    "description": "基于 Spring Cloud Alibaba 构建完整的微服务体系",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 20,
+    "instructor": "陈老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=134",
+    "skill_tags": [
+      "Spring Cloud Alibaba",
+      "Spring Cloud 微服务",
+      "Spring Cloud 微服务基础"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV18E411x7eT/"
+  },
+  {
+    "course_id": "course_134",
+    "title": "Kafka 与 RocketMQ 消息中间件",
+    "description": "学习消息队列核心原理，掌握 Kafka 与 RocketMQ 实战应用",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 12,
+    "instructor": "陈老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=135",
+    "skill_tags": [
+      "Kafka/RocketMQ",
+      "Kafka 消息队列（aiokafka）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1vr4y1677k/"
+  },
+  {
+    "course_id": "course_135",
+    "title": "JVM 性能调优实战",
+    "description": "深入 JVM 内存模型、垃圾回收算法与线上问题诊断",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 10,
+    "instructor": "张老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=136",
+    "skill_tags": [
+      "JVM 调优",
+      "JVM 调优（GC/内存分析）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1PY411e7J6/"
+  },
+  {
+    "course_id": "course_136",
+    "title": "分布式事务与高并发设计",
+    "description": "掌握 Seata 分布式事务、限流、降级与高并发场景设计",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 6,
+    "instructor": "陈老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=137",
+    "skill_tags": [
+      "分布式事务（Seata）",
+      "高并发设计",
+      "Sentinel 限流熔断",
+      "分布式系统",
+      "MySQL 分库分表（ShardingSphere）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV18E411x7eT/"
+  },
+  {
+    "course_id": "course_137",
+    "title": "DDD 领域驱动设计",
+    "description": "学习 DDD 战略与战术设计，构建可演进的业务系统架构",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 5,
+    "instructor": "张老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=138",
+    "skill_tags": [
+      "DDD 领域驱动设计",
+      "DDD 设计"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV18E411x7eT/"
+  },
+  {
+    "course_id": "course_138",
+    "title": "Maven 与 Gradle 构建工具",
+    "description": "掌握 Java 项目构建、依赖管理与多模块工程实践",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 5,
+    "instructor": "张老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=139",
+    "skill_tags": [
+      "Maven",
+      "Maven/Gradle"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1PY411e7J6/"
+  },
+  {
+    "course_id": "course_139",
+    "title": "JWT 鉴权与安全认证",
+    "description": "实现基于 JWT 的用户认证与权限管理体系",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "陈老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=140",
+    "skill_tags": [
+      "JWT 鉴权"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV19K4y1L7MT/"
+  },
+  {
+    "course_id": "course_140",
+    "title": "Go 语言基础与并发编程",
+    "description": "系统学习 Go 语法、goroutine、channel 与并发模式",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 8,
+    "instructor": "陈老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=141",
+    "skill_tags": [
+      "Go 语言基础",
+      "Go 语言特性（goroutine/channel）",
+      "Go 语言基础（goroutine/channel 入门）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1ME411Y71o/"
+  },
+  {
+    "course_id": "course_141",
+    "title": "Gin/Fiber Web 框架实战",
+    "description": "基于 Gin/Fiber 快速开发高性能 Go Web 服务",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "陈老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=142",
+    "skill_tags": [
+      "Gin/Echo 框架",
+      "Gin/Fiber 框架",
+      "Gin 框架路由与中间件"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1ME411Y71o/"
+  },
+  {
+    "course_id": "course_142",
+    "title": "Go 微服务框架（Kratos/Go-Zero）",
+    "description": "掌握 Go 微服务框架，构建生产级分布式服务",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 3,
+    "instructor": "陈老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=143",
+    "skill_tags": [
+      "Kratos/Go-Zero 微服务框架"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1ME411Y71o/"
+  },
+  {
+    "course_id": "course_143",
+    "title": "gRPC 微服务通信实战",
+    "description": "学习 gRPC 协议、Protobuf 序列化与服务间高效通信",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 2.5,
+    "instructor": "陈老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=144",
+    "skill_tags": [
+      "gRPC 入门",
+      "gRPC 基础",
+      "gRPC 微服务"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1ME411Y71o/"
+  },
+  {
+    "course_id": "course_144",
+    "title": "Go 性能调优与运行时深入",
+    "description": "深入 Go 运行时调度器（GMP）、pprof 分析与火焰图诊断",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 1.5,
+    "instructor": "陈老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=145",
+    "skill_tags": [
+      "Go runtime 调优（pprof）",
+      "Go 高并发原理（GMP）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1ME411Y71o/"
+  },
+  {
+    "course_id": "course_145",
+    "title": "ETCD 与服务发现",
+    "description": "学习 ETCD 分布式键值存储与服务注册发现实战",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 1,
+    "instructor": "陈老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=146",
+    "skill_tags": [
+      "ETCD/Consul",
+      "ETCD 服务发现"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1ME411Y71o/"
+  },
+  {
+    "course_id": "course_146",
+    "title": "GORM 数据库操作",
+    "description": "掌握 Go 语言 GORM ORM 框架的增删改查与高级查询",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 2,
+    "instructor": "陈老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=147",
+    "skill_tags": [
+      "Gorm",
+      "GORM",
+      "GORM 基础查询"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1ME411Y71o/"
+  },
+  {
+    "course_id": "course_147",
+    "title": "Django/Flask Web 开发实战",
+    "description": "对比学习 Django 与 Flask，快速构建 Python Web 服务",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 15,
+    "instructor": "张老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=148",
+    "skill_tags": [
+      "Django/Flask",
+      "Django/Flask/FastAPI",
+      "Flask/FastAPI 路由"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV14Z421z78C/"
+  },
+  {
+    "course_id": "course_148",
+    "title": "FastAPI 异步高并发开发",
+    "description": "使用 FastAPI 构建高性能异步 API 服务",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 8,
+    "instructor": "张老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=149",
+    "skill_tags": [
+      "FastAPI/异步框架",
+      "FastAPI 异步高并发",
+      "FastAPI 异步编程（async/await）",
+      "Pydantic V2 数据校验",
+      "Pydantic 数据校验"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1xE41177Lh/"
+  },
+  {
+    "course_id": "course_149",
+    "title": "Celery 异步任务队列",
+    "description": "掌握 Celery 分布式任务调度、定时任务与结果存储",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 3,
+    "instructor": "张老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=150",
+    "skill_tags": [
+      "Celery 任务队列",
+      "Celery 异步任务"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV14Z421z78C/"
+  },
+  {
+    "course_id": "course_150",
+    "title": "SQLAlchemy 与 ORM 实战",
+    "description": "学习 SQLAlchemy 核心映射、查询构造与数据库迁移",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 3,
+    "instructor": "张老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=151",
+    "skill_tags": [
+      "SQLAlchemy",
+      "SQLAlchemy/Django ORM",
+      "SQLAlchemy 基础"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV14Z421z78C/"
+  },
+  {
+    "course_id": "course_151",
+    "title": "NestJS 模块化微服务开发",
+    "description": "使用 NestJS 构建模块化、类型安全的 Node.js 后端服务",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 6,
+    "instructor": "陈老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=152",
+    "skill_tags": [
+      "NestJS 模块化微服务",
+      "Express/Koa/NestJS",
+      "Node.js 核心模块",
+      "Node.js"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV19K4y1L7MT/"
+  },
+  {
+    "course_id": "course_152",
+    "title": "Postman 接口测试实战",
+    "description": "掌握 Postman 接口测试、环境变量、自动化脚本与 Newman CI 集成",
+    "category": "cat_006",
+    "difficulty": "beginner",
+    "duration_hours": 3,
+    "instructor": "王老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=153",
+    "skill_tags": [
+      "Postman",
+      "Postman 接口测试",
+      "Postman 接口测试"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Gw411N73T/"
+  },
+  {
+    "course_id": "course_153",
+    "title": "测试用例设计方法论",
+    "description": "系统学习等价类、边界值、场景法等测试设计方法与缺陷管理",
+    "category": "cat_006",
+    "difficulty": "beginner",
+    "duration_hours": 2,
+    "instructor": "王老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=154",
+    "skill_tags": [
+      "用例设计",
+      "测试用例设计"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1fY41177kW/"
+  },
+  {
+    "course_id": "course_154",
+    "title": "Selenium/Playwright 自动化测试",
+    "description": "从 Selenium 到 Playwright，掌握 Web UI 自动化测试框架",
+    "category": "cat_006",
+    "difficulty": "beginner",
+    "duration_hours": 10,
+    "instructor": "王老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=155",
+    "skill_tags": [
+      "Playwright",
+      "Python/Java",
+      "Selenium 自动化"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Gw411N73T/"
+  },
+  {
+    "course_id": "course_155",
+    "title": "黑盒测试方法实战",
+    "description": "掌握功能测试核心方法论，提升测试覆盖率与缺陷发现能力",
+    "category": "cat_006",
+    "difficulty": "beginner",
+    "duration_hours": 2,
+    "instructor": "王老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=156",
+    "skill_tags": [
+      "黑盒测试方法（等价类/边界值）",
+      "黑盒测试基础"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1fY41177kW/"
+  },
+  {
+    "course_id": "course_156",
+    "title": "测试计划与风险评估",
+    "description": "学习制定测试计划、评估测试风险与构建质量报告体系",
+    "category": "cat_006",
+    "difficulty": "beginner",
+    "duration_hours": 1.5,
+    "instructor": "王老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=157",
+    "skill_tags": [
+      "测试计划与风险评估"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1fY41177kW/"
+  },
+  {
+    "course_id": "course_157",
+    "title": "API 测试实战（REST/GraphQL）",
+    "description": "掌握 REST 与 GraphQL 接口测试方法、断言与契约测试",
+    "category": "cat_006",
+    "difficulty": "beginner",
+    "duration_hours": 3,
+    "instructor": "王老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=158",
+    "skill_tags": [
+      "API 测试（REST/GraphQL）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Gw411N73T/"
+  },
+  {
+    "course_id": "course_158",
+    "title": "移动端专项测试",
+    "description": "学习 Android/iOS 应用稳定性、兼容性与专项测试方法",
+    "category": "cat_006",
+    "difficulty": "beginner",
+    "duration_hours": 2.5,
+    "instructor": "王老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=159",
+    "skill_tags": [
+      "移动端专项测试（稳定性/兼容性）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Gw411N73T/"
+  },
+  {
+    "course_id": "course_159",
+    "title": "质量度量与测试管理平台",
+    "description": "搭建测试管理平台，建立质量度量体系与测试报告自动化",
+    "category": "cat_006",
+    "difficulty": "beginner",
+    "duration_hours": 2,
+    "instructor": "王老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=160",
+    "skill_tags": [
+      "质量平台",
+      "测试管理平台",
+      "测试报告与质量度量",
+      "质量度量体系（缺陷密度/用例覆盖率）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1fY41177kW/"
+  },
+  {
+    "course_id": "course_160",
+    "title": "安全测试入门",
+    "description": "学习 Web 安全测试基础，掌握 XSS、CSRF、SQL 注入等常见漏洞检测",
+    "category": "cat_006",
+    "difficulty": "beginner",
+    "duration_hours": 2,
+    "instructor": "王老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=161",
+    "skill_tags": [
+      "安全测试基础（OWASP Top10）",
+      "CI 安全卡点",
+      "OWASP Top 10（SQL注入/XSS/CSRF）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1fY41177kW/"
+  },
+  {
+    "course_id": "course_161",
+    "title": "JMeter 压测脚本实战",
+    "description": "使用 JMeter 编写性能测试脚本，模拟高并发场景",
+    "category": "cat_006",
+    "difficulty": "beginner",
+    "duration_hours": 10,
+    "instructor": "王老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=162",
+    "skill_tags": [
+      "JMeter 压测脚本",
+      "JMeter 基础操作",
+      "JMeter 分布式压测集群"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1fY41177kW/"
+  },
+  {
+    "course_id": "course_162",
+    "title": "Linux 资源监控与性能分析",
+    "description": "掌握 top、iostat、vmstat 等工具监控服务器性能瓶颈",
+    "category": "cat_006",
+    "difficulty": "beginner",
+    "duration_hours": 3,
+    "instructor": "王老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=163",
+    "skill_tags": [
+      "Linux 资源监控（top/iostat）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1n84y1i7td/"
+  },
+  {
+    "course_id": "course_163",
+    "title": "Prometheus + Grafana 监控体系",
+    "description": "搭建 Prometheus 采集 + Grafana 可视化的全栈监控体系",
+    "category": "cat_006",
+    "difficulty": "beginner",
+    "duration_hours": 8,
+    "instructor": "王老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=164",
+    "skill_tags": [
+      "Prometheus/Grafana 基础",
+      "Prometheus + Grafana 监控体系",
+      "Grafana 性能监控大屏",
+      "Prometheus 监控集成",
+      "Prometheus 监控"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1cN4y1u7CW/"
+  },
+  {
+    "course_id": "course_164",
+    "title": "全链路压测体系建设",
+    "description": "学习影子库、流量染色与全链路压测方案设计",
+    "category": "cat_006",
+    "difficulty": "beginner",
+    "duration_hours": 2,
+    "instructor": "王老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=165",
+    "skill_tags": [
+      "全链路压测（影子库/流量染色）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1fY41177kW/"
+  },
+  {
+    "course_id": "course_165",
+    "title": "性能基线与 SLA 制定",
+    "description": "建立性能基线指标，制定服务级别协议（SLA）与性能达标标准",
+    "category": "cat_006",
+    "difficulty": "beginner",
+    "duration_hours": 1.5,
+    "instructor": "王老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=166",
+    "skill_tags": [
+      "SLA 性能基线制定",
+      "性能测试"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1fY41177kW/"
+  },
+  {
+    "course_id": "course_166",
+    "title": "SQL 进阶：窗口函数与复杂查询",
+    "description": "深入学习窗口函数、CTE、子查询优化与执行计划分析",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 6,
+    "instructor": "李老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=167",
+    "skill_tags": [
+      "SQL 进阶（窗口函数/子查询）",
+      "复杂 SQL 优化（执行计划分析）",
+      "SQL（窗口函数/多表联查）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1iF411z7Pu/"
+  },
+  {
+    "course_id": "course_167",
+    "title": "Excel 与 BI 可视化入门",
+    "description": "掌握 Excel 高级函数、Tableau/PowerBI 报表制作与数据大屏",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 15,
+    "instructor": "李老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=168",
+    "skill_tags": [
+      "Excel/BI",
+      "Excel/Google Sheets",
+      "Tableau/PowerBI 基础",
+      "Excel 高级函数",
+      "Tableau/PowerBI 可视化",
+      "Excel 高级函数（VLOOKUP/数据透视表）",
+      "Tableau/PowerBI"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1D9GLzyEL6/"
+  },
+  {
+    "course_id": "course_168",
+    "title": "统计学基础与数据分析",
+    "description": "学习描述统计、假设检验、回归分析等数据分析必备统计方法",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 5,
+    "instructor": "李老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=169",
+    "skill_tags": [
+      "统计基础",
+      "统计基础（均值/方差/相关性）",
+      "Python SciPy/Statsmodels"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1D9GLzyEL6/"
+  },
+  {
+    "course_id": "course_169",
+    "title": "业务指标体系设计",
+    "description": "学习 OSM/MECE 方法论，建立企业级指标体系与数据看板",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 3,
+    "instructor": "李老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=170",
+    "skill_tags": [
+      "业务指标理解",
+      "指标体系（OSM/MECE）",
+      "企业级指标体系设计",
+      "业务指标体系理解（DAU/MAU/GMV）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1D9GLzyEL6/"
+  },
+  {
+    "course_id": "course_170",
+    "title": "Pandas 数据处理与分析",
+    "description": "使用 Pandas/NumPy 进行数据清洗、变换、聚合与分析",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 12,
+    "instructor": "赵老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=171",
+    "skill_tags": [
+      "Pandas",
+      "Python Pandas/NumPy",
+      "Python Pandas 基础",
+      "Python 数据处理基础"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1wPiKBkEzU/"
+  },
+  {
+    "course_id": "course_171",
+    "title": "A/B 测试与实验设计",
+    "description": "掌握 A/B 测试假设检验、样本量计算、实验平台设计",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 3,
+    "instructor": "赵老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=172",
+    "skill_tags": [
+      "A/B 测试",
+      "A/B 测试（假设检验）",
+      "A/B 实验",
+      "A/B 测试基础（流量分组/显著性）",
+      "A/B 实验设计（假设检验/样本量估算）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1D9GLzyEL6/"
+  },
+  {
+    "course_id": "course_172",
+    "title": "数据清洗与 ETL 基础",
+    "description": "学习数据清洗方法、ETL 流程设计与数据质量管理",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "李老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=173",
+    "skill_tags": [
+      "数据清洗",
+      "ETL 基础"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1wPiKBkEzU/"
+  },
+  {
+    "course_id": "course_173",
+    "title": "Spark 大数据处理实战",
+    "description": "掌握 Spark Core/SQL/DataFrame 编程与大规模数据处理",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 30,
+    "instructor": "赵老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=174",
+    "skill_tags": [
+      "Spark Core/SQL/DataFrame",
+      "Spark MLlib 基础",
+      "Spark 离线计算调优"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV11A411L7CK/"
+  },
+  {
+    "course_id": "course_174",
+    "title": "Flink 实时流处理",
+    "description": "学习 Flink DataStream/Table API 与实时数据管道构建",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 20,
+    "instructor": "赵老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=175",
+    "skill_tags": [
+      "Flink DataStream API",
+      "Flink SQL/Table API",
+      "实时特征（Flink）",
+      "Flink CDC 实时数据同步",
+      "Flink CDC（MySQL/Oracle binlog）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1qy4y1q728/"
+  },
+  {
+    "course_id": "course_175",
+    "title": "Hive SQL 与数仓分层建模",
+    "description": "掌握 Hive SQL、数仓分层设计（ODS/DWD/ADS）与数据治理",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 18,
+    "instructor": "赵老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=176",
+    "skill_tags": [
+      "Hive SQL",
+      "数仓分层（ODS/DWD/ADS）",
+      "Hive/Presto/Spark SQL",
+      "DWD/ADS 分层建模",
+      "数仓基础",
+      "Hive SQL / Spark SQL"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1EZ4y1G7iL/"
+  },
+  {
+    "course_id": "course_176",
+    "title": "数据采集与同步（DataX/Sqoop）",
+    "description": "学习异构数据源采集与同步工具的原理与实战",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "赵老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=177",
+    "skill_tags": [
+      "DataX/Sqoop 数据同步",
+      "Sqoop/DataX 数据采集",
+      "DataX/Sqoop 数据同步"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV11A411L7CK/"
+  },
+  {
+    "course_id": "course_177",
+    "title": "Airflow 数据编排与调度",
+    "description": "使用 Airflow 构建数据 ETL 工作流与自动化调度",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "赵老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=178",
+    "skill_tags": [
+      "Airflow 编排",
+      "Airflow ETL",
+      "DataOps",
+      "Airflow DAG 编排"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1qy4y1q728/"
+  },
+  {
+    "course_id": "course_178",
+    "title": "Kafka 消息队列实战",
+    "description": "学习 Kafka 消息生产消费、分区策略与数据管道集成",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 12,
+    "instructor": "赵老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=179",
+    "skill_tags": [
+      "Kafka 消费与生产",
+      "Kafka/RabbitMQ",
+      "Kafka 消息驱动",
+      "Kafka 消息队列入门"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1vr4y1677k/"
+  },
+  {
+    "course_id": "course_179",
+    "title": "用户行为分析（漏斗/留存）",
+    "description": "掌握漏斗分析、留存分析、路径分析等用户行为分析方法",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "李老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=180",
+    "skill_tags": [
+      "用户行为分析（漏斗/留存）",
+      "用户漏斗与留存分析",
+      "AARRR 漏斗精细化分析"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1D9GLzyEL6/"
+  },
+  {
+    "course_id": "course_180",
+    "title": "BI 平台搭建与运营",
+    "description": "使用 Superset/Metabase 搭建企业 BI 平台与自助分析体系",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 6,
+    "instructor": "李老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=181",
+    "skill_tags": [
+      "BI 平台搭建",
+      "Superset/Metabase 二次开发",
+      "FineReport/帆软",
+      "业务数据看板搭建（Metabase/Superset）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Da4y1N7kM/"
+  },
+  {
+    "course_id": "course_181",
+    "title": "数仓建模方法论",
+    "description": "系统学习星型/雪花模型、维度建模与数仓架构设计",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 6,
+    "instructor": "赵老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=182",
+    "skill_tags": [
+      "数仓建模（星型/雪花）",
+      "数仓建模",
+      "维度建模方法论（Kimball）",
+      "维度建模（星型/雪花）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1EZ4y1G7iL/"
+  },
+  {
+    "course_id": "course_182",
+    "title": "时序预测与 Prophet 实战",
+    "description": "使用 Facebook Prophet 进行时间序列预测与趋势分析",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 3,
+    "instructor": "赵老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=183",
+    "skill_tags": [
+      "Prophet/时序预测",
+      "Python 商业统计（Prophet 时序预测）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1wPiKBkEzU/"
+  },
+  {
+    "course_id": "course_183",
+    "title": "Matplotlib 与 Seaborn 数据可视化",
+    "description": "使用 Python 可视化库制作专业数据图表",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "李老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=184",
+    "skill_tags": [
+      "Matplotlib/Seaborn",
+      "Matplotlib/Seaborn 数据可视化"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1wPiKBkEzU/"
+  },
+  {
+    "course_id": "course_184",
+    "title": "Jupyter Notebook 数据分析环境",
+    "description": "搭建高效的 Jupyter 数据分析工作环境与协作流程",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 2,
+    "instructor": "李老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=185",
+    "skill_tags": [
+      "Jupyter Notebook"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1wPiKBkEzU/"
+  },
+  {
+    "course_id": "course_185",
+    "title": "机器学习算法基础",
+    "description": "系统学习回归、分类、聚类、降维等经典机器学习算法",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 25,
+    "instructor": "吴老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=186",
+    "skill_tags": [
+      "机器学习",
+      "Sklearn 机器学习"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Fzszz4Ek7/"
+  },
+  {
+    "course_id": "course_186",
+    "title": "推荐系统与协同过滤",
+    "description": "从协同过滤到深度推荐，构建完整推荐系统",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 15,
+    "instructor": "吴老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=187",
+    "skill_tags": [
+      "协同过滤（CF）",
+      "矩阵分解（MF/ALS）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1BYe4z5E9z/"
+  },
+  {
+    "course_id": "course_187",
+    "title": "特征工程实战",
+    "description": "掌握特征选择、特征构造、特征变换与自动化特征工程",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 6,
+    "instructor": "吴老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=188",
+    "skill_tags": [
+      "特征工程"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Fzszz4Ek7/"
+  },
+  {
+    "course_id": "course_188",
+    "title": "搜索引擎技术（Elasticsearch）",
+    "description": "学习 Elasticsearch 倒排索引、BM25 排序与语义搜索",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 12,
+    "instructor": "吴老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=189",
+    "skill_tags": [
+      "Elasticsearch/OpenSearch",
+      "倒排索引原理",
+      "BM25/TF-IDF"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1hh411D7sb/"
+  },
+  {
+    "course_id": "course_189",
+    "title": "深度排序模型实战（DIN/DIEN）",
+    "description": "学习 CTR 预估主流模型，从 Wide&Deep 到 DIN/DIEN",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 5,
+    "instructor": "郑老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=190",
+    "skill_tags": [
+      "深度排序模型（DIN/DIEN）",
+      "多目标优化"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1MRJmzSEaa/"
+  },
+  {
+    "course_id": "course_190",
+    "title": "MLOps 模型运维体系",
+    "description": "构建模型训练、部署、监控与迭代的全链路 MLOps 体系",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "吴老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=191",
+    "skill_tags": [
+      "MLOps",
+      "模型生产化 MLOps",
+      "MLOps 全链路（训练→评估→部署→监控）",
+      "MLflow 实验管理"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Fzszz4Ek7/"
+  },
+  {
+    "course_id": "course_191",
+    "title": "向量检索与语义搜索",
+    "description": "学习 FAISS、Milvus 等向量数据库与语义检索技术",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "郑老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=192",
+    "skill_tags": [
+      "语义向量检索（FAISS/Milvus）",
+      "学习排序（LTR）",
+      "知识图谱融合"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1hh411D7sb/"
+  },
+  {
+    "course_id": "course_192",
+    "title": "PyTorch 深度学习实战",
+    "description": "从张量运算到模型训练，系统掌握 PyTorch 深度学习框架",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 10,
+    "instructor": "郑老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=193",
+    "skill_tags": [
+      "深度学习",
+      "PyTorch",
+      "Python/PyTorch",
+      "TensorFlow/PyTorch",
+      "PyTorch 神经网络构建与训练"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Y7411d7Ys/"
+  },
+  {
+    "course_id": "course_193",
+    "title": "计算机视觉入门（OpenCV + YOLO）",
+    "description": "学习 OpenCV 图像处理与 YOLO 目标检测算法",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 6,
+    "instructor": "郑老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=194",
+    "skill_tags": [
+      "OpenCV",
+      "YOLO/ResNet/VGG",
+      "YOLO v8/ResNet",
+      "数据标注与增广",
+      "数据增强与标注（LabelImg）",
+      "模型训练调参",
+      "数据增强与 DataLoader"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1MRJmzSEaa/"
+  },
+  {
+    "course_id": "course_194",
+    "title": "NLP 与 Transformer 入门",
+    "description": "从 Word2Vec 到 BERT，掌握 NLP 核心技术与 Transformer 架构",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 15,
+    "instructor": "吴老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=195",
+    "skill_tags": [
+      "Transformers/BERT",
+      "Hugging Face",
+      "Hugging Face Transformers",
+      "BERT/RoBERTa 微调",
+      "分词与 NER",
+      "文本分类",
+      "预训练模型微调",
+      "文本相似度"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1k44LzPEhU/"
+  },
+  {
+    "course_id": "course_195",
+    "title": "CUDA 与 GPU 加速编程",
+    "description": "学习 CUDA 编程模型、GPU 内存管理与深度学习加速",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 3,
+    "instructor": "郑老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=196",
+    "skill_tags": [
+      "CUDA 基础",
+      "CUDA/cuDNN 基础",
+      "GPU 环境配置（CUDA/cuDNN）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Y7411d7Ys/"
+  },
+  {
+    "course_id": "course_196",
+    "title": "模型部署与推理加速",
+    "description": "掌握 TensorRT、ONNX 模型转换与边缘端高效推理",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "郑老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=197",
+    "skill_tags": [
+      "边缘端部署（TensorRT/ONNX）",
+      "TensorRT/ONNX 边缘部署",
+      "TensorRT 多模态推理加速"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1MRJmzSEaa/"
+  },
+  {
+    "course_id": "course_197",
+    "title": "模型蒸馏与量化技术",
+    "description": "学习知识蒸馏、模型量化与压缩技术，减少推理资源消耗",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 3,
+    "instructor": "郑老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=198",
+    "skill_tags": [
+      "模型蒸馏",
+      "模型蒸馏与量化",
+      "推理加速（量化/蒸馏）",
+      "模型蒸馏与量化（PTQ/QAT）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1MRJmzSEaa/"
+  },
+  {
+    "course_id": "course_198",
+    "title": "LLM 大模型应用开发",
+    "description": "基于 OpenAI/通义/智谱 API 与 LangChain 构建 AI 应用",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 12,
+    "instructor": "吴老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=199",
+    "skill_tags": [
+      "OpenAI/通义/智谱 API 调用",
+      "LangChain/LlamaIndex"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1ZppNzHEY4/"
+  },
+  {
+    "course_id": "course_199",
+    "title": "Prompt 工程实战",
+    "description": "系统学习 Prompt 设计方法、思维链推理与 Few-shot 技巧",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 3,
+    "instructor": "吴老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=200",
+    "skill_tags": [
+      "Prompt 工程"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1ZppNzHEY4/"
+  },
+  {
+    "course_id": "course_200",
+    "title": "RAG 检索增强生成系统",
+    "description": "构建基于向量检索的 RAG 系统，实现知识库问答",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "吴老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=201",
+    "skill_tags": [
+      "RAG 系统架构",
+      "向量检索（Chroma/Pinecone）",
+      "向量数据库（Milvus/Weaviate）",
+      "向量数据库（Milvus）",
+      "知识库系统架构"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1ZppNzHEY4/"
+  },
+  {
+    "course_id": "course_201",
+    "title": "LLM 私有化部署实战",
+    "description": "学习 vLLM、Ollama 等框架进行大模型本地部署与服务化",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 3,
+    "instructor": "郑老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=202",
+    "skill_tags": [
+      "LLM 私有化部署（vLLM/Ollama）",
+      "vLLM 部署",
+      "vLLM/TGI 服务化"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1ZppNzHEY4/"
+  },
+  {
+    "course_id": "course_202",
+    "title": "Agent 框架与 Function Calling",
+    "description": "掌握 AI Agent 框架（AutoGen/CrewAI）与 Function Calling 机制",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 3,
+    "instructor": "吴老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=203",
+    "skill_tags": [
+      "Agent 框架（AutoGen/CrewAI）",
+      "Function Calling & Tool Use"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1ZppNzHEY4/"
+  },
+  {
+    "course_id": "course_203",
+    "title": "多模态 AI 入门",
+    "description": "学习 CLIP、Stable Diffusion 等多模态模型基础与应用",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 5,
+    "instructor": "郑老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=204",
+    "skill_tags": [
+      "CLIP/BLIP 多模态预训练",
+      "扩散模型基础（Stable Diffusion）",
+      "多模态 LLM（GPT-4V/Gemini）",
+      "多模态 LLM（LLaVA/InternVL）",
+      "音频特征提取（Whisper）",
+      "混合精度训练（AMP）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1k44LzPEhU/"
+  },
+  {
+    "course_id": "course_204",
+    "title": "LLM 评测体系设计",
+    "description": "构建大模型评测基准、自动化评测流程与指标体系",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 2,
+    "instructor": "吴老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=205",
+    "skill_tags": [
+      "LLM 评测体系",
+      "评测体系设计"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1ZppNzHEY4/"
+  },
+  {
+    "course_id": "course_205",
+    "title": "React 18 并发模式与 Suspense 实战",
+    "description": "深入掌握 React 18 Concurrent Mode、useTransition、useDeferredValue 与 Suspense 数据加载",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 5,
+    "instructor": "周老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=206",
+    "skill_tags": [
+      "React 18 Concurrent Mode",
+      "React 性能优化（Concurrent/Suspense）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1wy4y1D7JT/"
+  },
+  {
+    "course_id": "course_206",
+    "title": "React Query / SWR 服务端状态管理",
+    "description": "对比学习 React Query 与 SWR，构建高效的服务端状态缓存与同步体系",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "周老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=207",
+    "skill_tags": [
+      "React Query / SWR 数据层"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1wy4y1D7JT/"
+  },
+  {
+    "course_id": "course_207",
+    "title": "Webpack 5 深度工程化配置",
+    "description": "系统掌握 Webpack 5 核心概念、Loader/Plugin 开发与构建性能优化",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 8,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=208",
+    "skill_tags": [
+      "Webpack/Vite 深度配置",
+      "Webpack 5 构建优化"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1e7411E7D4/"
+  },
+  {
+    "course_id": "course_208",
+    "title": "Monorepo 工程实践（Nx/Turborepo）",
+    "description": "使用 Nx 与 Turborepo 构建大型前端 Monorepo 项目，实现代码共享与增量构建",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=209",
+    "skill_tags": [
+      "Monorepo（Nx/Turborepo）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1wy4y1D7JT/"
+  },
+  {
+    "course_id": "course_209",
+    "title": "Angular 15+ 核心组件与模块化开发",
+    "description": "系统学习 Angular 组件、模板、依赖注入与模块化架构",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 12,
+    "instructor": "李老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=210",
+    "skill_tags": [
+      "Angular 15+ 组件",
+      "Angular CLI",
+      "Jasmine 单测"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1tS4y1V7RK/"
+  },
+  {
+    "course_id": "course_210",
+    "title": "RxJS 响应式编程实战",
+    "description": "从观察者模式到高阶操作符，系统掌握 RxJS 在 Angular 中的最佳实践",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 8,
+    "instructor": "李老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=211",
+    "skill_tags": [
+      "RxJS 响应式编程",
+      "RxJS 高级操作符"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1tS4y1V7RK/"
+  },
+  {
+    "course_id": "course_211",
+    "title": "NgRx 状态管理实战",
+    "description": "使用 NgRx Store/Effects/Selectors 构建大型 Angular 应用状态管理体系",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 5,
+    "instructor": "李老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=212",
+    "skill_tags": [
+      "NgRx 状态管理"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1tS4y1V7RK/"
+  },
+  {
+    "course_id": "course_212",
+    "title": "Angular Material 企业级 UI 组件",
+    "description": "基于 Angular Material 构建企业级界面，掌握主题定制与 CDK 高级用法",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "李老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=213",
+    "skill_tags": [
+      "Angular Material"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1tS4y1V7RK/"
+  },
+  {
+    "course_id": "course_213",
+    "title": "Angular Universal 服务端渲染与 PWA",
+    "description": "掌握 Angular SSR 与 Progressive Web App 离线能力建设",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "李老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=214",
+    "skill_tags": [
+      "Angular Universal SSR",
+      "PWA 离线能力"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1tS4y1V7RK/"
+  },
+  {
+    "course_id": "course_214",
+    "title": "Angular 性能优化与 E2E 测试",
+    "description": "OnPush 变更检测、懒加载、Cypress E2E 测试与可访问性实践",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "李老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=215",
+    "skill_tags": [
+      "Angular 性能优化（OnPush/懒加载）",
+      "设计模式（SOLID）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1tS4y1V7RK/"
+  },
+  {
+    "course_id": "course_215",
+    "title": "微信小程序原生开发实战",
+    "description": "系统学习微信小程序框架、API、组件开发与微信生态集成",
+    "category": "cat_008",
+    "difficulty": "beginner",
+    "duration_hours": 12,
+    "instructor": "赵老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=216",
+    "skill_tags": [
+      "微信小程序原生开发",
+      "微信 API（支付/授权）",
+      "Webview 通信"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1nM411475W/"
+  },
+  {
+    "course_id": "course_216",
+    "title": "uni-app 跨平台开发实战",
+    "description": "使用 uni-app 一套代码同时发布微信/支付宝小程序、App 与 H5",
+    "category": "cat_008",
+    "difficulty": "beginner",
+    "duration_hours": 10,
+    "instructor": "赵老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=217",
+    "skill_tags": [
+      "uni-app/Taro",
+      "uni-app 插件开发"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1ZT4y1R7bN/"
+  },
+  {
+    "course_id": "course_217",
+    "title": "小程序性能优化与分包实战",
+    "description": "掌握小程序分包加载、预加载、骨架屏与渲染性能优化技巧",
+    "category": "cat_008",
+    "difficulty": "beginner",
+    "duration_hours": 3,
+    "instructor": "赵老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=218",
+    "skill_tags": [
+      "小程序性能优化（分包/预加载）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1nM411475W/"
+  },
+  {
+    "course_id": "course_218",
+    "title": "Flutter 移动开发入门",
+    "description": "使用 Flutter 构建跨 iOS/Android 的高性能原生应用",
+    "category": "cat_008",
+    "difficulty": "beginner",
+    "duration_hours": 15,
+    "instructor": "赵老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=219",
+    "skill_tags": [
+      "Flutter/React Native"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1dT4y1N7xj/"
+  },
+  {
+    "course_id": "course_219",
+    "title": "跨端 CI/CD 多端发布工程化",
+    "description": "搭建 uni-app/Taro 项目的自动化构建、测试与多端发布流水线",
+    "category": "cat_008",
+    "difficulty": "beginner",
+    "duration_hours": 3,
+    "instructor": "赵老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=220",
+    "skill_tags": [
+      "CI/CD 多端发布",
+      "Hybrid App 架构"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1ZT4y1R7bN/"
+  },
+  {
+    "course_id": "course_220",
+    "title": "Node.js 核心模块与后端开发",
+    "description": "深入 Node.js 事件循环、流、文件系统与 Express/Koa 框架开发",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 12,
+    "instructor": "陈老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=221",
+    "skill_tags": [
+      "Node.js 核心模块",
+      "Node.js",
+      "Express/Koa/NestJS",
+      "Socket.io"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1a34y167AZ/"
+  },
+  {
+    "course_id": "course_221",
+    "title": "Node.js 性能调优与集群",
+    "description": "深入 libuv 事件循环、cluster 多进程与内存泄漏诊断",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 5,
+    "instructor": "陈老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=222",
+    "skill_tags": [
+      "Node.js 性能调优（libuv/cluster）",
+      "npm/pnpm"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1a34y167AZ/"
+  },
+  {
+    "course_id": "course_222",
+    "title": "GraphQL 与 Apollo Server 接口设计",
+    "description": "构建类型安全的 GraphQL API，掌握 Schema、Resolver 与订阅",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "陈老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=223",
+    "skill_tags": [
+      "GraphQL/Apollo",
+      "OpenAPI 规范"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1a34y167AZ/"
+  },
+  {
+    "course_id": "course_223",
+    "title": "MongoDB 与 Mongoose 数据操作",
+    "description": "掌握 MongoDB 文档模型、聚合管道与 Mongoose ODM 高级用法",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 5,
+    "instructor": "陈老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=224",
+    "skill_tags": [
+      "MongoDB/MySQL",
+      "JWT 鉴权"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1a34y167AZ/"
+  },
+  {
+    "course_id": "course_224",
+    "title": "GeoJSON 地图可视化开发",
+    "description": "系统学习 GeoJSON/TopoJSON 地图数据处理与交互式地图可视化",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 6,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=225",
+    "skill_tags": [
+      "GeoJSON/TopoJSON 地图处理",
+      "数据驱动动画（GSAP/Transition）",
+      "Canvas 性能优化"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Da4y1N7kM/"
+  },
+  {
+    "course_id": "course_225",
+    "title": "AntV G2/G6 图分析实战",
+    "description": "掌握 AntV G2 统计图表与 G6 关系图分析引擎",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 8,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=226",
+    "skill_tags": [
+      "AntV G2/G6 高级图分析",
+      "可视化组件库设计规范",
+      "Apache ECharts 源码级定制"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Tp4y1y7vv/"
+  },
+  {
+    "course_id": "course_226",
+    "title": "大数据可视化与实时数据流",
+    "description": "构建大规模数据虚拟化渲染与 WebSocket 实时数据流可视化",
+    "category": "cat_001",
+    "difficulty": "beginner",
+    "duration_hours": 5,
+    "instructor": "刘老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=227",
+    "skill_tags": [
+      "大数据可视化（虚拟化/LOD 策略）",
+      "实时数据流可视化（WebSocket + requestAnimationFrame）",
+      "可视化叙事（Scrollytelling）",
+      "性能分析（Frame Budget/GPU 火焰图）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Da4y1N7kM/"
+  },
+  {
+    "course_id": "course_227",
+    "title": "增长实验与渠道归因分析",
+    "description": "掌握增长实验全流程设计与多渠道归因分析方法",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 5,
+    "instructor": "李老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=228",
+    "skill_tags": [
+      "渠道归因分析（Last Click/Multi-touch）",
+      "增长实验全流程（假设→设计→上线→评估）",
+      "Google Analytics / Mixpanel 基础",
+      "增长实验文档撰写"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1D9GLzyEL6/"
+  },
+  {
+    "course_id": "course_228",
+    "title": "用户生命周期与 LTV 模型",
+    "description": "构建用户生命周期模型，掌握 CLV/Churn 预测与 RFM 分群",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 6,
+    "instructor": "李老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=229",
+    "skill_tags": [
+      "用户生命周期模型（CLV/Churn）",
+      "LTV 与 Cohort 留存模型",
+      "用户分群与 RFM 模型",
+      "Segment/Amplitude 用户行为平台"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1D9GLzyEL6/"
+  },
+  {
+    "course_id": "course_229",
+    "title": "因果推断与增长建模",
+    "description": "深入因果推断方法论与增长黑客数据驱动策略",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "李老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=230",
+    "skill_tags": [
+      "因果推断（DID/IV/RCT 设计）",
+      "因果推断与增量价值评估（Uplift Modeling）",
+      "Python 增长统计建模",
+      "增长黑客方法论（Sean Ellis）",
+      "跨渠道归因模型（MMM）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1D9GLzyEL6/"
+  },
+  {
+    "course_id": "course_230",
+    "title": "深度学习理论基础",
+    "description": "系统学习反向传播、优化器原理与主流网络架构",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 8,
+    "instructor": "郑老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=231",
+    "skill_tags": [
+      "反向传播与优化器（Adam/SGD）",
+      "CNN/RNN/Transformer 基础架构"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Y7411d7Ys/"
+  },
+  {
+    "course_id": "course_231",
+    "title": "分布式训练实战（DDP/DeepSpeed）",
+    "description": "掌握 PyTorch DDP、DeepSpeed/Megatron 大规模分布式训练",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 6,
+    "instructor": "郑老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=232",
+    "skill_tags": [
+      "分布式训练（DDP/DeepSpeed）",
+      "大规模分布式训练（Megatron/FSDP）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Y7411d7Ys/"
+  },
+  {
+    "course_id": "course_232",
+    "title": "实验追踪与模型管理",
+    "description": "使用 W&B/MLflow/DVC 建立完整的实验追踪与模型版本管理",
+    "category": "cat_003",
+    "difficulty": "beginner",
+    "duration_hours": 3,
+    "instructor": "郑老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=233",
+    "skill_tags": [
+      "Weights & Biases 实验追踪",
+      "Git/DVC 版本管理"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Y7411d7Ys/"
+  },
+  {
+    "course_id": "course_233",
+    "title": "湖仓一体架构实战",
+    "description": "深入 Delta Lake/Iceberg/Hudi 湖仓一体架构设计与实践",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 8,
+    "instructor": "赵老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=234",
+    "skill_tags": [
+      "Delta Lake/Iceberg 湖仓格式",
+      "湖仓一体架构（Delta Lake/Hudi）",
+      "湖仓一体（Iceberg + Flink）",
+      "湖仓一体（Hudi + Trino 联邦查询）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1qy4y1q728/"
+  },
+  {
+    "course_id": "course_234",
+    "title": "数据质量与元数据管理",
+    "description": "构建数据质量监控体系与 Apache Atlas 元数据治理平台",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 5,
+    "instructor": "赵老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=235",
+    "skill_tags": [
+      "数据质量监控（Great Expectations）",
+      "元数据管理（Apache Atlas）",
+      "数据血缘追踪",
+      "数据血缘与影响分析",
+      "数据质量监控体系"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1EZ4y1G7iL/"
+  },
+  {
+    "course_id": "course_235",
+    "title": "数据调度与编排进阶",
+    "description": "深入 Azkaban/DolphinScheduler 调度与 DataOps 工程实践",
+    "category": "cat_007",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "赵老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=236",
+    "skill_tags": [
+      "Azkaban/DolphinScheduler 调度",
+      "DataOps 与 CI/CD for Data",
+      "Shell 脚本自动化",
+      "数据中台架构设计（OneData 方法论）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV11A411L7CK/"
+  },
+  {
+    "course_id": "course_236",
+    "title": "APM 全链路监控与火焰图",
+    "description": "掌握 SkyWalking/Pinpoint APM 监控与火焰图性能分析",
+    "category": "cat_006",
+    "difficulty": "beginner",
+    "duration_hours": 6,
+    "instructor": "王老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=237",
+    "skill_tags": [
+      "APM 工具（SkyWalking/Pinpoint）",
+      "火焰图与堆栈分析",
+      "JVM 性能分析（Arthas/async-profiler）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1cN4y1u7CW/"
+  },
+  {
+    "course_id": "course_237",
+    "title": "Gatling 与 k6 分布式压测",
+    "description": "使用 Gatling/k6 构建高并发分布式压测方案",
+    "category": "cat_006",
+    "difficulty": "beginner",
+    "duration_hours": 5,
+    "instructor": "王老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=238",
+    "skill_tags": [
+      "Gatling 基础",
+      "Gatling Scala 脚本",
+      "k6/Locust 分布式压测",
+      "Nginx 性能调优",
+      "MySQL 慢查询与执行计划"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1fY41177kW/"
+  },
+  {
+    "course_id": "course_238",
+    "title": "分布式链路追踪与服务网格",
+    "description": "深入 Jaeger 链路追踪与 Istio 服务网格实战",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 6,
+    "instructor": "陈老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=239",
+    "skill_tags": [
+      "分布式链路追踪（Jaeger）",
+      "分布式链路追踪",
+      "服务网格（Istio）",
+      "服务网格"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1ME411Y71o/"
+  },
+  {
+    "course_id": "course_239",
+    "title": "Go 并发进阶与中间件设计",
+    "description": "深入 Go 并发模型（sync/atomic/context）与中间件架构",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "陈老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=240",
+    "skill_tags": [
+      "Go 并发模型深度（sync/atomic/context）",
+      "中间件设计",
+      "性能火焰图分析"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1ME411Y71o/"
+  },
+  {
+    "course_id": "course_240",
+    "title": "Python 微服务与性能调优",
+    "description": "掌握 Python gRPC 微服务与性能调优方法",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 5,
+    "instructor": "张老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=241",
+    "skill_tags": [
+      "Python 性能调优",
+      "微服务拆分",
+      "gRPC 微服务",
+      "AI 模型 API 集成（OpenAI/HF）",
+      "AI 模型服务化（Triton/vLLM）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1xE41177Lh/"
+  },
+  {
+    "course_id": "course_241",
+    "title": "PostgreSQL 进阶与数据建模",
+    "description": "深入 PostgreSQL 高级特性、索引优化与数据建模",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "张老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=242",
+    "skill_tags": [
+      "PostgreSQL 进阶",
+      "MySQL/PostgreSQL"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV14Z421z78C/"
+  },
+  {
+    "course_id": "course_242",
+    "title": "Java 单元测试实战（JUnit/Mockito）",
+    "description": "掌握 JUnit 5 与 Mockito 单元测试、集成测试方法",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 4,
+    "instructor": "张老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=243",
+    "skill_tags": [
+      "JUnit/Mockito 单元测试",
+      "JUnit/Mockito",
+      "系统设计"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV19K4y1L7MT/"
+  },
+  {
+    "course_id": "course_243",
+    "title": "Java 系统设计与架构实战",
+    "description": "学习 Java 大型系统设计模式、Code Review 与架构实战",
+    "category": "cat_002",
+    "difficulty": "beginner",
+    "duration_hours": 6,
+    "instructor": "张老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=244",
+    "skill_tags": [
+      "系统设计",
+      "Code Review",
+      "架构设计",
+      "设计模式（SOLID）"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV18E411x7eT/"
+  },
+  {
+    "course_id": "course_244",
+    "title": "Python pytest 自动化框架实战",
+    "description": "从零搭建 pytest 自动化测试框架与 Allure 报告体系",
+    "category": "cat_006",
+    "difficulty": "beginner",
+    "duration_hours": 8,
+    "instructor": "王老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=245",
+    "skill_tags": [
+      "Python pytest 自动化框架",
+      "Allure 测试报告",
+      "Python/Java"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Gw411N73T/"
+  },
+  {
+    "course_id": "course_245",
+    "title": "抓包工具与网络调试实战",
+    "description": "掌握 Charles/Fiddler 抓包与 HTTP/TCP 协议调试",
+    "category": "cat_006",
+    "difficulty": "beginner",
+    "duration_hours": 3,
+    "instructor": "王老师",
+    "thumbnail_url": "https://picsum.photos/400/300?random=246",
+    "skill_tags": [
+      "Charles/Fiddler 抓包",
+      "TCP/HTTP 基础",
+      "HTTP 协议基础"
+    ],
+    "external_url": "https://www.bilibili.com/video/BV1Gw411N73T/"
+  }
+]

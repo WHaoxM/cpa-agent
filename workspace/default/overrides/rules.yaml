@@ -1,0 +1,5 @@
+# 示例：取消注释可覆盖四维权重（须符合 override_whitelist.yaml）
+#
+# matching:
+#   dimension_weights:
+#     D4: 0.22

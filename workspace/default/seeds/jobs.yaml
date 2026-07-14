@@ -1,0 +1,29 @@
+# Workspace Seeds: 追加岗位包
+# workspace 追加的岗位会被合并到 repo 默认岗位包中
+
+additional_jobs:
+  - job_id: ws-local-001
+    position_name: 数据分析师
+    company_industry: 金融科技
+    is_it_position: true
+    required_skills:
+      - name: Python
+        level: 必须
+      - name: SQL
+        level: 必须
+      - name: 数据可视化
+        level: 优先
+    degree_requirement: 本科
+
+  - job_id: ws-local-002
+    position_name: 量化研究员
+    company_industry: 金融
+    is_it_position: true
+    required_skills:
+      - name: Python量化
+        level: 必须
+      - name: 机器学习
+        level: 必须
+      - name: 金融建模
+        level: 优先
+    degree_requirement: 硕士

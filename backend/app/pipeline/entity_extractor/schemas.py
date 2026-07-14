@@ -1,40 +1,22 @@
+"""
+JSON Schema 定义 — extraction schemas
+
+数据源: config/schemas/*.json (冻结契约)
+向后兼容: EDUCATION_SCHEMA / PROJECT_SCHEMA / EXTRACTION_OUTPUT_SCHEMA 常量
+冻结规则: 标记 frozen=true 的 schema 不可修改，只能新增字段。
+"""
+
 from __future__ import annotations
 
-# 面向 block-specific 提取的最小可用子契约（先确保 0.6B 能稳定提取）
+from typing import Any, Dict
 
-EDUCATION_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "school": {"type": ["string", "null"]},
-        "major": {"type": ["string", "null"]},
-        "degree": {"type": ["string", "null"]},
-        "start_date": {"type": ["string", "null"]},
-        "end_date": {"type": ["string", "null"]},
-    },
-    "required": ["school", "major", "degree", "start_date", "end_date"],
-    "additionalProperties": False,
-}
+from config.schema_loader import (
+    get_education_schema,
+    get_extraction_output_schema,
+    get_project_schema,
+)
 
-PROJECT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "project_name": {"type": ["string", "null"]},
-        "project_role": {"type": ["string", "null"]},
-        "start_date": {"type": ["string", "null"]},
-        "end_date": {"type": ["string", "null"]},
-        "description": {"type": ["string", "null"]},
-    },
-    "required": ["project_name", "project_role", "start_date", "end_date", "description"],
-    "additionalProperties": False,
-}
-
-EXTRACTION_OUTPUT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "educations": {"type": "array", "items": EDUCATION_SCHEMA},
-        "projects": {"type": "array", "items": PROJECT_SCHEMA},
-        "skills": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["educations", "projects", "skills"],
-    "additionalProperties": False,
-}
+# 从 JSON 文件加载（首次访问时缓存）
+EDUCATION_SCHEMA: Dict[str, Any] = get_education_schema()
+PROJECT_SCHEMA: Dict[str, Any] = get_project_schema()
+EXTRACTION_OUTPUT_SCHEMA: Dict[str, Any] = get_extraction_output_schema()

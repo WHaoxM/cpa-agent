@@ -1,0 +1,35 @@
+{
+  "_meta": {
+    "id": "project",
+    "description": "简历项目经历提取 Schema",
+    "version": "1.0",
+    "frozen": true,
+    "frozen_date": "2026-06-18",
+    "pipeline": "L0_entity_extraction"
+  },
+  "type": "object",
+  "properties": {
+    "project_name": {
+      "type": ["string", "null"],
+      "description": "项目名称"
+    },
+    "project_role": {
+      "type": ["string", "null"],
+      "description": "项目角色"
+    },
+    "start_date": {
+      "type": ["string", "null"],
+      "description": "开始时间 YYYY-MM"
+    },
+    "end_date": {
+      "type": ["string", "null"],
+      "description": "结束时间 YYYY-MM 或至今"
+    },
+    "description": {
+      "type": ["string", "null"],
+      "description": "项目描述"
+    }
+  },
+  "required": ["project_name", "project_role", "start_date", "end_date", "description"],
+  "additionalProperties": false
+}

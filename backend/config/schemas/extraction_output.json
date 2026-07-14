@@ -1,0 +1,37 @@
+{
+  "_meta": {
+    "id": "extraction_output",
+    "description": "简历实体提取完整输出 Schema",
+    "version": "1.0",
+    "frozen": true,
+    "frozen_date": "2026-06-18",
+    "pipeline": "L0_entity_extraction",
+    "dependencies": ["education", "project"]
+  },
+  "type": "object",
+  "properties": {
+    "educations": {
+      "type": "array",
+      "description": "教育经历列表",
+      "items": {
+        "$ref": "education.json"
+      }
+    },
+    "projects": {
+      "type": "array",
+      "description": "项目经历列表",
+      "items": {
+        "$ref": "project.json"
+      }
+    },
+    "skills": {
+      "type": "array",
+      "description": "技能列表",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": ["educations", "projects", "skills"],
+  "additionalProperties": false
+}

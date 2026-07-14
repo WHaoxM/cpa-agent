@@ -1,0 +1,2 @@
+name: default
+description: 开发环境默认工作区（无 overrides 时使用 repo config/defaults）

@@ -1,0 +1,64 @@
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:-!Rootmysql123}"
+      MYSQL_DATABASE: "${MYSQL_DATABASE:-cpa_agent}"
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./backend/scripts/mysql/init_mysql.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./backend/scripts/mysql/seed_cold_start_1.sql:/docker-entrypoint-initdb.d/02-seed-cold-start-1.sql:ro
+      - ./backend/scripts/mysql/seed_cold_start_2.sql:/docker-entrypoint-initdb.d/03-seed-cold-start-2.sql:ro
+      - ./backend/scripts/mysql/seed_cold_start_3.sql:/docker-entrypoint-initdb.d/04-seed-cold-start-3.sql:ro
+      - ./backend/scripts/mysql/seed_skill_supplement.sql:/docker-entrypoint-initdb.d/05-seed-skill-supplement.sql:ro
+      - ./backend/scripts/mysql/seed_soft_skills.sql:/docker-entrypoint-initdb.d/06-seed-soft-skills.sql:ro
+      - ./backend/scripts/mysql/seed_proficiency_criteria.sql:/docker-entrypoint-initdb.d/07-seed-proficiency-criteria.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$${MYSQL_ROOT_PASSWORD}\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
+
+  neo4j:
+    image: neo4j:5.18-community
+    environment:
+      NEO4J_AUTH: "${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-neo4jpass}"
+      NEO4J_dbms_memory_heap_initial__size: "${NEO4J_HEAP_INITIAL:-512m}"
+      NEO4J_dbms_memory_heap_max__size: "${NEO4J_HEAP_MAX:-1g}"
+      NEO4J_dbms_memory_pagecache_size: "${NEO4J_PAGECACHE:-512m}"
+      TZ: Asia/Shanghai
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -a bolt://127.0.0.1:7687 -u \"${NEO4J_USER:-neo4j}\" -p \"${NEO4J_PASSWORD:-neo4jpass}\" 'RETURN 1' >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 60s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  neo4j_data:
+  neo4j_logs:
+  redis_data:

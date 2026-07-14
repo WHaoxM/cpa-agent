@@ -137,7 +137,7 @@ class JdCleanerTool(BaseTool):
             logger.error(f"清洗任务失败: {e}")
             import traceback
             logger.error(traceback.format_exc())
-            return f"[jd_cleaner] 清洗失败: {str(e)}"
+            return f"[jd_cleaner] 清洗失败，请稍后重试"
         finally:
             os.chdir(original_cwd)
             p1_LLM.INPUT_FILE = original_input

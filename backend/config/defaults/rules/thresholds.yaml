@@ -1,0 +1,68 @@
+# 阈值 — repo 权威默认
+
+thresholds:
+  entity_normalizer:
+    alias: 0.85
+    related: 0.70
+
+  semantic:
+    cosine: 0.85
+
+  portrait:
+    competitiveness_levels:
+      extreme: 85
+      strong: 70
+      medium: 55
+      weak: 40
+
+  match:
+    confidence_semantic_factor: 0.5
+    confidence_d1_pass_bonus: 0.5
+
+  # match_level 阈值 (供 matcher._get_match_level 和 pipeline_ext 共用)
+  # 统一权威源 — 消除两处硬编码不一致 bug
+  match_level:
+    excellent: 85    # >= 85 → 极佳
+    good: 70         # >= 70 → 良好
+    fair: 60         # >= 60 → 一般
+    # < 60 → 不匹配
+
+  # D3 软技能评分参数 (供 matcher._calc_d3_detailed 使用)
+  d3:
+    # 软技能等级 → 分值 (0-1)
+    level_map:
+      "强": 1.0
+      "中": 0.6
+      "弱": 0.3
+    level_default: 0.5
+
+    # 关键词降级 fallback 的 4 组关键词
+    keywords:
+      communication: ["沟通", "协调", "汇报", "对接", "宣讲", "演讲"]
+      teamwork: ["合作", "协作", "团队", "配合", "小组"]
+      stress_tolerance: ["加班", "紧急", "deadline", "高压", "赶工", "攻坚"]
+      responsibility: ["负责", "主导", "管理", "带领", "组织"]
+
+    # 关键词评分魔数
+    keyword_score_factor: 0.15      # 每命中一个关键词的得分系数
+    keyword_score_min: 0.3          # 关键词评分下限
+    keyword_score_cap: 1.0          # 关键词评分上限
+
+    # 规则加分
+    rule_bonus:
+      internship: 5         # 有实习经历 +5
+      team_project: 5       # 有团队项目 +5
+      leader: 8             # leader 关键词 +8
+      student_officer: 3    # 学生干部 +3
+    leader_keywords: ["负责", "主导"]
+    officer_keywords: ["主席", "部长", "会长"]
+
+    # D3 总分公式参数
+    score_formula:
+      detail_weight: 70     # avg_detail × 70
+      base_score: 20        # 基础分
+      score_cap: 100        # 总分上限
+
+  oov_frequency:
+    observe: 0.01
+    review: 0.03

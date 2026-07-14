@@ -31,12 +31,15 @@ class CorsMiddleware:
             response.headers['Access-Control-Allow-Origin'] = '*'
         elif origin and origin in self.allowed_origins:
             response.headers['Access-Control-Allow-Origin'] = origin
+        else:
+            return response
 
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
         response.headers['Access-Control-Max-Age'] = '3600'
 
         if request.method == 'OPTIONS':
-            response.headers['Access-Control-Allow-Credentials'] = 'true'
+            if response.headers.get('Access-Control-Allow-Origin') != '*':
+                response.headers['Access-Control-Allow-Credentials'] = 'true'
 
         return response

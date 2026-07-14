@@ -1,186 +1,221 @@
 """
 LLM 增强版技能抽取器
-结合词典匹配 + DeepSeek LLM 补充
+架构原则：LLM 为主，规则防幻觉为辅
+软技能和硬技能都会抽取并分类存储，供 Agent 验证
+
+辅助数据走 YAML (config/defaults/dictionaries/llm_skill_aux.yaml)
+通过 config.dictionary_loader 加载
 """
 
-import json
-from typing import List, Dict, Optional
-from .skill_extractor import SkillExtractor, extract_skills as dict_extract
-from .relation_extractor import extract_relations
-from app.utils.llm_client import get_llm_client
-from app.utils.logger import get_logger
+import re
+from typing import List, Dict, Set
 
-logger = get_logger('cpa-agent.llm_skill_extractor')
+from config.prompt_loader import load_prompt
+from config.dictionary_loader import (
+    get_tech_context_negative,
+    get_soft_skill_keywords,
+    get_high_confidence_skills,
+    get_level_confidence_mapping,
+    get_soft_skill_discount,
+    get_default_confidence,
+    get_llm_skill_to_category,
+)
 
 
-SKILL_EXTRACTION_PROMPT = """你是一个专业的技能抽取助手。请从以下文本中抽取所有IT技术技能。
-
-文本可能来自简历或职位描述。请以JSON格式返回抽取到的技能列表。
-
-技能类型包括但不限于：
-- 编程语言：Python, Java, JavaScript, Go等
-- 框架：Django, React, Vue.js, Spring Boot等
-- 数据库：MySQL, PostgreSQL, MongoDB, Redis等
-- 工具：Git, Docker, Kubernetes, Jenkins等
-- 云服务：AWS, 阿里云, 腾讯云等
-- AI/ML：TensorFlow, PyTorch, 机器学习, 深度学习等
-
-注意：
-1. 只返回技术技能，不要返回软技能（如"沟通能力"、"团队合作"）
-2. 对于缩写如"JS"要展开为"JavaScript"，"K8S"展开为"Kubernetes"
-3. 如果文本中没有技能，返回空列表
-
-请以JSON格式返回，格式如下：
-{{"skills": ["技能1", "技能2", ...], "reasoning": "简要说明"}}
-
-文本：
-{text}
-"""
+# 辅助数据从 YAML 加载 (保留模块级常量名以兼容外部引用)
+TECH_CONTEXT_NEGATIVE: List[str] = get_tech_context_negative()
+SOFT_SKILL_KEYWORDS: Set[str] = set(get_soft_skill_keywords())
 
 
 class LLMSkillExtractor:
-    """LLM 增强的技能抽取器"""
+    """LLM 驱动的技能抽取器"""
 
-    def __init__(self, use_llm_fallback: bool = True):
-        self.dict_extractor = SkillExtractor()
-        self.use_llm_fallback = use_llm_fallback
+    def __init__(self, use_normalizer: bool = True):
         self._llm_client = None
+        self._normalizer = None
+        self._use_normalizer = use_normalizer
 
     @property
     def llm_client(self):
         if self._llm_client is None:
+            from app.utils.llm_client import get_llm_client
             self._llm_client = get_llm_client()
         return self._llm_client
 
-    def extract(
-        self,
-        text: str,
-        use_llm: bool = False
-    ) -> List[Dict]:
-        """
-        抽取技能
+    @property
+    def normalizer(self):
+        if self._normalizer is None and self._use_normalizer:
+            try:
+                from app.services.entity_normalizer import get_entity_normalizer
+                self._normalizer = get_entity_normalizer()
+            except Exception:
+                self._normalizer = None
+        return self._normalizer
 
-        Args:
-            text: 输入文本
-            use_llm: 是否使用 LLM 补充（默认 True）
+    def extract(self, text: str, use_llm: bool = True) -> List[Dict]:
+        if not text or not text.strip():
+            return []
 
-        Returns:
-            技能列表
-        """
-        dict_skills = dict_extract(text)
+        if use_llm:
+            skills = self._extract_with_llm(text)
+            if skills:
+                return skills
 
-        if not use_llm or not self.use_llm_fallback:
-            return dict_skills
-
-        llm_skills = self._extract_with_llm(text)
-
-        merged = self._merge_skills(dict_skills, llm_skills)
-
-        return merged
+        return self._rule_based_fallback(text)
 
     def _extract_with_llm(self, text: str) -> List[Dict]:
         """使用 LLM 抽取技能"""
         try:
-            messages = [
-                {"role": "user", "content": SKILL_EXTRACTION_PROMPT.format(text=text)}
-            ]
+            prompt = load_prompt("entity.skill_extractor.user", text=text[:3000])
 
-            response = self.llm_client.chat_json(
-                messages=messages,
+            response = self.llm_client.chat(
+                messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
-                max_tokens=1024
+                max_tokens=1500
             )
 
-            llm_skills_raw = response.get("skills", [])
+            content = str(response).strip()
 
-            llm_skills = []
-            for skill in llm_skills_raw:
-                if isinstance(skill, str):
-                    llm_skills.append({
-                        "name": skill,
-                        "category": self._categorize_skill(skill),
-                        "confidence": 0.75,
+            import re
+            json_match = re.search(r'\{.*\}|\[.*\]', content, re.DOTALL)
+            if not json_match:
+                return []
+
+            import json
+            data = json.loads(json_match.group())
+
+            skills_raw = data.get("skills", []) if isinstance(data, dict) else data
+            if not isinstance(skills_raw, list):
+                return []
+
+            skills = []
+            for item in skills_raw:
+                if isinstance(item, dict):
+                    name = item.get("name", "").strip()
+                else:
+                    name = str(item).strip()
+
+                if not name or len(name) < 2:
+                    continue
+
+                skill_type = self._detect_skill_type(name)
+
+                if skill_type == "hard" and self._is_hallucination(name, item if isinstance(item, dict) else {}):
+                    continue
+
+                if isinstance(item, dict):
+                    skills.append({
+                        "name": name,
+                        "level": item.get("level", "熟悉"),
+                        "category": item.get("category", self._categorize(name)),
+                        "skill_type": skill_type,
+                        "confidence": self._calc_confidence(item.get("level", "熟悉"), skill_type),
+                        "source": "llm"
+                    })
+                else:
+                    skills.append({
+                        "name": name,
+                        "level": "熟悉",
+                        "category": self._categorize(name),
+                        "skill_type": skill_type,
+                        "confidence": 0.6 if skill_type == "hard" else 0.5,
                         "source": "llm"
                     })
 
-            logger.info(f"LLM 抽取到 {len(llm_skills)} 个技能")
-            return llm_skills
+            # ── 归一化: LLM 抽取结果 → canonical 规范名 ──
+            if self.normalizer:
+                skills = self.normalizer.normalize_batch(skills, "skill", text[:500])
+                for s in skills:
+                    if s.get("is_oov"):
+                        s["source"] = "llm+oov"
+                    else:
+                        s["source"] = "llm+normalized"
+
+            return self._deduplicate_skills(skills)
 
         except Exception as e:
-            logger.warning(f"LLM 技能抽取失败: {e}，使用词典匹配结果")
+            import logging
+            logging.getLogger('cpa-agent.llm_skill_extractor').warning(f"LLM抽取失败: {e}")
             return []
 
-    def _merge_skills(
-        self,
-        dict_skills: List[Dict],
-        llm_skills: List[Dict]
-    ) -> List[Dict]:
-        """合并词典和 LLM 抽取的技能"""
-        seen = set()
-        merged = []
+    def _detect_skill_type(self, name: str) -> str:
+        """检测技能类型：hard(硬技能) 或 soft(软技能)"""
+        name_lower = name.lower()
+        for keyword in SOFT_SKILL_KEYWORDS:
+            if keyword.lower() in name_lower:
+                return "soft"
+        return "hard"
 
-        for skill in dict_skills:
-            seen.add(skill["name"])
-            skill["source"] = "dict"
-            merged.append(skill)
+    def _is_hallucination(self, name: str, item: Dict) -> bool:
+        """基于上下文判断是否为幻觉"""
+        level = item.get("level", "")
 
-        for skill in llm_skills:
-            if skill["name"] not in seen:
-                seen.add(skill["name"])
-                skill["source"] = "llm"
-                merged.append(skill)
+        if level in ["精通", "掌握"] and name not in self._get_high_confidence_skills():
+            context = str(item)
+            for neg in TECH_CONTEXT_NEGATIVE:
+                if neg.lower() in context.lower():
+                    return True
 
-        return merged
+        if len(name) > 30:
+            return True
 
-    def _categorize_skill(self, skill_name: str) -> str:
-        """对技能进行分类"""
-        categories = {
-            "编程语言": ["Python", "Java", "JavaScript", "TypeScript", "Go", "Rust", "C++", "C#", "PHP", "Ruby", "Swift", "Kotlin", "Shell", "SQL"],
-            "前端框架": ["React", "Vue", "Angular", "Svelte", "jQuery", "Bootstrap", "Tailwind", "Element UI", "Ant Design"],
-            "后端框架": ["Django", "Flask", "FastAPI", "Spring", "Spring Boot", "Express", "NestJS", "Koa", "Laravel"],
-            "数据库": ["MySQL", "PostgreSQL", "MongoDB", "Redis", "Elasticsearch", "Oracle", "SQLite", "Cassandra"],
-            "DevOps": ["Docker", "Kubernetes", "Jenkins", "GitLab CI", "Ansible", "Terraform", "Prometheus", "Grafana"],
-            "AI/ML": ["TensorFlow", "PyTorch", "Keras", "Scikit-learn", "Pandas", "OpenCV", "Hugging Face", "LangChain"],
-            "大数据": ["Hadoop", "Spark", "Flink", "Kafka", "Hive", "HBase"],
-            "云计算": ["AWS", "Azure", "GCP", "阿里云", "腾讯云", "华为云"],
-        }
+        if re.match(r'^[\d\W]+$', name):
+            return True
 
-        for category, skills in categories.items():
-            if skill_name in skills:
-                return category
+        return False
 
-        return "其他"
+    def _get_high_confidence_skills(self) -> Set[str]:
+        """高置信度技能集合 (走 YAML, 防止 LLM 幻觉: 仅这些技能允许 level=精通/掌握)"""
+        return set(get_high_confidence_skills())
+
+    def _calc_confidence(self, level: str, skill_type: str = "hard") -> float:
+        """根据掌握程度和技能类型计算置信度 (映射表 + 折扣系数走 YAML)"""
+        mapping = get_level_confidence_mapping()
+        base = mapping.get(level, get_default_confidence())
+        if skill_type == "soft":
+            return base * get_soft_skill_discount()
+        return base
+
+    def _categorize(self, skill_name: str) -> str:
+        """对技能进行分类 (反向映射走 YAML: skill_name → category)"""
+        skill_to_cat = get_llm_skill_to_category()
+        return skill_to_cat.get(skill_name, "其他")
+
+    def _rule_based_fallback(self, text: str) -> List[Dict]:
+        """基于规则的降级方案（仅在LLM不可用时使用）"""
+        from .skill_extractor import extract_skills as dict_extract
+        skills = dict_extract(text)
+        for s in skills:
+            s["source"] = "dict"
+        return skills
+
+    def _deduplicate_skills(self, skills: List[Dict]) -> List[Dict]:
+        """去重并合并技能"""
+        seen: Dict[str, Dict] = {}
+        for skill in skills:
+            name = skill["name"]
+            if name not in seen:
+                seen[name] = skill
+            else:
+                if skill.get("confidence", 0) > seen[name].get("confidence", 0):
+                    seen[name] = skill
+
+        result = list(seen.values())
+        result.sort(key=lambda x: x.get("confidence", 0), reverse=True)
+        return result
 
 
 def extract_skills(text: str, use_llm: bool = True) -> List[Dict]:
-    """
-    便捷函数：抽取技能（词典 + LLM）
-
-    Args:
-        text: 输入文本
-        use_llm: 是否使用 LLM
-
-    Returns:
-        技能列表
-    """
+    """便捷函数：抽取技能"""
     extractor = LLMSkillExtractor()
     return extractor.extract(text, use_llm=use_llm)
 
 
 def extract_skills_with_relations(text: str, use_llm: bool = True) -> Dict:
-    """
-    抽取技能和关系
-
-    Args:
-        text: 输入文本
-        use_llm: 是否使用 LLM
-
-    Returns:
-        {"skills": [...], "relations": [...]}
-    """
+    """抽取技能和关系（关系基于共现统计）"""
     skills = extract_skills(text, use_llm=use_llm)
     skill_names = [s["name"] for s in skills]
-    relations = extract_relations(skill_names, text)
+    relations = _extract_cooccurrence_relations(skill_names, text)
 
     return {
         "skills": skills,
@@ -188,40 +223,72 @@ def extract_skills_with_relations(text: str, use_llm: bool = True) -> Dict:
     }
 
 
+def _extract_cooccurrence_relations(skill_names: List[str], text: str) -> List[Dict]:
+    """基于共现统计的简单关系抽取"""
+    if len(skill_names) < 2:
+        return []
+
+    lines = text.split('\n')
+    relations = []
+    seen = set()
+
+    for line in lines:
+        line_lower = line.lower()
+        skills_in_line = [s for s in skill_names if s.lower() in line_lower]
+
+        if len(skills_in_line) >= 2:
+            for i in range(len(skills_in_line)):
+                for j in range(i + 1, len(skills_in_line)):
+                    pair = tuple(sorted([skills_in_line[i], skills_in_line[j]]))
+                    if pair not in seen:
+                        seen.add(pair)
+                        relations.append({
+                            "source": skills_in_line[i],
+                            "target": skills_in_line[j],
+                            "type": "co_occurrence",
+                            "confidence": 0.6
+                        })
+
+    return relations
+
+
 if __name__ == "__main__":
     test_text = """
-    Python后端开发工程师
+    Python后端开发工程师 | 5年经验
 
     熟练掌握：
-    - Python, Django, Flask
-    - MySQL, Redis
-    - Docker 容器化部署
+    - Python, Django, Flask, FastAPI
+    - MySQL, PostgreSQL, Redis 数据库
+    - Docker, Kubernetes 容器化
+    - Git, Jenkins CI/CD
 
-    了解/接触过：
+    了解：
     - Vue.js 前端开发
-    - Kubernetes 集群管理
-    - 机器学习基础
+    - TensorFlow, PyTorch 机器学习
+    - AWS 阿里云云服务
 
     加分项：
-    - 有 TensorFlow 或 PyTorch 项目经验
-    - 熟悉 AWS 或阿里云
+    - 有微服务架构经验
+    - 熟悉分布式系统设计
+    - 具有良好的沟通能力和团队合作精神
+    - 具备项目管理经验，负责过多个跨团队项目
     """
 
     print("=" * 60)
     print("LLM 增强技能抽取测试")
     print("=" * 60)
 
-    print("\n[1] 词典匹配:")
-    dict_skills = dict_extract(test_text)
-    for s in dict_skills:
-        print(f"  {s['name']} ({s['category']})")
-
-    print("\n[2] LLM 增强:")
+    print("\n[1] LLM 抽取:")
     result = extract_skills_with_relations(test_text, use_llm=True)
     for s in result["skills"]:
-        src = f"[{s.get('source', 'unknown')}]"
-        print(f"  {src} {s['name']} ({s['category']})")
+        skill_type = s.get('skill_type', 'unknown')
+        print(f"  [{skill_type}] {s['name']} ({s.get('category', '其他')}) - {s.get('level', '熟悉')} - 置信度: {s.get('confidence', 0):.2f}")
 
-    print("\n[3] 关系:")
+    hard_skills = [s for s in result["skills"] if s.get("skill_type") == "hard"]
+    soft_skills = [s for s in result["skills"] if s.get("skill_type") == "soft"]
+    print(f"\n硬技能: {len(hard_skills)} 个")
+    print(f"软技能: {len(soft_skills)} 个")
+
+    print("\n[2] 关系:")
     for r in result["relations"]:
         print(f"  {r['source']} --({r['type']})--> {r['target']}")

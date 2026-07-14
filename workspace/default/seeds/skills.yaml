@@ -1,0 +1,18 @@
+# Workspace Seeds: 追加技能词条
+# workspace 追加的技能会被合并到 repo 默认词典中
+
+additional_skills:
+  - name: CPA会计
+    category: 金融财会
+    tier: certification
+    aliases: [注册会计师, 注册会计]
+
+  - name: CFA
+    category: 金融财会
+    tier: certification
+    aliases: [特许金融分析师]
+
+  - name: Python量化
+    category: 金融科技
+    tier: intermediate
+    description: 使用Python进行金融数据分析和量化策略开发

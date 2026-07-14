@@ -1,0 +1,22 @@
+# Agent 行为配置 — repo 权威默认
+
+react_agent:
+  max_tool_calls: 10
+  temperature: 0.7
+  stream: true
+
+langgraph_agent:
+  max_iterations: 15
+  temperature: 0.3
+
+ethics_filter:
+  # 隐私脱敏 + 歧视性内容过滤
+  enabled: true
+  mask_fields:
+    - gender
+    - age
+    - ethnicity
+    - hometown
+    - phone
+    - email
+    - id_card

@@ -1,0 +1,17 @@
+__pycache__
+*.pyc
+*.pyo
+.env
+.venv
+venv/
+*.egg-info
+dist/
+build/
+.git
+.gitignore
+logs/*
+uploads/*
+modelscope_cache/*
+*.log
+.DS_Store
+Thumbs.db

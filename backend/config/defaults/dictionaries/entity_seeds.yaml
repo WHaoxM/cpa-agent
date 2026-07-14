@@ -1,0 +1,139 @@
+# 实体规范库种子数据
+# 供 app/services/entity_normalizer.py:seed_canonical_entities 加载
+# 用途: 初始化 canonical_entity 表的规范实体 (专业/职位/学历/证书)
+# 注: 技能种子数据走 skill_lexicon.yaml (由 SKILL_CATEGORIES 提供)
+
+# ── skill_lexicon 英文分类 → 中文显示名映射 ──
+skill_category_map:
+  programming_languages: 编程语言
+  web_frameworks: 前端/后端框架
+  ai_ml: AI/ML
+  databases: 数据库
+  devops_tools: DevOps/工具
+  concepts: 概念/方法论
+  soft_skills: 软技能
+
+# ── 常见专业 (entity_type=major) ──
+common_majors:
+  - 计算机科学与技术
+  - 软件工程
+  - 人工智能
+  - 数据科学与大数据技术
+  - 信息安全
+  - 网络工程
+  - 物联网工程
+  - 电子信息工程
+  - 通信工程
+  - 自动化
+  - 数学与应用数学
+  - 统计学
+
+# ── 常见职位 (entity_type=position) ──
+common_positions:
+  - 后端开发工程师
+  - 前端开发工程师
+  - 全栈开发工程师
+  - 算法工程师
+  - 数据工程师
+  - 测试工程师
+  - 运维工程师
+  - 安全工程师
+  - 产品经理
+  - 项目经理
+
+# ── 学历层次 (entity_type=degree) ──
+# 格式: canonical_name -> [aliases]
+degree_seeds:
+  专科:
+    - 大专
+    - 高职
+    - 高职高专
+  本科:
+    - 学士
+    - 学士学位
+    - 全日制本科
+    - Bachelor
+    - bachelor
+  硕士:
+    - 硕士研究生
+    - 工学硕士
+    - 理学硕士
+    - 学术硕士
+    - 专业硕士
+    - Master
+    - master
+  博士:
+    - 博士研究生
+    - 工学博士
+    - PhD
+    - Doctor
+    - phd
+
+# ── 常见证书 (entity_type=certificate) ──
+# 格式: 列表中每项含 canonical_name / category / aliases
+cert_seeds:
+  - canonical_name: CET-4
+    category: 英语
+    aliases:
+      - 大学英语四级
+      - 英语四级
+      - 英语四级证书
+      - CET4
+      - 四级
+  - canonical_name: CET-6
+    category: 英语
+    aliases:
+      - 大学英语六级
+      - 英语六级
+      - 英语六级证书
+      - CET6
+      - 六级
+  - canonical_name: 计算机二级
+    category: 计算机等级
+    aliases:
+      - 全国计算机等级考试二级
+      - NCRE二级
+      - 计算机等级二级
+  - canonical_name: 计算机三级
+    category: 计算机等级
+    aliases:
+      - 全国计算机等级考试三级
+      - NCRE三级
+      - 计算机等级三级
+      - 全国计算机等级考试三级(网络技术)
+  - canonical_name: 软考初级
+    category: 软考
+    aliases:
+      - 程序员(初级)
+      - 信息处理技术员
+  - canonical_name: 软考中级
+    category: 软考
+    aliases:
+      - 软件设计师
+      - 软件设计师(中级)
+      - 网络工程师(中级)
+  - canonical_name: 软考高级
+    category: 软考
+    aliases:
+      - 系统架构设计师
+      - 信息系统项目管理师
+  - canonical_name: PMP
+    category: 项目管理
+    aliases:
+      - PMP认证
+      - PMP项目管理专业人士认证
+      - 项目管理专业人士认证
+      - 项目管理专业人士
+  - canonical_name: AWS认证
+    category: 云计算
+    aliases:
+      - AWS Certified
+      - AWS Certified Solutions Architect
+      - AWS认证助理级
+  - canonical_name: Oracle认证
+    category: 数据库
+    aliases:
+      - Oracle数据库认证
+      - Oracle数据库认证 OCA
+      - OCA
+      - Oracle认证 OCA

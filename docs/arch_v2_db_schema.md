@@ -636,8 +636,8 @@ started_at → "2026-04-05T19:30:00"
 
 | 脚本 | 功能 | 依赖 |
 |------|------|------|
-| `scripts/init_mysql.py` | 创建所有 MySQL 表 | MySQL 连接 |
-| `scripts/init_neo4j.py` | 创建约束 + 索引 | Neo4j 连接 |
-| `scripts/init_milvus.py` | 创建 4 个 Collection | Milvus 连接 |
+| `scripts/mysql/init_mysql.py` | 创建所有 MySQL 表 | MySQL 连接 |
+| `scripts/neo4j/init_neo4j.py` | 创建约束 + 索引 | Neo4j 连接 |
+| `scripts/milvus/init_milvus.py` | 创建 4 个 Collection | Milvus 连接 |
 | `scripts/seed_taxonomy.py` | 导入 skill_taxonomy ~500 节点 → Neo4j + Milvus | JSON 种子数据 |
 | `scripts/seed_job_data.py` | 导入 JD 数据 → MySQL + Milvus | Excel/JSON |

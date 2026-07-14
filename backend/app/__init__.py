@@ -1,20 +1,17 @@
 """
 CPA-Agent Backend - Flask 应用工厂
-参考 MiroFish 架构，适配职业规划智能体场景
 """
 
 import os
-import time
 import warnings
-import psutil
 
 warnings.filterwarnings("ignore", message=".*resource_tracker.*")
 
-from flask import Flask, request, g
-from flask_cors import CORS
+from flask import Flask
 
 from .config import Config
 from .utils.logger import setup_logger, get_logger
+from .middleware import LoggingMiddleware, ErrorHandler, CorsMiddleware
 
 
 def create_app(config_class=Config):
@@ -36,35 +33,43 @@ def create_app(config_class=Config):
         logger.info("CPA-Agent Backend 启动中...")
         logger.info("=" * 50)
 
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
+    LoggingMiddleware(app)
+    ErrorHandler(app)
+    CorsMiddleware(app, allowed_origins=config_class.CORS_ALLOWED_ORIGINS)
 
-    @app.before_request
-    def log_request():
-        g.start_time = time.time()
-        req_logger = get_logger('cpa-agent.request')
-        req_logger.debug(f"请求: {request.method} {request.path}")
+    try:
+        from config.loader import init_rules_config
+        init_rules_config()
+    except Exception as e:
+        logger.error(f"业务规则配置加载失败: {e}")
+        raise
 
-    @app.after_request
-    def log_response(response):
-        req_logger = get_logger('cpa-agent.request')
-        
-        if hasattr(g, 'start_time'):
-            elapsed = time.time() - g.start_time
-            if elapsed > 1.0:
-                req_logger.warning(f"慢请求: {request.method} {request.path} - {elapsed:.2f}s")
-            else:
-                req_logger.debug(f"响应: {response.status_code} - {elapsed:.3f}s")
-        
-        return response
+    try:
+        from config.prompt_loader import init_prompt_registry
+        init_prompt_registry()
+    except Exception as e:
+        logger.error(f"Prompt 注册表加载失败: {e}")
+        raise
 
     @app.route('/health')
     def health():
         return {'status': 'ok', 'service': 'CPA-Agent Backend'}
 
+    @app.route('/api/admin/python-info')
+    def python_info():
+        """检查 Flask 使用的 Python 信息"""
+        import sys
+        return {
+            'python_executable': sys.executable,
+            'python_version': sys.version,
+            'python_path': sys.path[:5],
+        }
+
     @app.route('/metrics')
     def metrics():
         """性能监控指标"""
         try:
+            import psutil
             cpu_percent = psutil.cpu_percent(interval=0.1)
             memory = psutil.virtual_memory()
             
@@ -78,7 +83,7 @@ def create_app(config_class=Config):
         except Exception as e:
             return {'status': 'error', 'message': str(e)}
 
-    from .api import graph_bp, profile_bp, match_bp, report_bp, agent_bp, pipeline_bp, learning_bp, admin_bp, favorites_bp, pipeline_ext
+    from .api import graph_bp, profile_bp, match_bp, report_bp, agent_bp, pipeline_bp, learning_bp, admin_bp, favorites_bp, career_bp, pipeline_ext
     app.register_blueprint(graph_bp, url_prefix='/api/graph')
     app.register_blueprint(profile_bp, url_prefix='/api/profile')
     app.register_blueprint(match_bp, url_prefix='/api/match')
@@ -87,6 +92,7 @@ def create_app(config_class=Config):
     app.register_blueprint(pipeline_bp, url_prefix='/api/pipeline')
     app.register_blueprint(pipeline_ext.pipeline_ext_bp, url_prefix='/api/pipeline/ext')
     app.register_blueprint(learning_bp, url_prefix='/api/learning')
+    app.register_blueprint(career_bp, url_prefix='/api/career')
     app.register_blueprint(admin_bp, url_prefix='/api/admin')
     app.register_blueprint(favorites_bp, url_prefix='/api')
 

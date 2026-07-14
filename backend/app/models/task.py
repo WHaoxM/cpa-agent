@@ -4,7 +4,7 @@
 
 from datetime import datetime
 from typing import Dict, Any
-from sqlalchemy import Column, String, Text, JSON, Integer, Float, DateTime
+from sqlalchemy import Column, String, Text, JSON, Integer, Float, DateTime, Index
 
 from .base import Base
 
@@ -12,13 +12,19 @@ from .base import Base
 class PipelineTask(Base):
     """管线任务表"""
     __tablename__ = 'pipeline_task'
+    __table_args__ = (
+        Index('idx_pipeline', 'pipeline'),
+        Index('idx_status', 'status'),
+        Index('idx_student', 'student_id'),
+        Index('idx_created', 'created_at'),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     task_id = Column(String(64), unique=True, nullable=False, comment='任务唯一ID')
 
     pipeline = Column(String(30), nullable=False, comment='L0_parse_resume/L1_build_graph/...')
-    status = Column(String(20), default='pending', comment='pending/running/completed/failed')
-    progress = Column(Integer, default=0, comment='进度 0-100')
+    status = Column(String(20), nullable=False, default='pending', comment='pending/running/completed/failed')
+    progress = Column(Integer, nullable=False, default=0, comment='进度 0-100')
 
     params_json = Column(JSON, comment='管线输入参数')
 
@@ -32,6 +38,7 @@ class PipelineTask(Base):
     started_at = Column(DateTime, comment='开始时间')
     completed_at = Column(DateTime, comment='完成时间')
     created_at = Column(DateTime, default=datetime.now, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
 
     def to_dict(self) -> Dict[str, Any]:
         return {

@@ -1,0 +1,15 @@
+# Embedding 服务配置 — repo 权威默认
+
+model:
+  # BGE-M3 多语言向量模型
+  name: "BAAI/bge-m3"
+  # 冻结向量维度 (与 Milvus collection 一致: dim=1024)
+  dimension: 1024
+
+huggingface:
+  # HF 镜像站 (国内加速)
+  endpoint: "https://hf-mirror.com"
+
+cache:
+  # LRU 缓存大小 (0=禁用)
+  max_size: 1000

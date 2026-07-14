@@ -8,16 +8,9 @@ from typing import Dict, Optional
 from .base import BaseTool
 from ...utils.logger import get_logger
 from ...utils.llm_client import LLMClient
+from config.prompt_loader import load_prompt
 
 logger = get_logger('cpa-agent.tool.llm_reason')
-
-SYSTEM_PROMPT = """你是 CPA-Agent 职业规划专家，擅长：
-1. 分析学生的技能画像与岗位需求的匹配度
-2. 提供职业发展建议和学习路径规划
-3. 解释人岗匹配分数的构成和优化方向
-4. 撰写专业的职业发展报告
-
-请基于提供的上下文信息，给出专业、实用的建议。"""
 
 
 class LlmReasonTool(BaseTool):
@@ -74,7 +67,7 @@ class LlmReasonTool(BaseTool):
         logger.info(f"llm_reason 执行: task={task[:100]}")
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT}
+            {"role": "system", "content": load_prompt("tool.llm_reason.system")}
         ]
 
         if context:
@@ -94,4 +87,4 @@ class LlmReasonTool(BaseTool):
             return result
         except Exception as e:
             logger.error(f"llm_reason 执行失败: {e}")
-            return f"[llm_reason] 推理失败: {str(e)}"
+            return f"[llm_reason] 推理失败，请稍后重试"

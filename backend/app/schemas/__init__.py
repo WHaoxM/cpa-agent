@@ -21,7 +21,7 @@ from .agent import (
     ChatRequest, ChatResponse,
     SessionCreateResponse, SessionHistoryResponse
 )
-from .common import PaginationParams, BaseResponse
+from .common import PaginationParams, PaginatedResponse, BaseResponse
 
 __all__ = [
     'StudentProfileCreate',
@@ -40,5 +40,6 @@ __all__ = [
     'SessionCreateResponse',
     'SessionHistoryResponse',
     'PaginationParams',
+    'PaginatedResponse',
     'BaseResponse',
 ]

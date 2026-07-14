@@ -1,0 +1,35 @@
+{
+  "_meta": {
+    "id": "education",
+    "description": "简历教育经历提取 Schema",
+    "version": "1.0",
+    "frozen": true,
+    "frozen_date": "2026-06-18",
+    "pipeline": "L0_entity_extraction"
+  },
+  "type": "object",
+  "properties": {
+    "school": {
+      "type": ["string", "null"],
+      "description": "学校名称"
+    },
+    "major": {
+      "type": ["string", "null"],
+      "description": "专业"
+    },
+    "degree": {
+      "type": ["string", "null"],
+      "description": "学历: 博士/硕士/本科/专科/..."
+    },
+    "start_date": {
+      "type": ["string", "null"],
+      "description": "开始时间 YYYY-MM"
+    },
+    "end_date": {
+      "type": ["string", "null"],
+      "description": "结束时间 YYYY-MM 或至今"
+    }
+  },
+  "required": ["school", "major", "degree", "start_date", "end_date"],
+  "additionalProperties": false
+}

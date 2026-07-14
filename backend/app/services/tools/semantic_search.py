@@ -8,6 +8,7 @@ from typing import Dict, Any, List, Optional
 
 from .base import BaseTool
 from ...services.db import get_milvus_client, MilvusClient
+from ...services.embedding_service import get_embedding_service
 from ...utils.logger import get_logger
 
 logger = get_logger('cpa-agent.tool.semantic_search')
@@ -25,7 +26,7 @@ class SemanticSearchTool(BaseTool):
 
     def __init__(self, milvus_client: Optional[MilvusClient] = None):
         self._milvus = milvus_client
-        self._embedding_model = None
+        self._embedding = None
 
     @property
     def milvus(self) -> MilvusClient:
@@ -34,23 +35,16 @@ class SemanticSearchTool(BaseTool):
             self._milvus.connect()
         return self._milvus
 
-    def _get_embedding_model(self):
-        """获取 BGE-M3 Embedding 模型"""
-        if self._embedding_model is None:
-            try:
-                from sentence_transformers import SentenceTransformer
-                self._embedding_model = SentenceTransformer('BAAI/bge-m3')
-                logger.info("BGE-M3 模型加载成功")
-            except Exception as e:
-                logger.error(f"BGE-M3 模型加载失败: {e}")
-                raise
-        return self._embedding_model
+    @property
+    def embedding(self):
+        """获取 Embedding 服务"""
+        if self._embedding is None:
+            self._embedding = get_embedding_service()
+        return self._embedding
 
     def _encode(self, texts: List[str]) -> List[List[float]]:
         """生成 embedding"""
-        model = self._get_embedding_model()
-        embeddings = model.encode(texts, normalize_embeddings=True)
-        return embeddings.tolist()
+        return self.embedding.encode(texts)
 
     @property
     def name(self) -> str:
@@ -144,6 +138,7 @@ class SemanticSearchTool(BaseTool):
         try:
             top_k = int(top_k) if isinstance(top_k, str) else top_k
         except (ValueError, TypeError):
+            logger.warning(f"top_k 参数解析失败: {top_k}, 使用默认值 5")
             top_k = 5
 
         logger.info(f"semantic_search 执行: query={query}, collection={collection}, top_k={top_k}")
@@ -159,10 +154,15 @@ class SemanticSearchTool(BaseTool):
                     if not self.milvus.test_connection():
                         continue
 
+                    expr = None
+                    if coll == "jd_vectors":
+                        expr = "is_it_position == 1"
+
                     results = self.milvus.search(
                         collection_name=coll,
                         query_vector=query_vector,
                         top_k=top_k,
+                        expr=expr,
                     )
                     if results:
                         all_results[coll] = results
@@ -174,4 +174,4 @@ class SemanticSearchTool(BaseTool):
 
         except Exception as e:
             logger.error(f"semantic_search 执行失败: {e}")
-            return f"[semantic_search] 执行失败: {str(e)}"
+            return f"[semantic_search] 执行失败，请稍后重试"

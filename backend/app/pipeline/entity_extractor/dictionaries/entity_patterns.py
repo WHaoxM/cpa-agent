@@ -1,51 +1,30 @@
 """
-实体规则模式 — 日期、学位、角色等正则
+实体规则词表 — 学位/角色/公司后缀关键词
 
-用于 Phase 2 符号化预标注（XML 注入前的确定性提取）。
+数据源: config/defaults/dictionaries/entity_patterns.yaml
+正则模式 DATE_PATTERNS 保留在代码中 (ADR-0001: 算法型逻辑不做 YAML 化)
 """
 
 from __future__ import annotations
 
-from typing import List
+import re
+from typing import List, Pattern
 
-# ---------------------------------------------------------------------------
-# 日期模式
-# ---------------------------------------------------------------------------
+from config.dictionary_loader import (
+    get_company_suffixes,
+    get_degree_keywords,
+    get_role_keywords,
+)
 
-DATE_PATTERNS: List[str] = [
-    r"\d{4}[./-]\d{1,2}(?:[./-]\d{1,2})?",          # 2024-06, 2024/06/01
-    r"\d{4}\s*年\s*\d{1,2}\s*月(?:\s*\d{1,2}\s*日)?",  # 2024年6月, 2024年6月1日
-    r"\d{4}[./-]\d{1,2}\s*[-–~至]\s*(?:\d{4}[./-]\d{1,2}|至今|现在|present)",  # 2024/06 - 至今
-]
+# 从 YAML 加载词表
+DEGREE_KEYWORDS: List[str] = get_degree_keywords()
+ROLE_KEYWORDS: List[str] = get_role_keywords()
+COMPANY_SUFFIXES: List[str] = get_company_suffixes()
 
-# ---------------------------------------------------------------------------
-# 学位关键词
-# ---------------------------------------------------------------------------
-
-DEGREE_KEYWORDS: List[str] = [
-    "博士", "硕士", "本科", "学士", "专科", "大专",
-    "PhD", "Master", "Bachelor", "Associate",
-    "MBA", "MPA", "博士后",
-]
-
-# ---------------------------------------------------------------------------
-# 角色/职位关键词
-# ---------------------------------------------------------------------------
-
-ROLE_KEYWORDS: List[str] = [
-    "负责人", "核心开发者", "技术负责人", "项目经理", "组长",
-    "工程师", "开发者", "实习生", "研究员", "助理",
-    "成员", "组员", "主要开发", "核心成员",
-    "Lead", "Manager", "Engineer", "Developer", "Intern",
-]
-
-# ---------------------------------------------------------------------------
-# 公司/机构名后缀
-# ---------------------------------------------------------------------------
-
-COMPANY_SUFFIXES: List[str] = [
-    "有限公司", "股份有限公司", "集团", "科技", "网络",
-    "信息技术", "实验室", "研究院", "研究所", "大学",
-    "学院", "中心", "工作室",
-    "Inc.", "Corp.", "Ltd.", "LLC", "Co.",
+# 正则模式保留在代码中 (ADR-0001: 算法型逻辑不做 YAML 化)
+DATE_PATTERNS: List[Pattern[str]] = [
+    re.compile(r'(\d{4})\s*[年./-]\s*(\d{1,2})\s*[月./-]\s*(\d{1,2})\s*日?'),
+    re.compile(r'(\d{4})\s*[年./-]\s*(\d{1,2})\s*[月]?'),
+    re.compile(r'(\d{4})\s*[-~至到]\s*(\d{4}|至今|现在|present|now)', re.IGNORECASE),
+    re.compile(r'(至今|现在|present|now)', re.IGNORECASE),
 ]

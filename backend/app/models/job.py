@@ -4,7 +4,8 @@
 
 from datetime import datetime
 from typing import Optional, Dict, Any
-from sqlalchemy import Column, String, Text, JSON, Integer, Float, DateTime, SmallInteger, Boolean
+from sqlalchemy import Column, String, Text, JSON, Integer, Float, DateTime, SmallInteger, Boolean, Index
+from sqlalchemy.orm import relationship
 
 from .base import Base
 
@@ -12,6 +13,13 @@ from .base import Base
 class JobPosting(Base):
     """岗位信息表 (L0 输出)"""
     __tablename__ = 'job_posting'
+    __table_args__ = (
+        Index('idx_position', 'position_normalized'),
+        Index('idx_category', 'job_category'),
+        Index('idx_company', 'company_name'),
+        Index('idx_degree_req', 'degree_requirement'),
+        Index('idx_is_it', 'is_it_position'),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     job_id = Column(String(64), unique=True, nullable=False, comment='岗位唯一ID')
@@ -56,21 +64,25 @@ class JobPosting(Base):
 class JobPortrait4D(Base):
     """岗位四维需求画像表 (L2 输出)"""
     __tablename__ = 'job_portrait_4d'
+    __table_args__ = (
+        Index('idx_position', 'position_name'),
+        Index('idx_jd_count', 'jd_count'),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     portrait_id = Column(String(64), unique=True, nullable=False, comment='画像唯一ID')
     position_name = Column(String(200), nullable=False, comment='标准化岗位名')
 
-    jd_count = Column(Integer, default=0, comment='聚合的 JD 数量 (R-05 ≥10)')
+    jd_count = Column(Integer, nullable=False, default=0, comment='聚合的 JD 数量 (R-05 ≥10)')
 
     required_degree = Column(String(20), comment='学历要求')
     major_strict = Column(Boolean, default=False, comment='是否严格限专业')
-    required_skill_cnt = Column(Integer, default=0, comment='必备技能数')
+    required_skill_cnt = Column(Integer, nullable=False, default=0, comment='必备技能数')
 
-    d1_weight = Column(Float, default=0.25, comment='D1 权重')
-    d2_weight = Column(Float, default=0.35, comment='D2 权重')
-    d3_weight = Column(Float, default=0.20, comment='D3 权重')
-    d4_weight = Column(Float, default=0.20, comment='D4 权重')
+    d1_weight = Column(Float, nullable=False, default=0.25, comment='D1 权重')
+    d2_weight = Column(Float, nullable=False, default=0.35, comment='D2 权重')
+    d3_weight = Column(Float, nullable=False, default=0.20, comment='D3 权重')
+    d4_weight = Column(Float, nullable=False, default=0.20, comment='D4 权重')
 
     portrait_json = Column(JSON, nullable=False, comment='完整 job_portrait_4d.json')
 

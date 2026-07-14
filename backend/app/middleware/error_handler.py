@@ -36,19 +36,20 @@ class ErrorHandler:
     def handle_http_exception(error: HTTPException):
         """处理 HTTP 异常"""
         logger.warning(f"HTTP异常: {error.code} - {error.description}")
-        return jsonify({
+        body = {
             'success': False,
             'error': error.description,
             'code': ErrorCode.INTERNAL_ERROR.value,
-        }), error.code
+        }
+        return jsonify(body), error.code
 
     @staticmethod
     def handle_generic_exception(error: Exception):
         """处理通用异常"""
         logger.error(f"未处理异常: {type(error).__name__} - {str(error)}")
-        return jsonify({
+        body = {
             'success': False,
             'error': '服务器内部错误',
             'code': ErrorCode.INTERNAL_ERROR.value,
-            'details': str(error) if not isinstance(error, HTTPException) else None,
-        }), 500
+        }
+        return jsonify(body), 500

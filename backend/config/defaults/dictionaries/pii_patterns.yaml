@@ -1,0 +1,44 @@
+# 伦理敏感词表 — ethics_bias_filter.mask_fields
+# 来源: backend/app/pipeline/entity_extractor/dictionaries/pii_patterns.py
+# 注: PII 正则模式 PII_PATTERNS 保留在代码中 (ADR-0001: 安全正则不做 YAML 化)
+
+ethics_sensitive_keywords:
+  gender:
+    - 男
+    - 女
+    - 性别
+    - 先生
+    - 女士
+    - male
+    - female
+    - gender
+
+  age:
+    - 岁
+    - 年龄
+    - 出生日期
+    - 生日
+    - 出生年月
+    - age
+    - birthday
+    - date of birth
+
+  ethnicity:
+    - 民族
+    - 族
+    - 汉族
+    - 回族
+    - 藏族
+    - 维吾尔
+    - ethnicity
+    - race
+
+  hometown:
+    - 籍贯
+    - 户籍
+    - 户口
+    - 家乡
+    - 出生地
+    - hometown
+    - birthplace
+    - native place

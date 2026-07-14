@@ -1,0 +1,6 @@
+# Workspace Branding 配置
+# 覆盖报告的品牌定制
+
+accent_color: "#2563EB"
+font_family: "Noto Sans SC, sans-serif"
+company_name: "CPA-Agent Demo"

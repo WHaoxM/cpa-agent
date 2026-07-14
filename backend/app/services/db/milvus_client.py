@@ -1,28 +1,18 @@
 """
 Milvus 向量数据库客户端
 提供向量检索接口，支持 BGE-M3 embedding
-使用 pymilvus Lite 嵌入式模式
+支持独立 Milvus 服务器 (19530) 和 Lite 嵌入式模式
 """
 
 import os
 import json
+import threading
 from typing import Optional, Dict, Any, List
 
 from ...config import Config
 from ...utils.logger import get_logger
 
 logger = get_logger('cpa-agent.db.milvus')
-
-_MILVUS_LITE = None
-
-
-def _get_milvus_lite():
-    """获取 Milvus Lite 客户端"""
-    global _MILVUS_LITE
-    if _MILVUS_LITE is None:
-        from pymilvus import MilvusLiteClient
-        _MILVUS_LITE = MilvusLiteClient
-    return _MILVUS_LITE
 
 
 class MilvusClient:
@@ -50,28 +40,31 @@ class MilvusClient:
                 return True
 
             logger.info(f"连接 Milvus: {self.uri}")
-            
-            MilvusLiteClient = _get_milvus_lite()
-            
-            if self.uri.endswith(".db"):
-                milvus_uri = os.path.abspath(self.uri)
-                os.makedirs(os.path.dirname(milvus_uri), exist_ok=True)
+
+            is_lite = self.uri.endswith(".db") or os.path.exists(self.uri)
+
+            if is_lite:
+                from pymilvus import MilvusLiteClient
+                if self.uri.startswith("./"):
+                    milvus_uri = os.path.abspath(self.uri)
+                else:
+                    milvus_uri = self.uri
+                milvus_dir = os.path.dirname(milvus_uri)
+                if milvus_dir:
+                    os.makedirs(milvus_dir, exist_ok=True)
                 self._client = MilvusLiteClient(uri=milvus_uri)
                 self._connected = True
                 logger.info(f"Milvus Lite 嵌入式连接成功: {milvus_uri}")
-                return True
-            elif self.uri.startswith("http://") or self.uri.startswith("https://"):
-                self._client = MilvusLiteClient(uri=self.uri)
-                self._connected = True
-                logger.info("Milvus 连接成功")
-                return True
             else:
-                milvus_uri = os.path.abspath(self.uri)
-                os.makedirs(os.path.dirname(milvus_uri), exist_ok=True)
-                self._client = MilvusLiteClient(uri=milvus_uri)
+                from pymilvus import MilvusClient
+                uri = self.uri
+                if not uri.startswith("http://") and not uri.startswith("https://"):
+                    uri = f"http://{uri}"
+                self._client = MilvusClient(uri=uri)
                 self._connected = True
-                logger.info(f"Milvus 连接成功: {milvus_uri}")
-                return True
+                logger.info(f"Milvus 独立服务器连接成功: {uri}")
+            
+            return True
             
         except Exception as e:
             logger.error(f"Milvus 连接失败: {e}")
@@ -149,14 +142,14 @@ class MilvusClient:
         try:
             meta_strs = [json.dumps(m, ensure_ascii=False) if m else "{}" for m in (metadata or [{}] * len(texts))]
 
-            data = [
-                texts,
-                vectors,
-                meta_strs,
-            ]
+            data = {
+                "text": texts,
+                "embedding": vectors,
+                "metadata": meta_strs,
+            }
 
             result = self._client.insert(collection_name=collection_name, data=data)
-            
+
             logger.info(f"插入 {len(texts)} 条向量到 {collection_name}")
             return result.primary_keys
 
@@ -238,11 +231,14 @@ class MilvusClient:
 
 
 _milvus_client: Optional[MilvusClient] = None
+_milvus_client_lock = threading.Lock()
 
 
 def get_milvus_client() -> MilvusClient:
-    """获取全局 Milvus 客户端单例"""
+    """获取全局 Milvus 客户端单例（线程安全）"""
     global _milvus_client
     if _milvus_client is None:
-        _milvus_client = MilvusClient()
+        with _milvus_client_lock:
+            if _milvus_client is None:
+                _milvus_client = MilvusClient()
     return _milvus_client

@@ -125,7 +125,6 @@ def db_error(operation: str, original_error: Exception) -> APIException:
     return APIException(
         error_code=ErrorCode.DB_ERROR,
         message=f"数据库操作失败: {operation}",
-        details=str(original_error),
         status_code=500,
     )
 

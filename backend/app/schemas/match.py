@@ -67,7 +67,7 @@ class CareerRecommendationResponse(BaseModel):
     current_level: Optional[str] = None
     recommended_dir: Optional[str] = None
     promotion_steps: int
-    lateral_options: int
+    lateral_count: int
     paths: List[CareerPathStep]
     created_at: Optional[str] = None
 

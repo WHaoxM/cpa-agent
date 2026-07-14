@@ -1,13 +1,11 @@
 """
 ReAct Agent — CPA-Agent 智能体核心
-参考 MiroFish ReportAgent 的 ReAct 循环实现, 适配职业规划场景
 
 架构:
   用户输入 → Redis 取 session → LLM 意图识别 → ReAct 推理链
   → Tool 调用 (graph_query / db_query / semantic_search / pipeline_run / llm_reason)
   → 结果组装 → 自然语言回复 + 存储
 
-满足 R-11: "采用大模型为大脑并自主执行相应任务就是智能体"
 """
 
 import json
@@ -27,6 +25,10 @@ from .tools.semantic_search import SemanticSearchTool
 from .tools.pipeline_run import PipelineRunTool
 from .tools.llm_reason import LlmReasonTool
 from .tools.jd_cleaner import JdCleanerTool
+from .tools.skill_tools import (
+    SkillExtractTool, SkillMatchTool, PortraitGenerateTool,
+    ReportGenerateTool, SkillRecommendTool, LearningPathTool
+)
 
 logger = get_logger('cpa-agent.react_agent')
 
@@ -74,48 +76,14 @@ class AgentResponse:
 # ═══════════════════════════════════════════════════════════════
 # Prompt 模板
 # ═══════════════════════════════════════════════════════════════
+# Agent 系统提示词从 config/prompts/agent.chat.system/{base,tone}.md 加载
+# workspace 可覆盖 tone.md (见 config/prompt_loader.py)
 
-AGENT_SYSTEM_PROMPT = """\
-你是 CPA-Agent, 一个专业的大学生职业规划智能体。你能够：
-1. 查询知识图谱中的技能、岗位、职业路径信息
-2. 查询学生画像、岗位画像、匹配结果等业务数据
-3. 进行语义检索, 找到相似技能、岗位或历史对话
-4. 触发数据处理管线 (简历解析、画像生成、匹配分析、报告生成)
-5. 进行深度推理, 给出职业建议和分析
+def _build_agent_system_prompt(tools_description: str) -> str:
+    """从 Prompt Registry 加载 agent.chat.system 并填充 tools_description"""
+    from config.prompt_loader import load_prompt
+    return load_prompt("agent.chat.system", tools_description=tools_description)
 
-═══════════════════════════════════════════════════════════════
-【可用工具】
-═══════════════════════════════════════════════════════════════
-
-{tools_description}
-
-═══════════════════════════════════════════════════════════════
-【工作流程 — 每次回复只能做以下两件事之一】
-═══════════════════════════════════════════════════════════════
-
-选项A — 调用工具:
-输出你的思考, 然后用以下格式调用一个工具:
-<tool_call>
-{{"name": "工具名称", "parameters": {{"参数名": "参数值"}}}}
-</tool_call>
-系统会执行工具并把结果返回给你。
-
-选项B — 输出最终回复:
-当你已获取足够信息, 以 "Final Answer:" 开头输出最终回复。
-
-⚠️ 严格禁止:
-- 禁止在一次回复中同时包含工具调用和 Final Answer
-- 禁止自己编造工具返回结果
-- 每次回复最多调用一个工具
-
-═══════════════════════════════════════════════════════════════
-【回复风格】
-═══════════════════════════════════════════════════════════════
-
-- 专业、友好、简洁
-- 用数据说话, 引用具体的匹配分数、技能覆盖率等
-- 给出可操作的建议, 而非泛泛而谈
-- 使用 Markdown 格式组织回复"""
 
 OBSERVATION_TEMPLATE = """\
 Observation (工具返回结果):
@@ -134,8 +102,8 @@ FORCE_FINAL_MSG = "已达到工具调用上限, 请直接以 \"Final Answer:\" �
 CONFLICT_MSG = """\
 【格式错误】你在一次回复中同时包含了工具调用和 Final Answer, 这是不允许的。
 每次回复只能做以下两件事之一:
-- 调用一个工具 (输出一个 <tool_call> 块, 不要写 Final Answer)
-- 输出最终回复 (以 'Final Answer:' 开头, 不要包含 <tool_call>)
+- 调用一个工具 (输出一个 ``` 块, 不要写 Final Answer)
+- 输出最终回复 (以 'Final Answer:' 开头, 不要包含 ```)
 请重新回复, 只做其中一件事。"""
 
 
@@ -156,7 +124,7 @@ class ReactAgent:
     """
 
     # 合法工具名称集合, 用于裸 JSON 兜底解析时校验
-    VALID_TOOL_NAMES = {"graph_query", "db_query", "semantic_search", "pipeline_run", "llm_reason", "jd_cleaner"}
+    VALID_TOOL_NAMES = {"graph_query", "db_query", "semantic_search", "pipeline_run", "llm_reason", "jd_cleaner", "skill_extract", "skill_match", "portrait_generate", "report_generate", "skill_recommend", "learning_path"}
 
     def __init__(
         self,
@@ -188,6 +156,12 @@ class ReactAgent:
             PipelineRunTool(),
             LlmReasonTool(),
             JdCleanerTool(),
+            SkillExtractTool(),
+            SkillMatchTool(),
+            PortraitGenerateTool(),
+            ReportGenerateTool(),
+            SkillRecommendTool(),
+            LearningPathTool(),
         ]
         for tool in tool_instances:
             self.tools[tool.name] = tool
@@ -219,8 +193,8 @@ class ReactAgent:
         try:
             return self.tools[tool_name].execute(**parameters)
         except Exception as e:
-            logger.error(f"工具 {tool_name} 执行失败: {str(e)}")
-            return f"工具执行失败: {str(e)}"
+            logger.error(f"工具 {tool_name} 执行失败: {e}")
+            return f"工具执行失败，请稍后重试"
 
     def _parse_tool_calls(self, response: str) -> List[Dict[str, Any]]:
         """
@@ -299,8 +273,8 @@ class ReactAgent:
         """
         start_time = time.time()
 
-        # 构建 System Prompt
-        system_prompt = AGENT_SYSTEM_PROMPT.format(
+        # 构建 System Prompt (从 Prompt Registry 加载)
+        system_prompt = _build_agent_system_prompt(
             tools_description=self._get_tools_description()
         )
 

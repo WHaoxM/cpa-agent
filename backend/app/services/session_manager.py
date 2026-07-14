@@ -98,6 +98,8 @@ class SessionManager:
     SESSION_PREFIX = "cpa:session:"
     SESSION_LIST_KEY = "cpa:sessions"
 
+    MAX_CACHE_SIZE = 200
+
     def __init__(self, redis_client: Optional[RedisClient] = None):
         self._redis = redis_client or get_redis_client()
         self._cache: Dict[str, SessionState] = {}
@@ -130,9 +132,14 @@ class SessionManager:
                 return None
         return None
 
-    def create_session(self, student_id: Optional[str] = None) -> SessionState:
-        """创建新会话"""
-        session_id = f"session_{uuid.uuid4().hex[:12]}"
+    def create_session(self, student_id: Optional[str] = None, session_id: Optional[str] = None) -> SessionState:
+        """创建新会话（幂等：相同 session_id 返回已有会话）"""
+        if session_id:
+            existing = self.get_session(session_id)
+            if existing:
+                return existing
+
+        session_id = session_id or f"session_{uuid.uuid4().hex[:12]}"
         now = datetime.now().isoformat()
 
         state = SessionState(
@@ -147,9 +154,92 @@ class SessionManager:
 
         self._cache[session_id] = state
         self._save_to_redis(state)
+        self._save_session_to_mysql(state)
 
         logger.info(f"创建会话: {session_id}, student_id={student_id}")
         return state
+
+    def _save_session_to_mysql(self, state: SessionState):
+        """将会话保存到 MySQL"""
+        try:
+            from .db import get_mysql_client
+            mysql = get_mysql_client()
+
+            mysql.execute(
+                """
+                INSERT INTO conversation (session_id, student_id, title, status, message_count, created_at, updated_at)
+                VALUES (:session_id, :student_id, :title, :status, :message_count, :created_at, :updated_at)
+                ON DUPLICATE KEY UPDATE
+                    student_id = VALUES(student_id),
+                    status = VALUES(status),
+                    updated_at = VALUES(updated_at)
+                """,
+                {
+                    "session_id": state.session_id,
+                    "student_id": state.student_id,
+                    "title": None,
+                    "status": state.status.value,
+                    "message_count": len(state.messages),
+                    "created_at": state.created_at,
+                    "updated_at": state.updated_at,
+                },
+                commit=True,
+            )
+        except Exception as e:
+            logger.warning(f"保存会话到 MySQL 失败: {e}")
+
+    def _save_message_to_mysql(self, session_id: str, role: str, content: str, metadata: Optional[Dict[str, Any]] = None):
+        """将消息保存到 MySQL"""
+        try:
+            from .db import get_mysql_client
+            mysql = get_mysql_client()
+
+            message_id = f"msg_{uuid.uuid4().hex[:12]}"
+            now = datetime.now().isoformat()
+
+            tool_calls_json = None
+            elapsed_seconds = None
+            iterations = None
+
+            if metadata:
+                if 'tool_calls' in metadata:
+                    tool_calls_json = json.dumps(metadata['tool_calls'], ensure_ascii=False)
+                if 'iterations' in metadata:
+                    iterations = metadata['iterations']
+
+            mysql.execute(
+                """
+                INSERT INTO conversation_message 
+                (session_id, message_id, role, content, tool_calls_json, iterations, elapsed_seconds, created_at)
+                VALUES (:session_id, :message_id, :role, :content, :tool_calls_json, :iterations, :elapsed_seconds, :created_at)
+                """,
+                {
+                    "session_id": session_id,
+                    "message_id": message_id,
+                    "role": role,
+                    "content": content,
+                    "tool_calls_json": tool_calls_json,
+                    "iterations": iterations,
+                    "elapsed_seconds": elapsed_seconds,
+                    "created_at": now,
+                },
+                commit=True,
+            )
+
+            mysql.execute(
+                """
+                UPDATE conversation 
+                SET message_count = message_count + 1, updated_at = :updated_at
+                WHERE session_id = :session_id
+                """,
+                {
+                    "updated_at": now,
+                    "session_id": session_id,
+                },
+                commit=True,
+            )
+        except Exception as e:
+            logger.warning(f"保存消息到 MySQL 失败: {e}")
 
     def get_session(self, session_id: str) -> Optional[SessionState]:
         """获取会话"""
@@ -159,6 +249,10 @@ class SessionManager:
         state = self._load_from_redis(session_id)
         if state:
             self._cache[session_id] = state
+            # 淘汰最旧的缓存项
+            if len(self._cache) > self.MAX_CACHE_SIZE:
+                oldest_key = min(self._cache, key=lambda k: self._cache[k].updated_at)
+                del self._cache[oldest_key]
 
         return state
 
@@ -216,6 +310,7 @@ class SessionManager:
 
         self._cache[session_id] = state
         self._save_to_redis(state)
+        self._save_message_to_mysql(session_id, role, content, metadata)
 
         return state
 
@@ -243,12 +338,116 @@ class SessionManager:
         """
         获取适合传给 Agent 的历史消息格式
         [{"role": "user/assistant", "content": "..."}]
+
+        从 Redis 内存获取最新消息，若不足 max_messages 则从 MySQL 补充
         """
         messages = self.get_messages(session_id, limit=max_messages)
+
+        if len(messages) < max_messages:
+            mysql_messages = self._get_messages_from_mysql(
+                session_id,
+                limit=max_messages - len(messages),
+                offset=0
+            )
+            if mysql_messages:
+                mysql_messages.reverse()
+                messages = mysql_messages + messages
+
         return [
             {"role": m["role"], "content": m["content"]}
-            for m in messages
+            for m in messages[-max_messages:]
         ]
+
+    def build_structured_context(
+        self,
+        session_id: str,
+        student_id: Optional[str] = None,
+        recent_limit: int = 6,
+    ) -> Dict[str, Any]:
+        """
+        构建给 Agent 的结构化上下文。
+
+        输出结构:
+        {
+          "session": {...},
+          "student": {...},
+          "conversation": {...},
+          "business": {...}
+        }
+        """
+        state = self.get_session(session_id)
+        if not state:
+            return {
+                "session": {"session_id": session_id, "exists": False},
+                "student": {"student_id": student_id},
+                "conversation": {"recent_messages": []},
+                "business": {},
+            }
+
+        effective_student_id = student_id or state.student_id
+        recent_msgs = self.get_messages(session_id, limit=recent_limit)
+
+        last_user = next((m for m in reversed(recent_msgs) if m.get("role") == "user"), None)
+        last_assistant = next((m for m in reversed(recent_msgs) if m.get("role") == "assistant"), None)
+
+        context_payload = state.context if isinstance(state.context, dict) else {}
+
+        return {
+            "session": {
+                "session_id": state.session_id,
+                "status": state.status.value,
+                "created_at": state.created_at,
+                "updated_at": state.updated_at,
+                "message_count": len(state.messages),
+                "exists": True,
+            },
+            "student": {
+                "student_id": effective_student_id,
+            },
+            "conversation": {
+                "recent_messages": [
+                    {"role": m.get("role"), "content": m.get("content", "")[:500]}
+                    for m in recent_msgs
+                ],
+                "last_user_message": (last_user or {}).get("content", ""),
+                "last_assistant_message": (last_assistant or {}).get("content", ""),
+            },
+            "business": context_payload,
+        }
+
+    def _get_messages_from_mysql(
+        self,
+        session_id: str,
+        limit: int = 50,
+        offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """从 MySQL 分页获取消息"""
+        try:
+            from .db import get_mysql_client
+            mysql = get_mysql_client()
+
+            rows = mysql.fetch_all(
+                """
+                SELECT role, content, created_at
+                FROM conversation_message
+                WHERE session_id = :session_id
+                ORDER BY created_at ASC
+                LIMIT :limit OFFSET :offset
+                """,
+                {"session_id": session_id, "limit": limit, "offset": offset}
+            )
+
+            return [
+                {
+                    "role": row.get("role", "user"),
+                    "content": row.get("content", ""),
+                    "timestamp": row.get("created_at", "")
+                }
+                for row in rows
+            ]
+        except Exception as e:
+            logger.warning(f"从 MySQL 获取消息失败: {e}")
+            return []
 
     def set_context(
         self,
@@ -287,8 +486,19 @@ class SessionManager:
         status: Optional[SessionStatus] = None,
         limit: int = 50,
     ) -> List[SessionState]:
-        """列出会话"""
-        session_ids = self._redis.hkeys(self.SESSION_LIST_KEY)[:limit]
+        """列出会话（使用 hscan 优化）"""
+        cursor = 0
+        collected = 0
+        session_ids = []
+
+        while collected < limit:
+            cursor, batch = self._redis.hscan(self.SESSION_LIST_KEY, cursor=cursor, count=min(limit - collected, 100))
+            session_ids.extend(batch.keys())
+            collected = len(session_ids)
+            if cursor == 0:
+                break
+
+        session_ids = session_ids[:limit]
 
         sessions = []
         for sid in session_ids:
@@ -320,11 +530,14 @@ class SessionManager:
 
 
 _session_manager: Optional[SessionManager] = None
+_session_manager_lock = __import__('threading').Lock()
 
 
 def get_session_manager() -> SessionManager:
-    """获取全局会话管理器单例"""
+    """获取全局会话管理器单例 (线程安全)"""
     global _session_manager
     if _session_manager is None:
-        _session_manager = SessionManager()
+        with _session_manager_lock:
+            if _session_manager is None:
+                _session_manager = SessionManager()
     return _session_manager

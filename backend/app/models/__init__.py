@@ -9,6 +9,8 @@ from .match import MatchResult, SkillGap, CareerPath
 from .report import CareerReport
 from .conversation import Conversation, ConversationMessage
 from .task import PipelineTask
+from .account import UserAccount, ClassInfo, StudentGrade, ActiveUserLog, AdminAuditLog
+from .admin_data import KnowledgeBase, JobDataset, OovEntity
 
 __all__ = [
     'StudentProfile',
@@ -22,4 +24,14 @@ __all__ = [
     'Conversation',
     'ConversationMessage',
     'PipelineTask',
+    # 账号与权限
+    'UserAccount',
+    'ClassInfo',
+    'StudentGrade',
+    'ActiveUserLog',
+    'AdminAuditLog',
+    # 管理员端业务
+    'KnowledgeBase',
+    'JobDataset',
+    'OovEntity',
 ]

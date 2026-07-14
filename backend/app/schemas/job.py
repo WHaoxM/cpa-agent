@@ -48,7 +48,7 @@ class JobPortraitResponse(BaseModel):
     jd_count: int
     required_degree: Optional[str] = None
     major_strict: bool = False
-    required_skill_cnt: int
+    required_skill_cnt: int = 0
     weights: Dict[str, float]
     created_at: Optional[str] = None
 

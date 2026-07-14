@@ -3,14 +3,147 @@
 /api/report — 职业发展报告的生成、查询、导出
 """
 
+import json
 import uuid
 from flask import request, jsonify
 
 from . import report_bp
+from ._helpers import parse_json_field, safe_error
+from ..config import Config
 from ..services.db import get_mysql_client
 from ..utils.logger import get_logger
+from ..exceptions import ErrorCode
 
 logger = get_logger('cpa-agent.api.report')
+
+
+def _build_demo_report_payload(report_id: str, student_id: str, job_portrait_id: str, data: dict) -> dict:
+    snapshot = data.get("snapshot")
+    if not isinstance(snapshot, dict):
+        snapshot = {
+            "targetRoles": ["AI application engineer", "Python backend engineer"],
+            "topMatchScore": 82,
+            "studentDimSnapshot": {
+                "professional_skill": 76,
+                "certification": 64,
+                "innovation": 72,
+                "learning": 84,
+                "pressure": 70,
+                "communication": 78,
+                "internship": 68,
+            },
+        }
+
+    title = data.get("title") or "Career development report"
+    chapters = {
+        "ch1": {
+            "title": "Student profile",
+            "summary": "Demo mode report generated from the saved career snapshot.",
+        },
+        "ch2": {
+            "title": "Target role analysis",
+            "job_portrait_id": job_portrait_id,
+            "target_roles": snapshot.get("targetRoles", []),
+        },
+        "ch3": {
+            "title": "Person-job match",
+            "match_score": snapshot.get("topMatchScore", 82),
+        },
+        "ch4": {
+            "title": "Career path",
+            "milestones": ["Foundation consolidation", "Project practice", "Interview preparation"],
+        },
+        "ch5": {
+            "title": "Skill gap plan",
+            "focus": ["Engineering practice", "RAG application", "Deployment readiness"],
+        },
+        "ch6": {
+            "title": "Review cycle",
+            "cadence": "Review progress every 2 weeks in demo mode.",
+        },
+    }
+    report_json = {
+        "report_id": report_id,
+        "student_id": student_id,
+        "job_portrait_id": job_portrait_id,
+        "title": title,
+        "type": data.get("type") or "career",
+        "source": "demo_fallback",
+        "snapshot": snapshot,
+        "chapters": chapters,
+    }
+    return {
+        "report_id": report_id,
+        "student_id": student_id,
+        "job_portrait_id": job_portrait_id,
+        "title": title,
+        "status": "completed",
+        "chapters": chapters,
+        "report_json": report_json,
+        "elapsed_seconds": 0.1,
+    }
+
+
+def _save_demo_report(mysql, report: dict) -> None:
+    chapters = report["chapters"]
+    sql = """
+    INSERT INTO career_report (
+        report_id,
+        student_id,
+        job_portrait_id,
+        title,
+        status,
+        ch1_json,
+        ch2_json,
+        ch3_json,
+        ch4_json,
+        ch5_json,
+        ch6_json,
+        report_json,
+        elapsed_seconds
+    )
+    VALUES (
+        :report_id,
+        :student_id,
+        :job_portrait_id,
+        :title,
+        :status,
+        :ch1_json,
+        :ch2_json,
+        :ch3_json,
+        :ch4_json,
+        :ch5_json,
+        :ch6_json,
+        :report_json,
+        :elapsed_seconds
+    )
+    ON DUPLICATE KEY UPDATE
+        title = VALUES(title),
+        status = VALUES(status),
+        ch1_json = VALUES(ch1_json),
+        ch2_json = VALUES(ch2_json),
+        ch3_json = VALUES(ch3_json),
+        ch4_json = VALUES(ch4_json),
+        ch5_json = VALUES(ch5_json),
+        ch6_json = VALUES(ch6_json),
+        report_json = VALUES(report_json),
+        elapsed_seconds = VALUES(elapsed_seconds)
+    """
+    mysql.execute_write(sql, {
+        "report_id": report["report_id"],
+        "student_id": report["student_id"],
+        "job_portrait_id": report["job_portrait_id"],
+        "title": report["title"],
+        "status": report["status"],
+        "ch1_json": json.dumps(chapters["ch1"], ensure_ascii=False),
+        "ch2_json": json.dumps(chapters["ch2"], ensure_ascii=False),
+        "ch3_json": json.dumps(chapters["ch3"], ensure_ascii=False),
+        "ch4_json": json.dumps(chapters["ch4"], ensure_ascii=False),
+        "ch5_json": json.dumps(chapters["ch5"], ensure_ascii=False),
+        "ch6_json": json.dumps(chapters["ch6"], ensure_ascii=False),
+        "report_json": json.dumps(report["report_json"], ensure_ascii=False),
+        "elapsed_seconds": report["elapsed_seconds"],
+    })
 
 
 @report_bp.route('/generate', methods=['POST'])
@@ -30,13 +163,63 @@ def generate_report():
 
     logger.info(f"触发报告生成: report_id={report_id}, student_id={student_id}, job_portrait_id={job_portrait_id}")
 
+    # ── D-16: 实际触发 L4 管线 ──
+    if Config.DEMO_MODE:
+        try:
+            mysql = get_mysql_client()
+            demo_report = _build_demo_report_payload(report_id, student_id, job_portrait_id, data)
+            _save_demo_report(mysql, demo_report)
+            return jsonify({
+                "success": True,
+                "data": {
+                    "report_id": report_id,
+                    "status": "completed",
+                    "message": "Demo report generated",
+                    "source": "demo_fallback",
+                    "report": demo_report["report_json"],
+                },
+            })
+        except Exception as e:
+            logger.error(f"Demo report generation failed: {e}")
+            return jsonify({
+                "success": False,
+                "error": "Demo report generation failed",
+                "code": ErrorCode.INTERNAL_ERROR.value
+            }), 500
+
+    report_result = None
+    try:
+        from ..services.pipeline import PipelineRunner, PipelineLevel
+        runner = PipelineRunner()
+        report_result = runner.run(
+            pipeline=PipelineLevel.L4_GENERATE_REPORT,
+            params={
+                "student_id": student_id,
+                "job_portrait_id": job_portrait_id,
+                "report_id": report_id,
+            },
+        )
+    except Exception as e:
+        logger.error(f"L4 报告生成失败: {e}")
+        report_result = {"status": "failed", "error": "报告生成失败"}
+
+    response_data = {
+        "report_id": report_id,
+    }
+
+    if report_result and isinstance(report_result, dict):
+        response_data["status"] = report_result.get("status", "completed")
+        if "error" not in report_result:
+            response_data["message"] = "报告生成完成"
+        else:
+            response_data["message"] = f"报告生成失败: {report_result.get('error', '')}"
+    else:
+        response_data["status"] = "pending"
+        response_data["message"] = "报告生成任务已创建，请通过 report_id 查询进度"
+
     return jsonify({
         "success": True,
-        "data": {
-            "report_id": report_id,
-            "status": "pending",
-            "message": "报告生成任务已创建，请通过 report_id 查询进度"
-        }
+        "data": response_data
     })
 
 
@@ -72,7 +255,7 @@ def get_report(report_id: str):
         FROM career_report cr
         LEFT JOIN student_profile sp ON cr.student_id = sp.student_id
         LEFT JOIN job_portrait_4d jp ON cr.job_portrait_id = jp.portrait_id
-        WHERE cr.report_id = %s
+        WHERE cr.report_id = :report_id
         """
 
         results = mysql.execute(sql, {"report_id": report_id})
@@ -85,28 +268,13 @@ def get_report(report_id: str):
 
         report = results[0]
 
-        def parse_json_field(field_value):
-            if isinstance(field_value, str):
-                import json
-                try:
-                    return json.loads(field_value)
-                except:
-                    return None
-            return field_value
-
         chapters = {}
         for i in range(1, 7):
             ch_field = f"ch{i}_json"
             if report.get(ch_field):
                 chapters[f"ch{i}"] = parse_json_field(report[ch_field])
 
-        report_json = report.get('report_json')
-        if isinstance(report_json, str):
-            import json
-            try:
-                report['report_json'] = json.loads(report_json)
-            except:
-                pass
+        report['report_json'] = parse_json_field(report.get('report_json'))
 
         return jsonify({
             "success": True,
@@ -120,6 +288,7 @@ def get_report(report_id: str):
                 "title": report.get('title'),
                 "status": report.get('status'),
                 "chapters": chapters,
+                "report_json": report.get('report_json'),
                 "download_urls": {
                     "html": report.get('html_path'),
                     "pdf": report.get('pdf_path')
@@ -134,7 +303,8 @@ def get_report(report_id: str):
         logger.error(f"获取报告失败: {e}")
         return jsonify({
             "success": False,
-            "error": f"查询失败: {str(e)}"
+            "error": "查询失败，请稍后重试",
+            "code": ErrorCode.INTERNAL_ERROR.value
         }), 500
 
 
@@ -146,7 +316,7 @@ def export_report(report_id: str):
     try:
         mysql = get_mysql_client()
 
-        sql = "SELECT report_id, status, html_path, pdf_path FROM career_report WHERE report_id = %s"
+        sql = "SELECT report_id, status, html_path, pdf_path FROM career_report WHERE report_id = :report_id"
         results = mysql.execute(sql, {"report_id": report_id})
 
         if not results:
@@ -189,7 +359,8 @@ def export_report(report_id: str):
         logger.error(f"导出报告失败: {e}")
         return jsonify({
             "success": False,
-            "error": f"导出失败: {str(e)}"
+            "error": "导出失败，请稍后重试",
+            "code": ErrorCode.INTERNAL_ERROR.value
         }), 500
 
 
@@ -205,9 +376,9 @@ def list_reports():
         offset = request.args.get('offset', 0, type=int)
 
         if student_id:
-            where_clause = "WHERE cr.student_id = %s"
+            where_clause = "WHERE cr.student_id = :student_id"
             params = {"student_id": student_id, "limit": limit, "offset": offset}
-            count_where = "WHERE student_id = %s"
+            count_where = "WHERE student_id = :student_id"
             count_params = {"student_id": student_id}
         else:
             where_clause = "WHERE 1=1"
@@ -216,9 +387,9 @@ def list_reports():
             count_params = {}
 
         if status:
-            where_clause += " AND cr.status = %(status)s"
+            where_clause += " AND cr.status = :status"
             params["status"] = status
-            count_where += " AND status = %(status)s"
+            count_where += " AND status = :status"
             count_params["status"] = status
 
         sql = f"""
@@ -230,14 +401,13 @@ def list_reports():
             cr.status,
             cr.created_at,
             cr.updated_at,
-            sp.name as student_name,
-            jp.position_name
+            cr.elapsed_seconds,
+            cr.html_path,
+            cr.pdf_path
         FROM career_report cr
-        LEFT JOIN student_profile sp ON cr.student_id = sp.student_id
-        LEFT JOIN job_portrait_4d jp ON cr.job_portrait_id = jp.portrait_id
         {where_clause}
         ORDER BY cr.created_at DESC
-        LIMIT %(limit)s OFFSET %(offset)s
+        LIMIT :limit OFFSET :offset
         """
 
         results = mysql.execute(sql, params)
@@ -259,7 +429,79 @@ def list_reports():
         logger.error(f"获取报告列表失败: {e}")
         return jsonify({
             "success": False,
-            "error": f"查询失败: {str(e)}"
+            "error": "查询失败，请稍后重试",
+            "code": ErrorCode.INTERNAL_ERROR.value
+        }), 500
+
+
+@report_bp.route('/<report_id>/progress', methods=['GET'])
+def get_report_progress(report_id: str):
+    """获取报告生成进度"""
+    try:
+        mysql = get_mysql_client()
+
+        sql = """
+        SELECT
+            cr.report_id,
+            cr.status,
+            cr.elapsed_seconds,
+            pt.progress,
+            pt.started_at,
+            pt.completed_at
+        FROM career_report cr
+        LEFT JOIN pipeline_task pt ON pt.result_json LIKE CONCAT('%', cr.report_id, '%')
+        WHERE cr.report_id = :report_id
+        """
+
+        results = mysql.execute(sql, {"report_id": report_id})
+
+        if not results:
+            return jsonify({
+                "success": False,
+                "error": f"未找到报告: {report_id}"
+            }), 404
+
+        report = results[0]
+        status = report.get('status', 'pending')
+
+        progress = report.get('progress')
+        if progress is None:
+            if status == 'pending':
+                progress = 0
+            elif status == 'generating':
+                progress = 50
+            elif status == 'completed':
+                progress = 100
+            elif status == 'failed':
+                progress = -1
+
+        current_chapter = None
+        if status == 'generating':
+            current_chapter = "正在生成报告内容"
+        elif status == 'completed':
+            current_chapter = "报告生成完成"
+        elif status == 'failed':
+            current_chapter = "报告生成失败"
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "report_id": report_id,
+                "status": status,
+                "progress": progress,
+                "current_chapter": current_chapter,
+                "elapsed_seconds": report.get('elapsed_seconds'),
+                "started_at": report.get('started_at'),
+                "completed_at": report.get('completed_at'),
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"获取报告进度失败: {e}")
+        return jsonify({
+            "success": False,
+            "error": "查询失败，请稍后重试",
+            "code": ErrorCode.INTERNAL_ERROR.value
         }), 500
 
 
@@ -282,7 +524,7 @@ def get_report_task(task_id: str):
             pt.completed_at,
             pt.created_at
         FROM pipeline_task pt
-        WHERE pt.task_id = %s
+        WHERE pt.task_id = :task_id
         """
 
         results = mysql.execute(sql, {"task_id": task_id})
@@ -295,21 +537,8 @@ def get_report_task(task_id: str):
 
         task = results[0]
 
-        params_json = task.get('params_json')
-        if isinstance(params_json, str):
-            import json
-            try:
-                task['params_json'] = json.loads(params_json)
-            except:
-                pass
-
-        result_json = task.get('result_json')
-        if isinstance(result_json, str):
-            import json
-            try:
-                task['result_json'] = json.loads(result_json)
-            except:
-                pass
+        task['params_json'] = parse_json_field(task.get('params_json'))
+        task['result_json'] = parse_json_field(task.get('result_json'))
 
         return jsonify({
             "success": True,
@@ -317,8 +546,4 @@ def get_report_task(task_id: str):
         })
 
     except Exception as e:
-        logger.error(f"获取任务状态失败: {e}")
-        return jsonify({
-            "success": False,
-            "error": f"查询失败: {str(e)}"
-        }), 500
+        return jsonify(safe_error("获取任务状态", e)), 500

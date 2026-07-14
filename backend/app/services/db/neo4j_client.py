@@ -3,6 +3,7 @@ Neo4j 图数据库客户端
 提供连接池管理和 Cypher 查询接口
 """
 
+import threading
 from contextlib import contextmanager
 from typing import Optional, Dict, Any, List
 
@@ -157,11 +158,14 @@ class Neo4jClient:
 
 
 _neo4j_client: Optional[Neo4jClient] = None
+_neo4j_client_lock = threading.Lock()
 
 
 def get_neo4j_client() -> Neo4jClient:
-    """获取全局 Neo4j 客户端单例"""
+    """获取全局 Neo4j 客户端单例（线程安全）"""
     global _neo4j_client
     if _neo4j_client is None:
-        _neo4j_client = Neo4jClient()
+        with _neo4j_client_lock:
+            if _neo4j_client is None:
+                _neo4j_client = Neo4jClient()
     return _neo4j_client

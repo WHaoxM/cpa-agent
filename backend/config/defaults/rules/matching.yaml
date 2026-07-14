@@ -1,0 +1,19 @@
+# 人岗匹配与画像加权 — repo 权威默认（workspace 可白名单覆盖）
+
+matching:
+  dimension_weights:
+    D1: 0.25
+    D2: 0.35
+    D3: 0.20
+    D4: 0.20
+
+  skill_coverage_formula:
+    semantic_weight: 0.8
+
+  match_gates:
+    # SkillMatcher 内部判定
+    min_skill_coverage: 0.6
+    min_total_score: 50
+    # pipeline R-08 / 报告通过线
+    pass_skill_coverage: 0.8
+    pass_total_score: 50

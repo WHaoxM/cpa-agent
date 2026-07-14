@@ -1,11 +1,11 @@
 """
 Agent 结构化日志记录器
 参考 MiroFish ReportLogger, 将 Agent 每步动作写入 JSONL 文件
-用于调试、前端展示 Agent 思考过程、以及竞赛答辩演示
+用于调试、前端展示 Agent 思考过程
 """
 
 import os
-import json
+import re
 from typing import Dict, Any, Optional
 from datetime import datetime
 
@@ -20,7 +20,11 @@ class AgentLogger:
     每行一个 JSON 对象, 包含时间戳、动作类型、详细内容
     """
 
+    SESSION_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
+
     def __init__(self, session_id: str):
+        if not self.SESSION_ID_PATTERN.match(session_id):
+            raise ValueError(f"无效的 session_id: {session_id}")
         self.session_id = session_id
         self.log_dir = os.path.join(
             os.path.dirname(__file__), '../../logs/agent_sessions', session_id

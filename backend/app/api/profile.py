@@ -4,18 +4,31 @@
 """
 
 import uuid
+import re
 from flask import request, jsonify
 
 from . import profile_bp
+from ._helpers import build_dimensions_d1_d4, build_sub_dimensions, parse_json_field, safe_error
 from ..services.db import get_mysql_client
 from ..utils.logger import get_logger
+from ..exceptions import ErrorCode
 
 logger = get_logger('cpa-agent.api.profile')
 
 
+def mask_phone(phone: str) -> str:
+    """电话脱敏: 13812345678 -> 138****5678"""
+    if not phone:
+        return phone
+    phone = str(phone).strip()
+    if len(phone) < 7:
+        return phone
+    return f"{phone[:3]}****{phone[-4:]}"
+
+
 @profile_bp.route('/student/upload', methods=['POST'])
 def upload_resume():
-    """上传简历文件, 触发 L0 解析"""
+    """上传简历文件, 保存到持久化目录, 触发 L0 解析管线"""
     if 'file' not in request.files:
         return jsonify({
             "success": False,
@@ -24,6 +37,7 @@ def upload_resume():
 
     file = request.files['file']
     student_id = request.form.get('student_id')
+    session_id = request.form.get('session_id')
 
     if not student_id:
         student_id = f"stu_{uuid.uuid4().hex[:12]}"
@@ -31,19 +45,70 @@ def upload_resume():
     filename = file.filename
     file_ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else 'pdf'
 
+    # ── 文件类型白名单校验 ──
+    ALLOWED_EXTENSIONS = {'pdf', 'docx', 'doc', 'txt', 'png', 'jpg', 'jpeg', 'bmp', 'webp', 'tiff'}
+    if file_ext not in ALLOWED_EXTENSIONS:
+        return jsonify({"success": False, "error": f"不支持的文件格式: {file_ext}，仅支持 {', '.join(sorted(ALLOWED_EXTENSIONS))}"}), 400
+
+    # ── D-06: 持久化保存文件 ──
+    import os
+    from ..config import Config
+    upload_dir = os.path.join(Config.UPLOAD_FOLDER, student_id)
+    os.makedirs(upload_dir, exist_ok=True)
+    save_path = os.path.join(upload_dir, f"resume_{uuid.uuid4().hex[:8]}{os.path.splitext(filename)[1] or '.pdf'}")
+    file.save(save_path)
+
     task_id = f"task_{uuid.uuid4().hex[:12]}"
 
-    logger.info(f"简历上传: student_id={student_id}, filename={filename}")
+    logger.info(f"简历上传: student_id={student_id}, filename={filename}, saved={save_path}")
+
+    # ── D-06: 创建 pipeline_task 记录 + 触发 L0 管线 ──
+    parse_result = None
+    try:
+        # 同步触发 L0 解析 (PipelineRunner 内部会创建 pipeline_task 记录)
+        from ..services.pipeline import PipelineRunner, PipelineLevel
+        runner = PipelineRunner()
+        parse_result = runner.run(
+            pipeline=PipelineLevel.L0_PARSE_RESUME,
+            params={"student_id": student_id, "file_path": save_path},
+        )
+    except Exception as e:
+        logger.error(f"L0 管线触发失败: {e}")
+        # 非阻断: 文件已保存, 返回 pending 状态让前端可轮询
+        parse_result = {"status": "pending", "error": "解析任务已提交，请稍后查询结果"}
+
+    # ── D-02: 回写 student_id 到 session ──
+    if session_id:
+        try:
+            from ..services.session_manager import get_session_manager
+            session_mgr = get_session_manager()
+            session = session_mgr.get_session(session_id)
+            if session and not session.student_id:
+                session_mgr.update_session(session_id, student_id=student_id)
+        except Exception as e:
+            logger.warning(f"Session student_id 回写失败: {e}")
+
+    response_data = {
+        "task_id": task_id,
+        "student_id": student_id,
+        "filename": filename,
+        "file_path": save_path,
+    }
+
+    if parse_result and isinstance(parse_result, dict):
+        response_data["status"] = parse_result.get("status", "completed")
+        if "profile_json" in parse_result:
+            response_data["block_count"] = parse_result.get("block_count", 0)
+            response_data["message"] = "简历已上传并解析完成"
+        else:
+            response_data["message"] = "简历已上传，L0解析任务已创建"
+    else:
+        response_data["status"] = "pending"
+        response_data["message"] = "简历已上传，L0解析任务已创建"
 
     return jsonify({
         "success": True,
-        "data": {
-            "task_id": task_id,
-            "status": "pending",
-            "student_id": student_id,
-            "filename": filename,
-            "message": "简历已上传，L0解析任务已创建"
-        }
+        "data": response_data
     })
 
 
@@ -73,13 +138,9 @@ def get_student_profile(student_id: str):
 
         profile = results[0]
 
-        import json
-        profile_json = profile.get('profile_json')
-        if isinstance(profile_json, str):
-            try:
-                profile['profile_json'] = json.loads(profile_json)
-            except:
-                pass
+        profile["phone"] = mask_phone(profile.get("phone", ""))
+
+        profile['profile_json'] = parse_json_field(profile.get('profile_json'))
 
         return jsonify({
             "success": True,
@@ -90,7 +151,8 @@ def get_student_profile(student_id: str):
         logger.error(f"获取学生画像失败: {e}")
         return jsonify({
             "success": False,
-            "error": f"查询失败: {str(e)}"
+            "error": "查询失败，请稍后重试",
+            "code": ErrorCode.INTERNAL_ERROR.value
         }), 500
 
 
@@ -107,6 +169,7 @@ def get_student_4d(student_id: str):
             SELECT
                 student_id, target_job_id,
                 d1_score, d2_score, d3_score, d4_score,
+                d5_score, d6_score, d7_score, d8_score, d9_score, d10_score,
                 competitiveness, competitiveness_lvl, completeness,
                 skill_coverage, skill_count, d3_confidence,
                 portrait_json, created_at
@@ -119,6 +182,7 @@ def get_student_4d(student_id: str):
             SELECT
                 student_id, target_job_id,
                 d1_score, d2_score, d3_score, d4_score,
+                d5_score, d6_score, d7_score, d8_score, d9_score, d10_score,
                 competitiveness, competitiveness_lvl, completeness,
                 skill_coverage, skill_count, d3_confidence,
                 portrait_json, created_at
@@ -138,40 +202,28 @@ def get_student_4d(student_id: str):
         portrait = results[0]
 
         import json
-        portrait_json = portrait.get('portrait_json')
-        if isinstance(portrait_json, str):
-            try:
-                portrait['portrait_json'] = json.loads(portrait_json)
-            except:
-                pass
+        portrait['portrait_json'] = parse_json_field(portrait.get('portrait_json'))
 
         return jsonify({
             "success": True,
             "data": {
                 "student_id": portrait['student_id'],
                 "target_job_id": portrait.get('target_job_id'),
-                "dimensions": {
-                    "D1": {
-                        "name": "基础要求",
-                        "score": portrait.get('d1_score', 0),
-                        "description": "学历、学校、专业等基础条件匹配度"
-                    },
-                    "D2": {
-                        "name": "职业技能",
-                        "score": portrait.get('d2_score', 0),
-                        "description": "技术技能掌握程度和项目经验"
-                    },
-                    "D3": {
-                        "name": "职业素养",
-                        "score": portrait.get('d3_score', 0),
-                        "description": "沟通、团队、领导力等软技能"
-                    },
-                    "D4": {
-                        "name": "发展潜力",
-                        "score": portrait.get('d4_score', 0),
-                        "description": "学习能力、成长空间、潜力评估"
-                    }
-                },
+                "dimensions": build_dimensions_d1_d4(
+                    portrait.get('d1_score', 0),
+                    portrait.get('d2_score', 0),
+                    portrait.get('d3_score', 0),
+                    portrait.get('d4_score', 0),
+                ),
+                "sub_dimensions": build_sub_dimensions(
+                    portrait.get('d2_score', 0),
+                    portrait.get('d5_score') or 0,
+                    portrait.get('d6_score') or 0,
+                    portrait.get('d7_score') or 0,
+                    portrait.get('d8_score') or 0,
+                    portrait.get('d9_score') or 0,
+                    portrait.get('d10_score') or 0,
+                ),
                 "total_score": portrait.get('competitiveness', 0),
                 "level": portrait.get('competitiveness_lvl'),
                 "completeness": portrait.get('completeness', 0),
@@ -182,11 +234,7 @@ def get_student_4d(student_id: str):
         })
 
     except Exception as e:
-        logger.error(f"获取学生四维评分失败: {e}")
-        return jsonify({
-            "success": False,
-            "error": f"查询失败: {str(e)}"
-        }), 500
+        return jsonify(safe_error("获取学生四维评分", e)), 500
 
 
 @profile_bp.route('/student/<student_id>/basic', methods=['GET'])
@@ -221,7 +269,8 @@ def get_student_basic(student_id: str):
         logger.error(f"获取学生基础信息失败: {e}")
         return jsonify({
             "success": False,
-            "error": f"查询失败: {str(e)}"
+            "error": "查询失败，请稍后重试",
+            "code": ErrorCode.INTERNAL_ERROR.value
         }), 500
 
 
@@ -241,6 +290,7 @@ def list_job_portraits():
                 portrait_id, position_name, jd_count,
                 required_degree, required_skill_cnt,
                 d1_weight, d2_weight, d3_weight, d4_weight,
+                d5_weight, d6_weight, d7_weight, d8_weight, d9_weight, d10_weight,
                 created_at
             FROM job_portrait_4d
             WHERE position_name LIKE :category
@@ -262,6 +312,7 @@ def list_job_portraits():
                 portrait_id, position_name, jd_count,
                 required_degree, required_skill_cnt,
                 d1_weight, d2_weight, d3_weight, d4_weight,
+                d5_weight, d6_weight, d7_weight, d8_weight, d9_weight, d10_weight,
                 created_at
             FROM job_portrait_4d
             ORDER BY jd_count DESC
@@ -286,7 +337,8 @@ def list_job_portraits():
         logger.error(f"获取岗位画像列表失败: {e}")
         return jsonify({
             "success": False,
-            "error": f"查询失败: {str(e)}"
+            "error": "查询失败，请稍后重试",
+            "code": ErrorCode.INTERNAL_ERROR.value
         }), 500
 
 
@@ -301,6 +353,7 @@ def get_job_portrait(portrait_id: str):
             portrait_id, position_name, jd_count,
             required_degree, major_strict, required_skill_cnt,
             d1_weight, d2_weight, d3_weight, d4_weight,
+            d5_weight, d6_weight, d7_weight, d8_weight, d9_weight, d10_weight,
             portrait_json, created_at
         FROM job_portrait_4d
         WHERE portrait_id = :portrait_id
@@ -317,12 +370,7 @@ def get_job_portrait(portrait_id: str):
         portrait = results[0]
 
         import json
-        portrait_json = portrait.get('portrait_json')
-        if isinstance(portrait_json, str):
-            try:
-                portrait['portrait_json'] = json.loads(portrait_json)
-            except:
-                pass
+        portrait['portrait_json'] = parse_json_field(portrait.get('portrait_json'))
 
         return jsonify({
             "success": True,
@@ -333,7 +381,8 @@ def get_job_portrait(portrait_id: str):
         logger.error(f"获取岗位画像失败: {e}")
         return jsonify({
             "success": False,
-            "error": f"查询失败: {str(e)}"
+            "error": "查询失败，请稍后重试",
+            "code": ErrorCode.INTERNAL_ERROR.value
         }), 500
 
 
@@ -361,7 +410,8 @@ def search_jobs():
             is_it_position,
             created_at
         FROM job_posting
-        WHERE position_name LIKE :keyword OR company_name LIKE :keyword
+        WHERE (position_name LIKE :keyword OR company_name LIKE :keyword)
+              AND is_it_position = 1
         ORDER BY created_at DESC
         LIMIT :limit
         """
@@ -381,7 +431,8 @@ def search_jobs():
         logger.error(f"搜索岗位失败: {e}")
         return jsonify({
             "success": False,
-            "error": f"查询失败: {str(e)}"
+            "error": "查询失败，请稍后重试",
+            "code": ErrorCode.INTERNAL_ERROR.value
         }), 500
 
 
@@ -415,5 +466,6 @@ def get_job_categories():
         logger.error(f"获取岗位分类失败: {e}")
         return jsonify({
             "success": False,
-            "error": f"查询失败: {str(e)}"
+            "error": "查询失败，请稍后重试",
+            "code": ErrorCode.INTERNAL_ERROR.value
         }), 500

@@ -56,6 +56,10 @@ class MySQLClient:
             logger.info(f"创建 MySQL 引擎: {self.host}:{self.port}/{self.database}")
             self._engine = create_engine(
                 connection_string,
+                connect_args={
+                    "charset": "utf8mb4",
+                    "init_command": "SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci",
+                },
                 poolclass=QueuePool,
                 pool_size=self.pool_size,
                 max_overflow=self.max_overflow,
@@ -145,6 +149,22 @@ class MySQLClient:
         results = self.execute(sql, parameters)
         return results[0] if results else None
 
+    def execute_write(
+        self,
+        sql: str,
+        parameters: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """执行写操作 (INSERT/UPDATE/DELETE)，自动提交"""
+        return self.execute(sql, parameters, commit=True)
+
+    def fetch_all(
+        self,
+        sql: str,
+        parameters: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """执行查询并返回全部结果 (execute 的别名)"""
+        return self.execute(sql, parameters, commit=False)
+
     def execute_many(
         self,
         sql: str,
@@ -180,8 +200,26 @@ class MySQLClient:
         table_key = f"Tables_in_{self.database}"
         return [row[table_key] for row in results]
 
+    ALLOWED_TABLES = frozenset({
+        # 核心业务表 (8)
+        "student_profile", "student_portrait_4d", "job_posting", "job_portrait_4d",
+        "match_result", "skill_gap", "career_path", "career_report",
+        # 会话与任务 (3)
+        "conversation", "conversation_message", "pipeline_task",
+        # API 扩展表 (5)
+        "saved_job", "target_role", "course", "chapter", "learning_progress",
+        # 冷启动/规范实体 (7)
+        "canonical_entity", "normalization_rule", "career_insights",
+        "skill_taxonomy", "learning_path_template", "student_self_assessment",
+        # 账号/权限/管理员端 (8)
+        "user_account", "class_info", "student_grade", "active_user_log",
+        "admin_audit_log", "knowledge_base", "job_dataset", "oov_entity",
+    })
+
     def get_table_schema(self, table_name: str) -> List[Dict[str, Any]]:
         """获取表结构"""
+        if table_name not in self.ALLOWED_TABLES:
+            raise ValueError(f"表名 '{table_name}' 不在允许列表中")
         sql = f"DESCRIBE `{table_name}`"
         return self.execute(sql)
 
@@ -200,11 +238,14 @@ class MySQLClient:
 
 
 _mysql_client: Optional[MySQLClient] = None
+_mysql_client_lock = __import__('threading').Lock()
 
 
 def get_mysql_client() -> MySQLClient:
-    """获取全局 MySQL 客户端单例"""
+    """获取全局 MySQL 客户端单例（线程安全）"""
     global _mysql_client
     if _mysql_client is None:
-        _mysql_client = MySQLClient()
+        with _mysql_client_lock:
+            if _mysql_client is None:
+                _mysql_client = MySQLClient()
     return _mysql_client

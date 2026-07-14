@@ -1,6 +1,12 @@
 """
 JD (Job Description) Prompt 模块
 
+所有 prompt 来自 config/prompts/registry.yaml 注册的实体:
+  - entity.jd.system
+  - entity.jd.user.job_info
+  - entity.jd.user.requirements
+  - entity.jd.user.description
+
 JD 专用子任务：job_info / requirements / description
 """
 
@@ -8,20 +14,17 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-# ---------------------------------------------------------------------------
-# System Prompt
-# ---------------------------------------------------------------------------
-
-JD_SYSTEM_PROMPT = (
-    "你是一个精确的职位描述信息抽取助手。"
-    "你的输入是职位描述文本。"
-    "你只需要提取指定类型的信息，返回严格的JSON格式。"
-    "如果某个字段在文本中找不到，设为null。"
-)
+from config.prompt_loader import load_prompt
 
 # ---------------------------------------------------------------------------
-# 子任务 Prompt
+# 子任务 ID → Prompt Registry 的 user prompt id 映射
 # ---------------------------------------------------------------------------
+_USER_PROMPT_IDS = {
+    "job_info": "entity.jd.user.job_info",
+    "requirements": "entity.jd.user.requirements",
+    "description": "entity.jd.user.description",
+}
+
 
 def get_jd_prompt(
     task_type: str,
@@ -39,93 +42,39 @@ def get_jd_prompt(
     Returns:
         Qwen3 chat_template 格式的 messages 列表
     """
-    builder = _JD_PROMPT_BUILDERS.get(task_type)
-    if builder is None:
+    if task_type not in _USER_PROMPT_IDS:
         raise ValueError(f"未知JD任务类型: {task_type}")
-    return builder(jd_text, pre_annotations)
 
-
-def _build_job_info_prompt(
-    jd_text: str,
-    pre_annotations: Optional[Dict] = None,
-) -> List[Dict[str, str]]:
-    """职位基本信息"""
-    user_content = f"""请从以下职位描述中提取职位基本信息。
-
-职位描述：
-{jd_text}
-
-请返回JSON格式：
-{{
-    "job_title": "职位名称",
-    "company": "公司名称或null",
-    "location": "工作地点或null",
-    "salary_range": "薪资范围或null",
-    "job_type": "全职/兼职/实习 或null"
-}}"""
+    pre = pre_annotations or {}
+    system_prompt = load_prompt("entity.jd.system")
+    user_prompt = _build_user_prompt(task_type, jd_text, pre)
 
     return [
-        {"role": "system", "content": JD_SYSTEM_PROMPT},
-        {"role": "user", "content": user_content},
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
     ]
 
 
-def _build_requirements_prompt(
-    jd_text: str,
-    pre_annotations: Optional[Dict] = None,
-) -> List[Dict[str, str]]:
-    """任职要求"""
-    constraints = ""
-    if pre_annotations and pre_annotations.get("detected_skills"):
-        skills_str = ", ".join(pre_annotations["detected_skills"][:15])
-        constraints += f"\n已预匹配到的技能要求: [{skills_str}]"
+def _build_user_prompt(task_type: str, jd_text: str, pre: Dict) -> str:
+    """根据任务类型组装 user content（base + tone 通过 load_prompt 完成）"""
+    user_id = _USER_PROMPT_IDS[task_type]
+    if task_type == "job_info":
+        return load_prompt(user_id, jd_text=jd_text)
 
-    user_content = f"""请从以下职位描述中提取任职要求。
-{constraints}
+    if task_type == "requirements":
+        constraints = _format_requirements_constraints(pre)
+        return load_prompt(user_id, jd_text=jd_text, constraints=constraints)
 
-职位描述：
-{jd_text}
+    if task_type == "description":
+        return load_prompt(user_id, jd_text=jd_text)
 
-请返回JSON格式：
-{{
-    "required_skills": ["必需技能1", "必需技能2"],
-    "preferred_skills": ["加分技能1"],
-    "min_education": "最低学历要求或null",
-    "min_experience_years": 最低工作年限数字或null,
-    "other_requirements": ["其他要求"]
-}}"""
-
-    return [
-        {"role": "system", "content": JD_SYSTEM_PROMPT},
-        {"role": "user", "content": user_content},
-    ]
+    raise ValueError(f"未实现的JD任务类型: {task_type}")
 
 
-def _build_description_prompt(
-    jd_text: str,
-    pre_annotations: Optional[Dict] = None,
-) -> List[Dict[str, str]]:
-    """职位描述/职责"""
-    user_content = f"""请从以下职位描述中提取工作职责和岗位描述。
-
-职位描述：
-{jd_text}
-
-请返回JSON格式：
-{{
-    "responsibilities": ["职责1", "职责2"],
-    "team_info": "团队信息或null",
-    "benefits": ["福利1", "福利2"]
-}}"""
-
-    return [
-        {"role": "system", "content": JD_SYSTEM_PROMPT},
-        {"role": "user", "content": user_content},
-    ]
-
-
-_JD_PROMPT_BUILDERS = {
-    "job_info": _build_job_info_prompt,
-    "requirements": _build_requirements_prompt,
-    "description": _build_description_prompt,
-}
+def _format_requirements_constraints(pre: Dict) -> str:
+    """任职要求 prompt: 已预匹配到的技能"""
+    skills = pre.get("detected_skills", [])
+    if skills:
+        skills_str = ", ".join(skills[:15])
+        return f"\n已预匹配到的技能要求: [{skills_str}]"
+    return ""

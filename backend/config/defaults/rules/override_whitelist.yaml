@@ -1,0 +1,11 @@
+# workspace/overrides/rules.yaml 允许覆盖的点路径（叶子键必须落在此树下）
+
+allowed:
+  - matching.dimension_weights
+  - matching.match_gates
+  - matching.skill_coverage_formula
+  - thresholds.entity_normalizer
+  - thresholds.semantic
+  - thresholds.portrait.competitiveness_levels
+  - thresholds.match
+  - thresholds.oov_frequency
