@@ -25,6 +25,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
+from pydantic import BaseModel, Field, create_model
 
 from config.prompt_loader import load_prompt
 
@@ -52,6 +53,43 @@ class CPAState(TypedDict):
 # 全局缓存, 避免重复创建
 _tool_registry: Dict[str, Any] = {}
 
+_JSON_TYPE_MAP = {
+    "string": str,
+    "integer": int,
+    "number": float,
+    "boolean": bool,
+    "array": list,
+    "object": dict,
+}
+
+
+def _parameters_to_args_model(tool_name: str, params_schema: Any) -> Optional[type[BaseModel]]:
+    """BaseTool.parameters（JSON Schema 或 {名:说明}）→ Pydantic args_schema。"""
+    if not isinstance(params_schema, dict) or not params_schema:
+        return None
+
+    fields: Dict[str, Any] = {}
+    if "properties" in params_schema:
+        required = set(params_schema.get("required") or [])
+        for key, prop in (params_schema.get("properties") or {}).items():
+            prop = prop if isinstance(prop, dict) else {}
+            py_type = _JSON_TYPE_MAP.get(str(prop.get("type") or "string"), str)
+            desc = str(prop.get("description") or "")
+            if key in required:
+                fields[key] = (py_type, Field(description=desc))
+            else:
+                default = prop.get("default", None)
+                fields[key] = (Optional[py_type], Field(default=default, description=desc))
+    else:
+        for key, desc in params_schema.items():
+            if key in ("type", "required", "properties"):
+                continue
+            fields[str(key)] = (str, Field(default="", description=str(desc)))
+
+    if not fields:
+        return None
+    return create_model(f"{tool_name}Args", **fields)
+
 
 def _adapt_existing_tool(base_tool_instance) -> Any:
     """
@@ -62,30 +100,26 @@ def _adapt_existing_tool(base_tool_instance) -> Any:
     if name in _tool_registry:
         return _tool_registry[name]
 
-    # 从 BaseTool.parameters 构造参数签名
-    params_schema = base_tool_instance.parameters
     desc = base_tool_instance.description
+    args_model = _parameters_to_args_model(name, base_tool_instance.parameters)
 
-    # 动态创建 @tool 函数
-    @lc_tool(name=name, description=desc)
     def adapted_tool(**kwargs) -> str:
         result = base_tool_instance.execute(**kwargs)
         if isinstance(result, dict):
             return json.dumps(result, ensure_ascii=False)
         return str(result)
 
-    # 注入参数 schema (如果 BaseTool 提供了 JSON Schema 格式)
-    if isinstance(params_schema, dict) and "properties" in params_schema:
-        adapted_tool.args_schema = type(
-            f"{name}Args",
-            (),
-            {"__annotations__": {
-                k: str for k in params_schema.get("properties", {}).keys()
-            }},
-        )
+    adapted_tool.__name__ = name
+    adapted_tool.__doc__ = desc
 
-    _tool_registry[name] = adapted_tool
-    return adapted_tool
+    # langchain_core>=1.x: 工具名走首位位置参数，不再接受 name=
+    if args_model is not None:
+        wrapped = lc_tool(name, description=desc, args_schema=args_model)(adapted_tool)
+    else:
+        wrapped = lc_tool(name, description=desc)(adapted_tool)
+
+    _tool_registry[name] = wrapped
+    return wrapped
 
 
 def _build_langchain_tools() -> List[Any]:
@@ -128,7 +162,10 @@ def _build_langchain_tools() -> List[Any]:
         instances.append(jd_cleaner)
 
     # ── 归一化工具 (原生 @tool, 非 BaseTool) ──
-    @lc_tool(name="normalize_entity", description="将实体名归一化为数据库规范名。输入: name(实体名), entity_type(skill/position/major/certificate)。返回: canonical_name, match_type, is_oov。OOV时自动注册到数据库。")
+    @lc_tool(
+        "normalize_entity",
+        description="将实体名归一化为数据库规范名。输入: name(实体名), entity_type(skill/position/major/certificate)。返回: canonical_name, match_type, is_oov。OOV时自动注册到数据库。",
+    )
     def normalize_entity_tool(name: str, entity_type: str = "skill", context: str = "") -> str:
         try:
             from .entity_normalizer import get_entity_normalizer
@@ -178,6 +215,37 @@ def agent_node(state: CPAState, llm_with_tools) -> Dict:
 # 5. Graph Builder
 # ═══════════════════════════════════════════════════════════════
 
+def _build_llm_with_tools(lc_tools: List[Any], temperature: float, max_tokens: int):
+    """按 LLM_FAILOVER_ORDER 构建 ChatOpenAI + tools；402/鉴权等自动落到下一厂商。"""
+    from config.integration_loader import get_failover_order, get_provider_config
+
+    bound: List[Any] = []
+    for provider in get_failover_order():
+        cfg = get_provider_config(provider)
+        if not cfg.get("api_key") or not cfg.get("base_url") or not cfg.get("model"):
+            continue
+        llm = ChatOpenAI(
+            api_key=cfg["api_key"],
+            base_url=cfg["base_url"],
+            model=cfg["model"],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=cfg.get("timeout") or Config.LLM_TIMEOUT,
+        )
+        bound.append(llm.bind_tools(lc_tools))
+        logger.info(
+            "LangGraph LLM candidate provider=%s model=%s",
+            provider,
+            cfg["model"],
+        )
+
+    if not bound:
+        raise ValueError("未配置可用 LLM（LangGraph 需要至少一个 provider 的 API Key）")
+    if len(bound) == 1:
+        return bound[0]
+    return bound[0].with_fallbacks(bound[1:])
+
+
 def build_cpa_agent(
     checkpointer=None,
     temperature: float = 0.5,
@@ -197,18 +265,8 @@ def build_cpa_agent(
     # 构建 tools
     lc_tools = _build_langchain_tools()
 
-    # 构建 LLM (OpenAI SDK 格式, 兼容 DeepSeek / Qwen)
-    llm = ChatOpenAI(
-        api_key=Config.LLM_API_KEY,
-        base_url=Config.LLM_BASE_URL,
-        model=Config.LLM_MODEL_NAME,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        timeout=Config.LLM_TIMEOUT,
-    )
-
-    # 绑定 tools — LLM 将使用原生 function_calling
-    llm_with_tools = llm.bind_tools(lc_tools)
+    # 绑定 tools + 多厂商 failover（DeepSeek 402 → Qwen）
+    llm_with_tools = _build_llm_with_tools(lc_tools, temperature, max_tokens)
 
     # ToolNode — 支持并行执行 + 错误处理
     tool_node = ToolNode(
@@ -279,9 +337,12 @@ def get_checkpointer():
             f"@{Config.MYSQL_HOST}:{Config.MYSQL_PORT}/{Config.MYSQL_DATABASE}"
         )
 
-        _checkpointer_instance = PyMySQLSaver.from_conn_string(db_uri)
-        # 首次使用需要 setup() 创建 checkpoint 表
-        _checkpointer_instance.setup()
+        # 新版 from_conn_string 返回 context manager，需 enter 后才能 setup
+        saver = PyMySQLSaver.from_conn_string(db_uri)
+        if hasattr(saver, "__enter__") and not hasattr(saver, "setup"):
+            saver = saver.__enter__()
+        saver.setup()
+        _checkpointer_instance = saver
         logger.info("MySQL Checkpointer 初始化成功")
         return _checkpointer_instance
 

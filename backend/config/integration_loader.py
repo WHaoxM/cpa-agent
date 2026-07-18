@@ -57,22 +57,76 @@ def get_default_timeout() -> int:
     return _load_yaml("llm.yaml").get("defaults", {}).get("timeout", 120)
 
 
+def get_failover_order() -> list:
+    """厂商轮询顺序：.env LLM_FAILOVER_ORDER > YAML defaults.failover_order > [LLM_PROVIDER]。"""
+    raw = os.environ.get("LLM_FAILOVER_ORDER", "").strip()
+    if raw:
+        order = [p.strip().lower() for p in raw.split(",") if p.strip()]
+    else:
+        cfg = _load_yaml("llm.yaml").get("defaults", {}).get("failover_order") or []
+        order = [str(p).strip().lower() for p in cfg if p]
+    primary = os.environ.get("LLM_PROVIDER", get_default_provider()).lower()
+    if not order:
+        order = [primary]
+    # 保证主 provider 在链首（若未列入则插入）
+    if primary in order:
+        order = [primary] + [p for p in order if p != primary]
+    else:
+        order = [primary] + order
+    # 去重保序
+    seen = set()
+    unique = []
+    for p in order:
+        if p not in seen:
+            seen.add(p)
+            unique.append(p)
+    return unique
+
+
+def resolve_provider_api_key(provider: str) -> Optional[str]:
+    """
+    按厂商解析密钥（均来自环境变量，不进代码）:
+    1. LLM_API_KEY_<PROVIDER>
+    2. <PROVIDER>_API_KEY
+    3. 若是当前 LLM_PROVIDER，回退 LLM_API_KEY
+    """
+    provider = (provider or "").lower()
+    upper = provider.upper()
+    for key in (f"LLM_API_KEY_{upper}", f"{upper}_API_KEY"):
+        val = os.environ.get(key)
+        if val:
+            return val
+    primary = os.environ.get("LLM_PROVIDER", get_default_provider()).lower()
+    if provider == primary or not provider:
+        return os.environ.get("LLM_API_KEY")
+    # 非主厂商也允许共用 LLM_API_KEY（兼容单密钥多 endpoint 场景）
+    return os.environ.get("LLM_API_KEY")
+
+
 def get_provider_config(provider: Optional[str] = None) -> Dict[str, Any]:
     """
     获取 LLM Provider 配置:
-    - base_url: .env > YAML preset
-    - model:     .env > YAML preset
-    - api_key:   始终从 .env
+    - base_url: .env LLM_BASE_URL_<P> / LLM_BASE_URL(仅主) > YAML preset
+    - model:     .env LLM_MODEL_<P> / LLM_MODEL_NAME(仅主) > YAML preset
+    - api_key:   按厂商从 .env 解析
     """
-    provider = provider or os.environ.get("LLM_PROVIDER", get_default_provider())
+    provider = (provider or os.environ.get("LLM_PROVIDER", get_default_provider())).lower()
     presets = get_llm_provider_presets()
     preset = presets.get(provider, presets.get("custom", {}))
+    primary = os.environ.get("LLM_PROVIDER", get_default_provider()).lower()
+    upper = provider.upper()
+
+    base_url = os.environ.get(f"LLM_BASE_URL_{upper}")
+    model = os.environ.get(f"LLM_MODEL_{upper}") or os.environ.get(f"LLM_MODEL_NAME_{upper}")
+    if provider == primary:
+        base_url = base_url or os.environ.get("LLM_BASE_URL")
+        model = model or os.environ.get("LLM_MODEL_NAME")
 
     return {
         "provider": provider,
-        "api_key": os.environ.get("LLM_API_KEY"),
-        "base_url": os.environ.get("LLM_BASE_URL") or preset.get("base_url"),
-        "model": os.environ.get("LLM_MODEL_NAME") or preset.get("model"),
+        "api_key": resolve_provider_api_key(provider),
+        "base_url": base_url or preset.get("base_url"),
+        "model": model or preset.get("model"),
         "timeout": int(os.environ.get("LLM_TIMEOUT", str(get_default_timeout()))),
     }
 

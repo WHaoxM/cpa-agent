@@ -24,6 +24,8 @@ from .dictionary_loader import (
 from .integration_loader import (
     get_llm_provider_presets,
     get_provider_config,
+    get_failover_order,
+    resolve_provider_api_key,
     get_embedding_model_name,
     get_embedding_dimension,
     get_react_agent_config,
@@ -71,6 +73,8 @@ __all__ = [
     # integrations
     "get_llm_provider_presets",
     "get_provider_config",
+    "get_failover_order",
+    "resolve_provider_api_key",
     "get_embedding_model_name",
     "get_embedding_dimension",
     "get_react_agent_config",

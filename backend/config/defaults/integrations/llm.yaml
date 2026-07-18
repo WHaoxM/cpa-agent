@@ -1,10 +1,19 @@
 # LLM Provider Presets — repo 权威默认
-# 密钥 (api_key, LLM_BASE_URL) 保留 .env，仅 base_url/model 迁 YAML
+# 密钥保留 .env；base_url/model 可在此覆盖
 
 providers:
   openai:
     base_url: "https://api.openai.com/v1"
     model: "gpt-4o-mini"
+
+  deepseek:
+    base_url: "https://api.deepseek.com/v1"
+    model: "deepseek-chat"
+
+  qwen:
+    # 通义千问 OpenAI 兼容模式
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model: "qwen-plus"
 
   moonshot:
     base_url: "https://api.moonshot.cn/v1"
@@ -32,5 +41,9 @@ providers:
 
 defaults:
   # 启动时默认 provider，.env 中 LLM_PROVIDER 可覆盖
-  provider: "openai"
+  provider: "deepseek"
   timeout: 120
+  # 故障转移顺序（.env LLM_FAILOVER_ORDER 可覆盖，逗号分隔）
+  failover_order:
+    - deepseek
+    - qwen

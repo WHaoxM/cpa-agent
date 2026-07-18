@@ -23,9 +23,16 @@ os.environ.setdefault('SENTENCE_TRANSFORMERS_HOME', str(_MODELS_ROOT / 'embeddin
 os.environ.setdefault('HF_HUB_CACHE', str(_MODELS_ROOT / 'embeddings' / 'hub'))
 os.environ.setdefault('TRANSFORMERS_CACHE', str(_MODELS_ROOT / 'embeddings' / 'transformers'))
 
-# Windows 控制台中文编码
+# Windows：强制 UTF-8（控制台乱码多为 CP936 误读 UTF-8 源/日志）
+os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
+os.environ.setdefault('PYTHONUTF8', '1')
 if sys.platform == 'win32':
-    os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+        ctypes.windll.kernel32.SetConsoleCP(65001)
+    except Exception:
+        pass
     if hasattr(sys.stdout, 'reconfigure'):
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     if hasattr(sys.stderr, 'reconfigure'):
