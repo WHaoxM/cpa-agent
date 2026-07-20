@@ -89,5 +89,6 @@ archive/
 # ── 真实业务数据 (含敏感信息且体积大) ──
 cleaning_data/jd_data.json
 
-# ── 前端演示仓库 (独立仓库, 不作为子目录提交) ──
+# ── 前端仓库 (独立仓库 cpa-xingtu, 不作为子目录提交) ──
+cpa-xingtu/
 vue-kecheng/

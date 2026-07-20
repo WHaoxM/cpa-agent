@@ -104,12 +104,12 @@ For frontend real-service checks:
 ```powershell
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
-cd vue-kecheng
+cd cpa-xingtu
 Copy-Item .env.example .env.local -Force
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173/cpa-agent-demo/`, log in with the demo account, then verify:
+Open `http://127.0.0.1:5173/cpa-xingtu/`, log in with the demo account, then verify:
 
 - `student/career-analysis` requests `GET http://127.0.0.1:5001/api/career/landscape`.
 - `student/ai-assistant` requests `POST http://127.0.0.1:5001/api/agent/chat`.

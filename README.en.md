@@ -16,7 +16,8 @@
 [![Flask](https://img.shields.io/badge/Flask-3.x-000000?style=flat-square&logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
 
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-GitHub%20Pages-6E40C9?style=flat-square&logo=github&logoColor=white)](https://whaoxm.github.io/cpa-agent-demo/)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-GitHub%20Pages-6E40C9?style=flat-square&logo=github&logoColor=white)](https://whaoxm.github.io/cpa-xingtu/)
+[![Frontend](https://img.shields.io/badge/Frontend-cpa--xingtu-42b883?style=flat-square&logo=vue.js&logoColor=white)](https://github.com/WHaoxM/cpa-xingtu)
 
 [English](./README.en.md) | [中文](./README.md)
 
@@ -43,7 +44,7 @@ From resume input to career report, every step has Agent Trace observability, an
 
 Experience the frontend online demo (primarily uses Mock data, no backend required):
 
-👉 **[https://whaoxm.github.io/cpa-agent-demo/](https://whaoxm.github.io/cpa-agent-demo/)**
+👉 **[https://whaoxm.github.io/cpa-xingtu/](https://whaoxm.github.io/cpa-xingtu/)**
 
 **Demo Accounts:**
 
@@ -71,7 +72,7 @@ Two capabilities define the fundamental difference between CPA-Agent and general
 
 ### Option 1: Online Demo (Recommended for First Use)
 
-Visit the [Live Demo](https://whaoxm.github.io/cpa-agent-demo/) directly and log in with the demo account to experience all frontend features.
+Visit the [Live Demo](https://whaoxm.github.io/cpa-xingtu/) directly and log in with the demo account to experience all frontend features.
 
 ### Option 2: Local Deployment (Full Features)
 
@@ -139,8 +140,11 @@ python run.py
 
 #### 4. Start Frontend
 
+Frontend lives in the separate repo [cpa-xingtu](https://github.com/WHaoxM/cpa-xingtu):
+
 ```bash
-cd vue-kecheng
+git clone https://github.com/WHaoxM/cpa-xingtu.git
+cd cpa-xingtu
 npm install
 Copy-Item .env.example .env.local
 # In .env.local: VITE_API_BASE_URL=http://127.0.0.1:5001
@@ -168,7 +172,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ## 🏗️ Architecture Overview
 
 ```
-Vue 3 Frontend (vue-kecheng)
+Vue 3 Frontend (cpa-xingtu)
         │ HTTP / SSE
         ▼
 Flask Backend (backend/app)
@@ -293,8 +297,7 @@ Planned capabilities not yet fully implemented:
 | [CODE_WIKI.md](./CODE_WIKI.md) | Complete code architecture and runtime guide |
 | [CONTEXT.md](./CONTEXT.md) | Domain glossary and project decision context |
 | [DEPLOY.md](./DEPLOY.md) | Detailed deployment instructions |
-| [vue-kecheng/README.md](./vue-kecheng/README.md) | Frontend modules, routes, and demo accounts |
-| [vue-kecheng/DEPLOY.md](./vue-kecheng/DEPLOY.md) | GitHub Pages deployment |
+| [cpa-xingtu (frontend repo)](https://github.com/WHaoxM/cpa-xingtu) | Frontend modules, routes, demo accounts, and Pages deploy |
 | [docs/](./docs/) | ADRs, runbooks, specs, and guides |
 
 ## 📄 Acknowledgments

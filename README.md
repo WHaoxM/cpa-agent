@@ -16,7 +16,8 @@
 [![Flask](https://img.shields.io/badge/Flask-3.x-000000?style=flat-square&logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
 
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-GitHub%20Pages-6E40C9?style=flat-square&logo=github&logoColor=white)](https://whaoxm.github.io/cpa-agent-demo/)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-GitHub%20Pages-6E40C9?style=flat-square&logo=github&logoColor=white)](https://whaoxm.github.io/cpa-xingtu/)
+[![Frontend](https://img.shields.io/badge/Frontend-cpa--xingtu-42b883?style=flat-square&logo=vue.js&logoColor=white)](https://github.com/WHaoxM/cpa-xingtu)
 
 [中文](./README.md) | [English](./README.en.md)
 
@@ -37,7 +38,7 @@
 </table>
 </div>
 
-> 截图为前端演示效果，实际界面以 [在线 Demo](https://whaoxm.github.io/cpa-agent-demo/) 为准。
+> 截图为前端演示效果，实际界面以 [在线 Demo](https://whaoxm.github.io/cpa-xingtu/) 为准。
 
 ## ⚡ 项目概述
 
@@ -62,7 +63,7 @@
 
 体验前端在线 Demo（主要使用 Mock 数据，无需后端）：
 
-👉 **[https://whaoxm.github.io/cpa-agent-demo/](https://whaoxm.github.io/cpa-agent-demo/)**
+👉 **[https://whaoxm.github.io/cpa-xingtu/](https://whaoxm.github.io/cpa-xingtu/)**
 
 **演示账号：**
 
@@ -90,7 +91,7 @@
 
 ### 一、在线体验（推荐首次使用）
 
-直接访问 [在线 Demo](https://whaoxm.github.io/cpa-agent-demo/)，使用演示账号登录即可体验全部前端功能。
+直接访问 [在线 Demo](https://whaoxm.github.io/cpa-xingtu/)，使用演示账号登录即可体验全部前端功能。
 
 ### 二、本地部署（完整功能）
 
@@ -158,8 +159,11 @@ python run.py
 
 #### 4. 启动前端
 
+前端为独立仓库 [cpa-xingtu](https://github.com/WHaoxM/cpa-xingtu)：
+
 ```bash
-cd vue-kecheng
+git clone https://github.com/WHaoxM/cpa-xingtu.git
+cd cpa-xingtu
 npm install
 Copy-Item .env.example .env.local
 # .env.local 中 VITE_API_BASE_URL=http://127.0.0.1:5001
@@ -187,7 +191,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ## 🏗️ 架构概览
 
 ```
-Vue 3 前端 (vue-kecheng)
+Vue 3 前端 (cpa-xingtu)
         │ HTTP / SSE
         ▼
 Flask 后端 (backend/app)
@@ -258,7 +262,7 @@ Flask 后端 (backend/app)
 ## 📁 项目结构
 
 ```
-cpa-agent/
+cpa-agent/                  # 主仓库（后端 + 文档）
 ├── backend/                # Flask 后端
 │   ├── app/                # 应用主目录
 │   │   ├── api/            # API 路由
@@ -269,12 +273,13 @@ cpa-agent/
 │   ├── config/             # 配置加载器
 │   ├── scripts/            # 数据库初始化脚本
 │   └── tests/              # 测试
-├── vue-kecheng/            # Vue 3 前端演示
-├── cleaning_data/          # JD 数据清洗工具
 ├── docs/                   # 项目文档
 ├── workspace/              # 工作区配置
 ├── docker-compose.yml      # Docker 编排
 └── .env.example            # 环境变量模板
+
+# 前端独立仓库：https://github.com/WHaoxM/cpa-xingtu
+# 本地可克隆为同级目录 cpa-xingtu/（gitignore，不随主仓提交）
 ```
 
 ## 📌 当前状态
@@ -344,8 +349,7 @@ cpa-agent/
 | [CODE_WIKI.md](./CODE_WIKI.md) | 完整代码架构与运行指南 |
 | [CONTEXT.md](./CONTEXT.md) | 领域术语与项目决策上下文 |
 | [DEPLOY.md](./DEPLOY.md) | 部署详细说明 |
-| [vue-kecheng/README.md](./vue-kecheng/README.md) | 前端模块、路由与演示账号 |
-| [vue-kecheng/DEPLOY.md](./vue-kecheng/DEPLOY.md) | GitHub Pages 部署 |
+| [cpa-xingtu（前端仓库）](https://github.com/WHaoxM/cpa-xingtu) | 前端模块、路由、演示账号与 Pages 部署 |
 | [docs/](./docs/) | ADR、运行手册、规范与指南 |
 
 ## 📄 致谢

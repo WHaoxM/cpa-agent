@@ -56,7 +56,7 @@ Current hardening priority:
 
 ## Frontend Boundary
 
-`vue-kecheng/` is currently a mock-data frontend demo. Its own `vue-kecheng/AGENTS.md` is authoritative for frontend-only work.
+`cpa-xingtu/` is currently a mock-data frontend demo. Its own `cpa-xingtu/AGENTS.md` is authoritative for frontend-only work.
 
 Do not introduce real API calls into the frontend unless the user explicitly asks for integration work and backend endpoint contracts are verified.
 
