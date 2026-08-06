@@ -100,5 +100,6 @@ archive/
 cleaning_data/jd_data.json
 
 # ── 前端仓库 (独立仓库 cpa-xingtu, 不作为子目录提交) ──
-cpa-xingtu/
-vue-kecheng/
+# 仅忽略根目录；docs/frontend/cpa-xingtu/ 契约文档必须纳入版本控制
+/cpa-xingtu/
+/vue-kecheng/
