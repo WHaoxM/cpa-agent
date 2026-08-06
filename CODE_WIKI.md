@@ -52,7 +52,7 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                    Vue 3 前端 (vue-kecheng)                  │
+│                    Vue 3 前端 (cpa-xingtu)                  │
 │  Element Plus + ECharts + Three.js + Pinia + GSAP            │
 └──────────────┬───────────────────────────────┬────────────────┘
                │ HTTP / SSE                     │
@@ -177,7 +177,7 @@ cpa-agent/
 │   ├── environment.yml          # Conda 环境
 │   └── Dockerfile
 │
-├── vue-kecheng/                # 前端主项目
+├── cpa-xingtu/                # 前端主项目
 │   ├── src/
 │   │   ├── api/                 # API 接口层
 │   │   ├── assets/              # 静态资源
@@ -474,7 +474,7 @@ APIException (Exception)
 
 ## 5. 前端架构 (Frontend)
 
-**项目**: `vue-kecheng/`
+**项目**: `cpa-xingtu/`
 
 | 技术栈 | 版本 | 用途 |
 |--------|------|------|
@@ -670,7 +670,7 @@ python run.py
 # → http://localhost:5001
 
 # 6. 启动前端
-cd ../vue-kecheng
+cd ../cpa-xingtu
 npm install
 npm run dev
 # → http://localhost:5173

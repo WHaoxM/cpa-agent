@@ -8,11 +8,10 @@ import uuid
 from flask import request, jsonify
 
 from . import report_bp
-from ._helpers import parse_json_field, safe_error
+from ._helpers import clamp_pagination, parse_json_field, safe_error
 from ..config import Config
 from ..services.db import get_mysql_client
 from ..utils.logger import get_logger
-from ..exceptions import ErrorCode
 
 logger = get_logger('cpa-agent.api.report')
 
@@ -180,12 +179,7 @@ def generate_report():
                 },
             })
         except Exception as e:
-            logger.error(f"Demo report generation failed: {e}")
-            return jsonify({
-                "success": False,
-                "error": "Demo report generation failed",
-                "code": ErrorCode.INTERNAL_ERROR.value
-            }), 500
+            return jsonify(safe_error("Demo报告生成", e, message="Demo report generation failed")), 500
 
     report_result = None
     try:
@@ -300,12 +294,7 @@ def get_report(report_id: str):
         })
 
     except Exception as e:
-        logger.error(f"获取报告失败: {e}")
-        return jsonify({
-            "success": False,
-            "error": "查询失败，请稍后重试",
-            "code": ErrorCode.INTERNAL_ERROR.value
-        }), 500
+        return jsonify(safe_error("获取报告", e, message="查询失败，请稍后重试")), 500
 
 
 @report_bp.route('/<report_id>/export', methods=['GET'])
@@ -356,12 +345,7 @@ def export_report(report_id: str):
         })
 
     except Exception as e:
-        logger.error(f"导出报告失败: {e}")
-        return jsonify({
-            "success": False,
-            "error": "导出失败，请稍后重试",
-            "code": ErrorCode.INTERNAL_ERROR.value
-        }), 500
+        return jsonify(safe_error("导出报告", e, message="导出失败，请稍后重试")), 500
 
 
 @report_bp.route('/list', methods=['GET'])
@@ -372,8 +356,11 @@ def list_reports():
 
         student_id = request.args.get('student_id')
         status = request.args.get('status')
-        limit = request.args.get('limit', 20, type=int)
-        offset = request.args.get('offset', 0, type=int)
+        limit, offset = clamp_pagination(
+            request.args.get('limit', type=int),
+            request.args.get('offset', type=int),
+            default_limit=20,
+        )
 
         if student_id:
             where_clause = "WHERE cr.student_id = :student_id"
@@ -426,12 +413,7 @@ def list_reports():
         })
 
     except Exception as e:
-        logger.error(f"获取报告列表失败: {e}")
-        return jsonify({
-            "success": False,
-            "error": "查询失败，请稍后重试",
-            "code": ErrorCode.INTERNAL_ERROR.value
-        }), 500
+        return jsonify(safe_error("获取报告列表", e, message="查询失败，请稍后重试")), 500
 
 
 @report_bp.route('/<report_id>/progress', methods=['GET'])
@@ -497,12 +479,7 @@ def get_report_progress(report_id: str):
         })
 
     except Exception as e:
-        logger.error(f"获取报告进度失败: {e}")
-        return jsonify({
-            "success": False,
-            "error": "查询失败，请稍后重试",
-            "code": ErrorCode.INTERNAL_ERROR.value
-        }), 500
+        return jsonify(safe_error("获取报告进度", e, message="查询失败，请稍后重试")), 500
 
 
 @report_bp.route('/task/<task_id>', methods=['GET'])

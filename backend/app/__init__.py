@@ -104,6 +104,12 @@ def create_app(config_class=Config):
     app.register_blueprint(ability_bp, url_prefix='/api')
     app.register_blueprint(ai_bp, url_prefix='/api/ai')
 
+    try:
+        from .services.agent_runtime.schema_ensure import ensure_runtime_schema
+        ensure_runtime_schema()
+    except Exception as e:
+        logger.warning("runtime schema ensure skipped: %s", e)
+
     if should_log:
         logger.info("CPA-Agent Backend 启动完成")
 

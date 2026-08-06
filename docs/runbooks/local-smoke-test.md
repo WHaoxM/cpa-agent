@@ -8,7 +8,7 @@ Audience: maintainers and coding agents.
 
 ## Preconditions
 
-- Python 3.11 environment available.
+- Python environment available — use the conda env **`mkg`** (Python 3.10), see `README.md` → 运行环境. The default `python` on PATH has no project dependencies.
 - Dependencies installed from `backend/requirements.txt`.
 - `.env` exists with required LLM and database settings if testing external services.
 - `CPA_DEMO_MODE=true` allows local backend startup without LLM, MySQL, Neo4j, Redis, or Milvus being available.
@@ -104,12 +104,12 @@ For frontend real-service checks:
 ```powershell
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
-cd vue-kecheng
+cd cpa-xingtu
 Copy-Item .env.example .env.local -Force
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173/cpa-agent-demo/`, log in with the demo account, then verify:
+Open `http://127.0.0.1:5173/cpa-xingtu/`, log in with the demo account, then verify:
 
 - `student/career-analysis` requests `GET http://127.0.0.1:5001/api/career/landscape`.
 - `student/ai-assistant` requests `POST http://127.0.0.1:5001/api/agent/chat`.

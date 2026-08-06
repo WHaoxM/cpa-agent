@@ -8,10 +8,20 @@ import re
 from flask import request, jsonify
 
 from . import profile_bp
-from ._helpers import build_dimensions_d1_d4, build_sub_dimensions, parse_json_field, safe_error
+from ._helpers import (
+    ScopeError,
+    build_dimensions_d1_d4,
+    clamp_pagination,
+    parse_json_field,
+    require_owner,
+    require_student_path,
+    resolve_request_scope,
+    safe_error,
+    scope_error_response,
+    sub_dimensions_from_payload,
+)
 from ..services.db import get_mysql_client
 from ..utils.logger import get_logger
-from ..exceptions import ErrorCode
 
 logger = get_logger('cpa-agent.api.profile')
 
@@ -36,11 +46,22 @@ def upload_resume():
         }), 400
 
     file = request.files['file']
-    student_id = request.form.get('student_id')
     session_id = request.form.get('session_id')
 
-    if not student_id:
-        student_id = f"stu_{uuid.uuid4().hex[:12]}"
+    try:
+        scope = resolve_request_scope(session_id=session_id)
+    except ScopeError as e:
+        return scope_error_response(e)
+    student_id = scope.student_id
+    if session_id:
+        try:
+            from ..services.session_manager import get_session_manager
+            session = get_session_manager().get_session(session_id)
+            if not session:
+                return jsonify({"success": False, "error": "会话不存在"}), 404
+            require_owner(session.student_id, scope, resource="会话")
+        except ScopeError as e:
+            return scope_error_response(e)
 
     filename = file.filename
     file_ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else 'pdf'
@@ -83,7 +104,7 @@ def upload_resume():
             from ..services.session_manager import get_session_manager
             session_mgr = get_session_manager()
             session = session_mgr.get_session(session_id)
-            if session and not session.student_id:
+            if session and session.student_id == student_id:
                 session_mgr.update_session(session_id, student_id=student_id)
         except Exception as e:
             logger.warning(f"Session student_id 回写失败: {e}")
@@ -116,6 +137,8 @@ def upload_resume():
 def get_student_profile(student_id: str):
     """获取学生基本信息"""
     try:
+        scope = resolve_request_scope()
+        require_student_path(student_id, scope)
         mysql = get_mysql_client()
 
         sql = """
@@ -123,7 +146,7 @@ def get_student_profile(student_id: str):
             student_id, name, phone, email,
             degree, school, major, graduation_year,
             source_file, source_type, parse_version,
-            completeness, created_at, updated_at
+            completeness, profile_json, created_at, updated_at
         FROM student_profile
         WHERE student_id = :student_id
         """
@@ -147,19 +170,18 @@ def get_student_profile(student_id: str):
             "data": profile
         })
 
+    except ScopeError as e:
+        return scope_error_response(e)
     except Exception as e:
-        logger.error(f"获取学生画像失败: {e}")
-        return jsonify({
-            "success": False,
-            "error": "查询失败，请稍后重试",
-            "code": ErrorCode.INTERNAL_ERROR.value
-        }), 500
+        return jsonify(safe_error("获取学生画像", e, message="查询失败，请稍后重试")), 500
 
 
 @profile_bp.route('/student/<student_id>/4d', methods=['GET'])
 def get_student_4d(student_id: str):
     """获取学生四维评分详情 (D1-D4)"""
     try:
+        scope = resolve_request_scope()
+        require_student_path(student_id, scope)
         mysql = get_mysql_client()
 
         target_job_id = request.args.get('target_job_id')
@@ -169,7 +191,6 @@ def get_student_4d(student_id: str):
             SELECT
                 student_id, target_job_id,
                 d1_score, d2_score, d3_score, d4_score,
-                d5_score, d6_score, d7_score, d8_score, d9_score, d10_score,
                 competitiveness, competitiveness_lvl, completeness,
                 skill_coverage, skill_count, d3_confidence,
                 portrait_json, created_at
@@ -182,7 +203,6 @@ def get_student_4d(student_id: str):
             SELECT
                 student_id, target_job_id,
                 d1_score, d2_score, d3_score, d4_score,
-                d5_score, d6_score, d7_score, d8_score, d9_score, d10_score,
                 competitiveness, competitiveness_lvl, completeness,
                 skill_coverage, skill_count, d3_confidence,
                 portrait_json, created_at
@@ -215,14 +235,9 @@ def get_student_4d(student_id: str):
                     portrait.get('d3_score', 0),
                     portrait.get('d4_score', 0),
                 ),
-                "sub_dimensions": build_sub_dimensions(
+                "sub_dimensions": sub_dimensions_from_payload(
                     portrait.get('d2_score', 0),
-                    portrait.get('d5_score') or 0,
-                    portrait.get('d6_score') or 0,
-                    portrait.get('d7_score') or 0,
-                    portrait.get('d8_score') or 0,
-                    portrait.get('d9_score') or 0,
-                    portrait.get('d10_score') or 0,
+                    portrait.get('portrait_json'),
                 ),
                 "total_score": portrait.get('competitiveness', 0),
                 "level": portrait.get('competitiveness_lvl'),
@@ -233,6 +248,8 @@ def get_student_4d(student_id: str):
             }
         })
 
+    except ScopeError as e:
+        return scope_error_response(e)
     except Exception as e:
         return jsonify(safe_error("获取学生四维评分", e)), 500
 
@@ -241,6 +258,8 @@ def get_student_4d(student_id: str):
 def get_student_basic(student_id: str):
     """获取学生基础信息 (不含JSON)"""
     try:
+        scope = resolve_request_scope()
+        require_student_path(student_id, scope)
         mysql = get_mysql_client()
 
         sql = """
@@ -265,13 +284,100 @@ def get_student_basic(student_id: str):
             "data": results[0]
         })
 
+    except ScopeError as e:
+        return scope_error_response(e)
     except Exception as e:
-        logger.error(f"获取学生基础信息失败: {e}")
+        return jsonify(safe_error("获取学生基础信息", e, message="查询失败，请稍后重试")), 500
+
+
+@profile_bp.route('/student/<student_id>', methods=['PATCH', 'PUT'])
+def patch_student_profile(student_id: str):
+    """更新账号资料（user_account），可选同步 name/email/phone 到 student_profile 列。"""
+    try:
+        scope = resolve_request_scope()
+        require_student_path(student_id, scope)
+        data = request.get_json() or {}
+        # whitelist only
+        name = data.get("name") if "name" in data else data.get("nickname")
+        email = data.get("email")
+        phone = data.get("phone")
+        signature = data.get("signature")
+        avatar = data.get("avatar")
+        sync_profile = bool(data.get("sync_student_profile", True))
+
+        mysql = get_mysql_client()
+        account = mysql.execute(
+            "SELECT id FROM user_account WHERE id = :id LIMIT 1",
+            {"id": student_id},
+        )
+        if not account:
+            return jsonify({"success": False, "error": f"account not found: {student_id}"}), 404
+
+        sets = []
+        params: dict = {"id": student_id}
+        if name is not None:
+            sets.append("name = :name")
+            params["name"] = name
+        if email is not None:
+            sets.append("email = :email")
+            params["email"] = email
+        if phone is not None:
+            sets.append("phone = :phone")
+            params["phone"] = phone
+        if signature is not None:
+            sets.append("signature = :signature")
+            params["signature"] = signature
+        if avatar is not None:
+            sets.append("avatar = :avatar")
+            params["avatar"] = avatar
+
+        if not sets:
+            return jsonify({"success": False, "error": "no updatable fields"}), 400
+
+        mysql.execute_write(
+            f"UPDATE user_account SET {', '.join(sets)}, updated_at = NOW() WHERE id = :id",
+            params,
+        )
+
+        synced = False
+        if sync_profile and any(k in params for k in ("name", "email", "phone")):
+            profile_row = mysql.execute(
+                "SELECT student_id FROM student_profile WHERE student_id = :id LIMIT 1",
+                {"id": student_id},
+            )
+            if profile_row:
+                psets = []
+                pparams: dict = {"id": student_id}
+                if "name" in params:
+                    psets.append("name = :name")
+                    pparams["name"] = params["name"]
+                if "email" in params:
+                    psets.append("email = :email")
+                    pparams["email"] = params["email"]
+                if "phone" in params:
+                    psets.append("phone = :phone")
+                    pparams["phone"] = params["phone"]
+                if psets:
+                    mysql.execute_write(
+                        f"UPDATE student_profile SET {', '.join(psets)}, updated_at = NOW() "
+                        f"WHERE student_id = :id",
+                        pparams,
+                    )
+                    synced = True
+
+        row = mysql.execute(
+            "SELECT id, name, email, phone, avatar, signature, role, updated_at "
+            "FROM user_account WHERE id = :id",
+            {"id": student_id},
+        )[0]
         return jsonify({
-            "success": False,
-            "error": "查询失败，请稍后重试",
-            "code": ErrorCode.INTERNAL_ERROR.value
-        }), 500
+            "success": True,
+            "data": {**row, "synced_student_profile": synced},
+        })
+    except ScopeError as e:
+        return scope_error_response(e)
+    except Exception as e:
+        return jsonify(safe_error("更新学生资料", e, message="更新失败，请稍后重试")), 500
 
 
 @profile_bp.route('/job/list', methods=['GET'])
@@ -281,8 +387,11 @@ def list_job_portraits():
         mysql = get_mysql_client()
 
         category = request.args.get('category')
-        limit = request.args.get('limit', 20, type=int)
-        offset = request.args.get('offset', 0, type=int)
+        limit, offset = clamp_pagination(
+            request.args.get('limit', type=int),
+            request.args.get('offset', type=int),
+            default_limit=20,
+        )
 
         if category:
             sql = """
@@ -290,7 +399,6 @@ def list_job_portraits():
                 portrait_id, position_name, jd_count,
                 required_degree, required_skill_cnt,
                 d1_weight, d2_weight, d3_weight, d4_weight,
-                d5_weight, d6_weight, d7_weight, d8_weight, d9_weight, d10_weight,
                 created_at
             FROM job_portrait_4d
             WHERE position_name LIKE :category
@@ -312,7 +420,6 @@ def list_job_portraits():
                 portrait_id, position_name, jd_count,
                 required_degree, required_skill_cnt,
                 d1_weight, d2_weight, d3_weight, d4_weight,
-                d5_weight, d6_weight, d7_weight, d8_weight, d9_weight, d10_weight,
                 created_at
             FROM job_portrait_4d
             ORDER BY jd_count DESC
@@ -334,12 +441,7 @@ def list_job_portraits():
         })
 
     except Exception as e:
-        logger.error(f"获取岗位画像列表失败: {e}")
-        return jsonify({
-            "success": False,
-            "error": "查询失败，请稍后重试",
-            "code": ErrorCode.INTERNAL_ERROR.value
-        }), 500
+        return jsonify(safe_error("获取岗位画像列表", e, message="查询失败，请稍后重试")), 500
 
 
 @profile_bp.route('/job/<portrait_id>', methods=['GET'])
@@ -353,7 +455,6 @@ def get_job_portrait(portrait_id: str):
             portrait_id, position_name, jd_count,
             required_degree, major_strict, required_skill_cnt,
             d1_weight, d2_weight, d3_weight, d4_weight,
-            d5_weight, d6_weight, d7_weight, d8_weight, d9_weight, d10_weight,
             portrait_json, created_at
         FROM job_portrait_4d
         WHERE portrait_id = :portrait_id
@@ -378,12 +479,7 @@ def get_job_portrait(portrait_id: str):
         })
 
     except Exception as e:
-        logger.error(f"获取岗位画像失败: {e}")
-        return jsonify({
-            "success": False,
-            "error": "查询失败，请稍后重试",
-            "code": ErrorCode.INTERNAL_ERROR.value
-        }), 500
+        return jsonify(safe_error("获取岗位画像", e, message="查询失败，请稍后重试")), 500
 
 
 @profile_bp.route('/job/search', methods=['GET'])
@@ -393,7 +489,7 @@ def search_jobs():
         mysql = get_mysql_client()
 
         keyword = request.args.get('keyword', '')
-        limit = request.args.get('limit', 20, type=int)
+        limit, _ = clamp_pagination(request.args.get('limit', type=int), None, default_limit=20)
 
         if not keyword:
             return jsonify({
@@ -428,12 +524,7 @@ def search_jobs():
         })
 
     except Exception as e:
-        logger.error(f"搜索岗位失败: {e}")
-        return jsonify({
-            "success": False,
-            "error": "查询失败，请稍后重试",
-            "code": ErrorCode.INTERNAL_ERROR.value
-        }), 500
+        return jsonify(safe_error("搜索岗位", e, message="查询失败，请稍后重试")), 500
 
 
 @profile_bp.route('/job/categories', methods=['GET'])
@@ -463,9 +554,4 @@ def get_job_categories():
         })
 
     except Exception as e:
-        logger.error(f"获取岗位分类失败: {e}")
-        return jsonify({
-            "success": False,
-            "error": "查询失败，请稍后重试",
-            "code": ErrorCode.INTERNAL_ERROR.value
-        }), 500
+        return jsonify(safe_error("获取岗位分类", e, message="查询失败，请稍后重试")), 500

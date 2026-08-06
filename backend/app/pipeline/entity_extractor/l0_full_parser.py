@@ -16,6 +16,14 @@ from typing import Any, Dict, List, Optional, Union
 from dataclasses import dataclass, field
 
 from app.utils.logger import get_logger
+from .pdf_engines import (
+    EngineStatus,
+    get_mineru_state,
+    get_sidecar_state,
+    mark_mineru_failed,
+    mark_sidecar_failed,
+    mineru_ready,
+)
 
 logger = get_logger('cpa-agent.l0_full_parser')
 
@@ -69,7 +77,6 @@ class L0FullParser:
 
     def __init__(self, use_gpu: bool = False):
         self.use_gpu = use_gpu
-        self._mineru_available = None
         self._yolo_available = None
 
     def parse_file(self, file_path: Union[str, Path]) -> L0Result:
@@ -124,14 +131,54 @@ class L0FullParser:
         )
 
     def _parse_pdf(self, file_path: str) -> L0Result:
-        """解析 PDF 文件"""
-        if self._check_mineru():
-            return self._parse_pdf_mineru(file_path)
-        else:
-            return self._parse_pdf_pymupdf(file_path)
+        """解析 PDF：auto = Sidecar → PyMuPDF；显式 mineru 才进进程内 MinerU。"""
+        sc = get_sidecar_state()
+        if sc.status == EngineStatus.READY:
+            result = self._parse_pdf_sidecar(file_path)
+            if result.success:
+                return result
+            mark_sidecar_failed(result.error or "sidecar parse failed")
+            logger.info("Sidecar 失败，降级 PyMuPDF: %s", result.error)
 
-    def _parse_pdf_mineru(self, file_path: str) -> L0Result:
-        """使用 MinerU 解析 PDF (mineru 3.x API)"""
+        mineru_state = get_mineru_state()
+        if mineru_state.status == EngineStatus.READY:
+            return self._parse_pdf_mineru(
+                file_path,
+                formula_enable=mineru_state.formula_enable,
+            )
+        if mineru_state.status in (EngineStatus.FAILED, EngineStatus.DISABLED):
+            logger.debug(
+                "跳过 MinerU (%s: %s)",
+                mineru_state.status.value,
+                mineru_state.reason,
+            )
+        return self._parse_pdf_pymupdf(file_path)
+
+    def _parse_pdf_sidecar(self, file_path: str) -> L0Result:
+        from .pdf_sidecar import parse_pdf_via_sidecar
+
+        payload = parse_pdf_via_sidecar(file_path)
+        if not payload.get("success"):
+            return L0Result(
+                success=False,
+                text="",
+                blocks=[],
+                metadata=payload.get("metadata") or {},
+                engine="sidecar",
+                error=payload.get("error") or "sidecar failed",
+            )
+        text = payload.get("text") or ""
+        blocks = self._text_to_blocks(text, "resume")
+        return L0Result(
+            success=True,
+            text=text,
+            blocks=blocks,
+            metadata=payload.get("metadata") or {"engine": "sidecar"},
+            engine="sidecar",
+        )
+
+    def _parse_pdf_mineru(self, file_path: str, formula_enable: bool = False) -> L0Result:
+        """使用 MinerU 解析 PDF (mineru 3.x API)。简历默认 formula_enable=False。"""
         try:
             import pymupdf
             pdf_doc = pymupdf.open(file_path)
@@ -151,8 +198,6 @@ class L0FullParser:
 
             pdf_bytes = read_fn(file_path, "pdf")
 
-            window_size = min(64, max(4, (total_pages + 1) // 2 * 2))
-
             do_parse(
                 output_dir=str(output_dir),
                 pdf_file_names=[pdf_path.stem],
@@ -160,6 +205,7 @@ class L0FullParser:
                 p_lang_list=["ch"],
                 backend="pipeline",
                 parse_method="auto",
+                formula_enable=formula_enable,
                 f_draw_layout_bbox=False,
                 f_draw_span_bbox=False,
                 f_dump_md=False,
@@ -190,19 +236,25 @@ class L0FullParser:
                 success=True,
                 text=full_text,
                 blocks=blocks,
-                metadata={"file": file_path, "engine": "mineru", "json": str(latest_json)},
+                metadata={
+                    "file": file_path,
+                    "engine": "mineru",
+                    "json": str(latest_json),
+                    "formula_enable": formula_enable,
+                },
                 engine="mineru"
             )
 
-        except ImportError as e:
-            import traceback
-            error_detail = traceback.format_exc()
-            logger.warning(f"MinerU 不可用 (ImportError: {e}), 降级到 PyMuPDF\n{error_detail}")
-            return self._parse_pdf_pymupdf(file_path)
         except Exception as e:
             import traceback
-            error_detail = traceback.format_exc()
-            logger.error(f"MinerU 解析失败: {e}\n{error_detail}")
+            logger.warning(
+                "MinerU 运行时失败，本文件降级 PyMuPDF（非粘性）: %s\n%s",
+                e,
+                traceback.format_exc(),
+            )
+            # Only ImportError/stack incompatibility sticks; layout glitches must not
+            # disable MinerU for every later scanned resume in this process.
+            mark_mineru_failed(str(e), permanent=isinstance(e, ImportError))
             return self._parse_pdf_pymupdf(file_path)
 
     def _parse_pdf_pymupdf(self, file_path: str) -> L0Result:
@@ -470,16 +522,8 @@ class L0FullParser:
         return self._text_to_blocks(text, doc_type, page)
 
     def _check_mineru(self) -> bool:
-        """检查 MinerU 是否可用"""
-        if self._mineru_available is None:
-            try:
-                from mineru.cli.common import do_parse
-                self._mineru_available = True
-                logger.info("MinerU 可用")
-            except ImportError as e:
-                self._mineru_available = False
-                logger.warning(f"MinerU 不可用: {e}")
-        return self._mineru_available
+        """兼容旧调用：委托进程级能力登记。"""
+        return mineru_ready()
 
     def _check_yolo(self) -> bool:
         """检查 YOLOv10 是否可用"""

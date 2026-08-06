@@ -14,8 +14,8 @@ import json
 
 from flask import request, jsonify
 
-from ._helpers import safe_error
-from .pipeline_ext_common import pipeline_ext_bp, logger
+from ._helpers import clamp_pagination, safe_error
+from .pipeline_ext_common import pipeline_ext_bp, logger, _get_dimension_weights
 
 
 @pipeline_ext_bp.route('/save/student-portrait', methods=['POST'])
@@ -128,8 +128,11 @@ def list_job_portraits():
     Query:
         ?limit=10&offset=0&category=Python
     """
-    limit = request.args.get('limit', 10, type=int)
-    offset = request.args.get('offset', 0, type=int)
+    limit, offset = clamp_pagination(
+        request.args.get('limit', type=int),
+        request.args.get('offset', type=int),
+        default_limit=10,
+    )
     category = request.args.get('category', '')
 
     try:
@@ -232,11 +235,12 @@ def compare_portraits():
             "D4": student_row.get('d4_score', 0)
         }
 
+        default_weights = _get_dimension_weights()
         weights = {
-            "D1": job_row.get('d1_weight', 0.25),
-            "D2": job_row.get('d2_weight', 0.35),
-            "D3": job_row.get('d3_weight', 0.20),
-            "D4": job_row.get('d4_weight', 0.20)
+            "D1": job_row.get('d1_weight', default_weights["D1"]),
+            "D2": job_row.get('d2_weight', default_weights["D2"]),
+            "D3": job_row.get('d3_weight', default_weights["D3"]),
+            "D4": job_row.get('d4_weight', default_weights["D4"])
         }
 
         comparison = {}

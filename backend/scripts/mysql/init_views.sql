@@ -63,6 +63,8 @@ CREATE TABLE IF NOT EXISTS chapter (
     sequence        INT          NOT NULL DEFAULT 0 COMMENT '章节序号',
     duration_hours  FLOAT        DEFAULT 0 COMMENT '章节时长(小时)',
     content_summary TEXT         DEFAULT NULL COMMENT '内容摘要',
+    video_url       VARCHAR(500) DEFAULT NULL COMMENT '章节视频外链',
+    video_provider  VARCHAR(64)  DEFAULT NULL COMMENT '视频提供方标识',
     created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_course (course_id),
     INDEX idx_sequence (sequence)

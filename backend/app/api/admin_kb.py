@@ -80,8 +80,7 @@ def smart_upload_knowledge():
             "source": "runtime" if mysql else "demo_fallback"}})
 
     except Exception as e:
-        logger.error(f"智能上传失败: {e}")
-        return jsonify({"success": False, "error": "操作失败，请稍后重试", "code": ErrorCode.INTERNAL_ERROR.value}), 500
+        return jsonify(safe_error("智能上传", e, message="操作失败，请稍后重试")), 500
 
 
 @admin_bp.route('/knowledge-base/batch-update', methods=['POST'])

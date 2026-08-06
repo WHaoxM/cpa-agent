@@ -1,0 +1,32 @@
+# Optional Parse Sidecar profile (RAGFlow-class).
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.parse-sidecar.yml --profile parse-sidecar up -d
+#
+# Point backend at:
+#   CPA_L0_PDF_ENGINE=auto
+#   CPA_L0_PARSE_SIDECAR_URL=http://127.0.0.1:9380
+#   CPA_L0_PARSE_SIDECAR_HEALTH=http://127.0.0.1:9380/v1/health
+#   CPA_L0_PARSE_SIDECAR_PARSE_PATH=/api/cpa/parse
+#
+# Default image is a thin stub for local contract wiring. Replace with InfiniFlow RAGFlow
+# for production-quality DeepDoc parsing when ready.
+
+services:
+  parse-sidecar:
+    profiles: ["parse-sidecar"]
+    image: ${CPA_PARSE_SIDECAR_IMAGE:-python:3.11-slim}
+    working_dir: /app
+    volumes:
+      - ./backend/scripts/parse_sidecar_stub.py:/app/parse_sidecar_stub.py:ro
+    command: ["python", "/app/parse_sidecar_stub.py"]
+    ports:
+      - "${CPA_PARSE_SIDECAR_PORT:-9380}:9380"
+    environment:
+      PORT: "9380"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9380/v1/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped

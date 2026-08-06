@@ -139,7 +139,7 @@ For short files, a plain sentence is enough.
 
 ## Current Known Documentation Gaps
 
-- Root README overstates frontend-backend integration relative to `vue-kecheng/AGENTS.md`.
+- Root README overstates frontend-backend integration relative to `cpa-xingtu/AGENTS.md`.
 - Some architecture docs are generated snapshots and need consolidation.
 - Docker/deployment docs must be checked against `docker-compose.yml` and `.env.example`.
 - Workspace seeds/branding must remain documented as deferred capabilities, not live runtime promises.

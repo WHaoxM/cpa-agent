@@ -24,8 +24,15 @@ from langchain_core.tools import tool as lc_tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode, tools_condition
 from pydantic import BaseModel, Field, create_model
+
+try:
+    from langgraph.prebuilt import ToolNode, tools_condition
+except ImportError as _lg_err:  # pragma: no cover
+    raise ImportError(
+        "缺少 langgraph.prebuilt.ToolNode。请在 mkg 中安装: "
+        'pip install "langgraph>=0.4.0" "langgraph-prebuilt>=0.1.0"'
+    ) from _lg_err
 
 from config.prompt_loader import load_prompt
 
@@ -320,34 +327,103 @@ def build_cpa_agent(
 _checkpointer_instance = None
 
 
+_checkpointer_cm = None  # 保持 from_conn_string 的 context manager 存活
+
+
+def _mysql_checkpoint_uri() -> str:
+    """构造 PyMySQLSaver 连接串，与业务 MySQL 使用同一套 Config。
+
+    注意：langgraph/pymysql 对 userinfo 里的 %XX 解码不完整。
+    把密码里的 ``!`` 编成 ``%21`` 会导致 1045 Access denied。
+    因此只编码会破坏 URI 结构的字符（:@/?# 等），保留 ``!`` 等子分隔符原文。
+    """
+    from urllib.parse import quote
+
+    user = quote(str(Config.MYSQL_USER or ""), safe="")
+    # safe 保留 ! 等；必须编码 @ : / ? # % 以免截断 userinfo/host
+    password = quote(str(Config.MYSQL_PASSWORD or ""), safe="!")
+    return (
+        f"mysql://{user}:{password}"
+        f"@{Config.MYSQL_HOST}:{Config.MYSQL_PORT}/{Config.MYSQL_DATABASE}"
+    )
+
+
+def _align_checkpoint_collation() -> None:
+    """对齐 checkpoint 表 collation，消除 1267 Illegal mix of collations。
+
+    库默认多为 utf8mb4_unicode_ci；langgraph-checkpoint-mysql 的 JSON_TABLE
+    只写了 CHARACTER SET utf8mb4、未写 COLLATE，MySQL 8 会落到
+    utf8mb4_0900_ai_ci，与表列比较时报错。
+    见 https://github.com/tjni/langgraph-checkpoint-mysql/issues/55
+    """
+    from .db import get_mysql_client
+
+    mysql = get_mysql_client()
+    target = "utf8mb4_0900_ai_ci"
+    rows = mysql.execute(
+        """
+        SELECT TABLE_NAME
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME IN (
+            'checkpoints', 'checkpoint_blobs',
+            'checkpoint_writes', 'checkpoint_migrations'
+          )
+        """
+    )
+    for row in rows or []:
+        name = row["TABLE_NAME"] if isinstance(row, dict) else row[0]
+        # 已是目标 collation 则跳过
+        status = mysql.execute(
+            """
+            SELECT TABLE_COLLATION
+            FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :name
+            LIMIT 1
+            """,
+            {"name": name},
+        )
+        current = (status[0].get("TABLE_COLLATION") if status else None) or ""
+        if current == target:
+            continue
+        mysql.execute(
+            f"ALTER TABLE `{name}` CONVERT TO CHARACTER SET utf8mb4 COLLATE {target}"
+        )
+        logger.info("checkpoint 表 collation 已对齐: %s -> %s", name, target)
+
+
 def get_checkpointer():
     """
     获取 MySQL checkpointer (单例)
     使用 PyMySQLSaver 持久化对话状态到 MySQL
     """
-    global _checkpointer_instance
+    global _checkpointer_instance, _checkpointer_cm
     if _checkpointer_instance is not None:
         return _checkpointer_instance
 
     try:
         from langgraph.checkpoint.mysql.pymysql import PyMySQLSaver
 
-        db_uri = (
-            f"mysql://{Config.MYSQL_USER}:{Config.MYSQL_PASSWORD}"
-            f"@{Config.MYSQL_HOST}:{Config.MYSQL_PORT}/{Config.MYSQL_DATABASE}"
-        )
+        db_uri = _mysql_checkpoint_uri()
 
-        # 新版 from_conn_string 返回 context manager，需 enter 后才能 setup
-        saver = PyMySQLSaver.from_conn_string(db_uri)
-        if hasattr(saver, "__enter__") and not hasattr(saver, "setup"):
-            saver = saver.__enter__()
+        # 新版 from_conn_string → GeneratorContextManager，须 enter 且勿提前 exit
+        _checkpointer_cm = PyMySQLSaver.from_conn_string(db_uri)
+        saver = _checkpointer_cm.__enter__()
         saver.setup()
+        try:
+            _align_checkpoint_collation()
+        except Exception as align_err:
+            logger.warning("checkpoint collation 对齐失败（可稍后跑 fix SQL）: %s", align_err)
         _checkpointer_instance = saver
         logger.info("MySQL Checkpointer 初始化成功")
         return _checkpointer_instance
 
     except Exception as e:
-        logger.warning(f"MySQL Checkpointer 初始化失败, 回退 MemorySaver: {e}")
+        logger.warning(
+            "MySQL Checkpointer 初始化失败, 回退 MemorySaver: %s: %s",
+            type(e).__name__,
+            e,
+        )
         from langgraph.checkpoint.memory import MemorySaver
         _checkpointer_instance = MemorySaver()
         return _checkpointer_instance

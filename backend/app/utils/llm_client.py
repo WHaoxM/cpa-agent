@@ -68,6 +68,15 @@ class LLMClient:
         else:
             self.failover_order = failover or get_failover_order()
 
+        # Pattern-upgrade: optional LiteLLM OpenAI-compatible gateway as primary hop
+        try:
+            from ..services.llmops import litellm_config, litellm_enabled
+
+            if litellm_enabled() and "litellm" not in self.failover_order:
+                self.failover_order = ["litellm"] + list(self.failover_order)
+        except Exception:
+            pass
+
         self._clients: Dict[str, Tuple[OpenAI, Dict[str, Any]]] = {}
         # 兼容旧属性：指向链上第一个可用厂商
         first = self._resolve_config(self.failover_order[0])
@@ -88,6 +97,17 @@ class LLMClient:
         )
 
     def _resolve_config(self, provider: str) -> Dict[str, Any]:
+        if provider == "litellm":
+            from ..services.llmops import litellm_config
+
+            lc = litellm_config()
+            return {
+                "provider": "litellm",
+                "api_key": lc["api_key"],
+                "base_url": lc["base_url"],
+                "model": lc["model"],
+                "timeout": lc["timeout"],
+            }
         cfg = get_provider_config(provider)
         if self._explicit.get("provider") == provider:
             if self._explicit.get("api_key"):
@@ -152,28 +172,48 @@ class LLMClient:
         response_format: Optional[Dict] = None,
     ) -> str:
         """按 failover 链调用；可切换错误换下一厂商，不因 402 空转重试。"""
-        errors: List[str] = []
-        for provider in self.failover_order:
-            try:
-                cfg = self._resolve_config(provider)
-                if not cfg.get("api_key"):
-                    errors.append(f"{provider}: no api key")
-                    continue
-                text = self._chat_once(
-                    provider, messages, temperature, max_tokens, response_format
-                )
-                self.provider = provider
-                self.model = cfg["model"]
-                self.base_url = cfg["base_url"]
-                logger.info("LLM OK provider=%s model=%s", provider, cfg["model"])
-                return text
-            except Exception as e:
-                logger.error("LLM 调用失败 provider=%s: %s", provider, e)
-                errors.append(f"{provider}: {e}")
-                if _is_failover_error(e):
-                    continue
-                raise
-        raise RuntimeError("全部 LLM 厂商失败: " + " | ".join(errors))
+        preview = ""
+        try:
+            preview = str(messages[-1].get("content") or "")[:500] if messages else ""
+        except Exception:
+            preview = ""
+
+        try:
+            from ..services.llmops import trace_generation
+        except Exception:
+            trace_generation = None  # type: ignore
+
+        def _run() -> str:
+            errors: List[str] = []
+            for provider in self.failover_order:
+                try:
+                    cfg = self._resolve_config(provider)
+                    if not cfg.get("api_key"):
+                        errors.append(f"{provider}: no api key")
+                        continue
+                    text = self._chat_once(
+                        provider, messages, temperature, max_tokens, response_format
+                    )
+                    self.provider = provider
+                    self.model = cfg["model"]
+                    self.base_url = cfg["base_url"]
+                    logger.info("LLM OK provider=%s model=%s", provider, cfg["model"])
+                    return text
+                except Exception as e:
+                    logger.error("LLM 调用失败 provider=%s: %s", provider, e)
+                    errors.append(f"{provider}: {e}")
+                    if _is_failover_error(e):
+                        continue
+                    raise
+            raise RuntimeError("全部 LLM 厂商失败: " + " | ".join(errors))
+
+        if trace_generation is None:
+            return _run()
+        with trace_generation("llm.chat", metadata={"max_tokens": max_tokens}, input_preview=preview) as bag:
+            text = _run()
+            bag["output"] = text
+            bag["end_metadata"] = {"provider": self.provider, "model": self.model}
+            return text
 
     def chat_json(
         self,

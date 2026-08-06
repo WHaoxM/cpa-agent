@@ -5,6 +5,7 @@ Pipeline_ext 公共模块
 - pipeline_ext_bp: Flask 蓝图单例 (所有子模块都从此 import)
 - logger: 日志记录器
 - _normalize_skills: 技能列表归一化 helper (被 extract/match 子模块共享)
+- _get_dimension_weights: D1-D4 维度权重 (从 matching.yaml 读取, 消除硬编码)
 
 设计原则: 只放真正跨模块共享的对象, 不放业务路由。
 """
@@ -31,3 +32,14 @@ def _normalize_skills(skills):
                 s = {**s, "name": s["skill"]}
             normalized.append(s)
     return normalized
+
+
+def _get_dimension_weights():
+    """获取 D1-D4 维度权重 (从 matching.yaml 读取, 消除多处 {0.25,0.35,0.20,0.20} 硬编码)
+
+    Returns:
+        dict: {"D1": 0.25, "D2": 0.35, "D3": 0.20, "D4": 0.20}
+    """
+    from config.loader import get_rules_config
+    return get_rules_config().dimension_weights
+

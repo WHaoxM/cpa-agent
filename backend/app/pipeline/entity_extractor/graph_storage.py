@@ -302,14 +302,16 @@ class GraphStorage:
         Returns:
             推荐的技能列表
         """
+        # 不硬编码 REPLACES/EVOLVES_TO 等可能不存在的类型；
+        # 只匹配库中真实存在的 Skill↔Skill 边，避免 Neo4j UNRECOGNIZED 警告拖垮工具链。
         with self.neo4j.session() as session:
             cypher = """
-            MATCH (s:Skill)-[r:PREREQUISITE|REPLACES|EVOLVES_TO]-(other:Skill)
+            MATCH (s:Skill)-[r]-(other:Skill)
             WHERE s.name IN $skill_names
-            AND NOT other.name IN $skill_names
-            WITH other, count(r) as weight, collect(type(r)) as rel_types
-            RETURN other.name as name,
-                   other.category as category,
+              AND NOT other.name IN $skill_names
+            WITH other, count(r) AS weight, collect(DISTINCT type(r)) AS rel_types
+            RETURN other.name AS name,
+                   other.category AS category,
                    weight,
                    rel_types
             ORDER BY weight DESC
@@ -323,7 +325,8 @@ class GraphStorage:
 
             recommendations = []
             for record in result:
-                rel_type = record["rel_types"][0] if record["rel_types"] else "EVOLVES_TO"
+                rel_types = record["rel_types"] or []
+                rel_type = rel_types[0] if rel_types else ""
                 recommendations.append({
                     "name": record["name"],
                     "category": record["category"],
@@ -334,14 +337,16 @@ class GraphStorage:
             return recommendations
 
     def _get_recommend_reason(self, skill: str, known_skills: List[str], rel_type: str) -> str:
-        if rel_type == "PREREQUISITE":
+        rel = (rel_type or "").upper()
+        if rel in ("PREREQUISITE", "REQUIRES", "DEPENDS_ON"):
             return f"学习 {skill} 前建议先掌握相关基础技能"
-        elif rel_type == "REPLACES":
+        if rel in ("REPLACES", "SIMILAR", "ALTERNATIVE"):
             return f"与已掌握的技能相似，可作为拓展方向"
-        elif rel_type == "EVOLVES_TO":
-            return f"技能演进方向，{skill} 是未来发展趋势"
-        else:
-            return f"热门技能，{skill} 与您已掌握技能相关"
+        if rel in ("EVOLVES_TO", "LEADS_TO", "NEXT"):
+            return f"技能演进方向，{skill} 是后续进阶选项"
+        if rel:
+            return f"通过关系 {rel_type} 关联到 {skill}"
+        return f"{skill} 与您已掌握技能在图谱中相邻"
 
     def find_learning_path(
         self,

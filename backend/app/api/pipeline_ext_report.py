@@ -10,7 +10,7 @@ L4 报告列表与状态查询 API (2 路由):
 
 from flask import request, jsonify
 
-from ._helpers import safe_error
+from ._helpers import clamp_pagination, safe_error
 from .pipeline_ext_common import pipeline_ext_bp, logger
 
 
@@ -23,8 +23,11 @@ def list_career_reports():
         ?student_id=xxx&limit=10&offset=0&status=all
     """
     student_id = request.args.get('student_id', '')
-    limit = request.args.get('limit', 10, type=int)
-    offset = request.args.get('offset', 0, type=int)
+    limit, offset = clamp_pagination(
+        request.args.get('limit', type=int),
+        request.args.get('offset', type=int),
+        default_limit=10,
+    )
     status = request.args.get('status', 'all')
 
     try:

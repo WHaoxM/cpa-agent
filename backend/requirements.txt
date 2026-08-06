@@ -1,7 +1,7 @@
 # ===========================================
 # CPA-Agent Backend Dependencies
 # ===========================================
-# Python 3.11+ required
+# Python 3.10+ required (dev env: conda `mkg`, Python 3.10; Python 3.11 also works)
 # Install: pip install -r requirements.txt
 # ===========================================
 
@@ -16,6 +16,7 @@ langchain-core>=0.3.0
 
 # ============= Agent 编排 =============
 langgraph>=0.4.0
+langgraph-prebuilt>=0.1.0
 langgraph-checkpoint-mysql[pymysql]>=3.0.0
 
 # ============= 数据库 =============
@@ -30,7 +31,8 @@ sqlalchemy>=2.0.0
 redis>=5.0.0
 
 # Milvus (嵌入式版本, pip install 即用)
-pymilvus>=2.4.0
+pymilvus[milvus_lite]>=2.4.0
+milvus-lite>=2.4.0
 
 # ============= Embedding =============
 # BGE-M3 通过 sentence-transformers 加载

@@ -386,10 +386,12 @@ class L3RunMatchPipeline(BasePipeline):
             )
             self.mysql.execute(
                 """INSERT INTO match_result
-                   (student_id, job_portrait_id, total_score, d1_score, d2_score, d3_score, d4_score,
+                   (student_id, job_portrait_id, total_score, d1_match, d2_match, d3_match, d4_match,
                     skill_coverage, is_matched, result_json, created_at)
                    VALUES (:sid, :jid, :ts, :d1, :d2, :d3, :d4, :sc, :im, :rj, NOW())
-                   ON DUPLICATE KEY UPDATE total_score=:ts, skill_coverage=:sc, is_matched=:im, result_json=:rj""",
+                   ON DUPLICATE KEY UPDATE
+                     total_score=:ts, d1_match=:d1, d2_match=:d2, d3_match=:d3, d4_match=:d4,
+                     skill_coverage=:sc, is_matched=:im, result_json=:rj""",
                 {
                     "sid": student_id, "jid": job_portrait_id,
                     "ts": result["total_score"],
@@ -428,7 +430,8 @@ class L3RunMatchPipeline(BasePipeline):
                         "SELECT position_name FROM job_portrait_4d WHERE portrait_id=:pid",
                         {"pid": job_portrait_id}
                     )
-                    if jrow: job_name = jrow[0]
+                    if jrow:
+                        job_name = jrow.get("position_name") or ""
 
                 promotion_chains = storage.get_promotion_chains(job_name) if job_name else []
                 transfer_options = storage.get_transfer_options(job_name) if job_name else []
@@ -509,7 +512,7 @@ class L4GenerateReportPipeline(BasePipeline):
                     {"sid": student_id}
                 )
                 if row:
-                    pj = row[0]
+                    pj = row.get("portrait_json")
                     portrait_data = json.loads(pj) if isinstance(pj, str) else pj
                     student_skills = portrait_data.get("D2_skill", {}).get("skill_list", [])
                     student_profile = portrait_data
@@ -566,12 +569,16 @@ class L4GenerateReportPipeline(BasePipeline):
                 self.mysql.execute(
                     """
                     UPDATE career_report
-                    SET status = :status, error_message = :error_message, updated_at = :updated_at
+                    SET status = :status,
+                        report_json = :report_json,
+                        updated_at = :updated_at
                     WHERE report_id = :report_id
                     """,
                     {
                         "status": "failed",
-                        "error_message": str(e),
+                        "report_json": json.dumps(
+                            {"error": str(e)}, ensure_ascii=False
+                        ),
                         "updated_at": datetime.now(),
                         "report_id": report_id,
                     },

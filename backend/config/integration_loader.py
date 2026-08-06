@@ -2,7 +2,7 @@
 集成配置加载器 — 阶段二 2B
 
 加载 config/defaults/integrations/*.yaml，与 .env 配合：
-- .env: 密钥 (LLM_API_KEY, LLM_BASE_URL, LLM_MODEL_NAME, MILVUS_URI, MYSQL_HOST, ...)
+- .env: 密钥 (LLM_API_KEY, LLM_BASE_URL, LLM_MODEL_NAME, CPA_MILVUS_URI, MYSQL_HOST, ...)
 - YAML:  业务默认值 (provider presets, model names, dimensions, agent params)
 """
 

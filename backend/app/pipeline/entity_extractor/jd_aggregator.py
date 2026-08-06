@@ -15,7 +15,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-from .portrait_generator import PortraitGenerator, DIMENSION_WEIGHTS
+from .portrait_generator import PortraitGenerator
 
 
 class JDAggregator:

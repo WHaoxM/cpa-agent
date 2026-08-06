@@ -6,12 +6,21 @@ Redis缓存: 热数据预填充, 减少MySQL查询
 
 import json
 import hashlib
+import re
+import uuid
 from flask import request, jsonify
 
 from . import career_bp
-from ._helpers import parse_json_field, safe_error
-from ..services.db import get_mysql_client, get_redis_client
+from ._helpers import clamp_pagination, parse_json_field, safe_error
+from ..services.career_role_inference import infer_roles_from_skills
+from ..services.db import get_mysql_client, get_neo4j_client, get_redis_client, get_milvus_client
 from ..utils.logger import get_logger
+
+# Interest Explore contract: short keywords only — never resume blobs.
+_EXPLORE_INTEREST_MAX_LEN = 64
+_EXPLORE_EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
+_EXPLORE_PHONE_RE = re.compile(r"(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d{9}(?!\d)")
+_EXPLORE_URL_RE = re.compile(r"https?://|www\.", re.I)
 
 logger = get_logger('cpa-agent.api.career')
 
@@ -84,6 +93,18 @@ def _cache_set(key: str, value, ttl: int = 900):
         pass
 
 
+def _cache_key(prefix: str, **parts) -> str:
+    """Q31: 构造缓存 key, None 值统一为 'all'"""
+    suffix = ":".join(str(v) if v is not None else 'all' for v in parts.values())
+    return f"cache:career:{prefix}:{suffix}"
+
+
+def _parse_json_fields(row: dict, fields) -> None:
+    """Q32: 原地解析 row 中的多个 JSON 字段 (解析失败为 None)"""
+    for field in fields:
+        row[field] = parse_json_field(row.get(field))
+
+
 # ──────────────────────────────────────────
 # 1. 职业全景 (冷启动首页)
 # ──────────────────────────────────────────
@@ -144,12 +165,16 @@ def list_insights():
         sub_category = request.args.get('sub_category')
         demand_level = request.args.get('demand_level')
         keyword = request.args.get('keyword', '')
-        limit = request.args.get('limit', 20, type=int)
-        offset = request.args.get('offset', 0, type=int)
+        limit, offset = clamp_pagination(
+            request.args.get('limit', type=int),
+            request.args.get('offset', type=int),
+            default_limit=20,
+        )
 
         # Redis缓存 (仅无keyword时缓存, keyword查询太分散)
         if not keyword:
-            cache_key = f"cache:career:insights:{category or 'all'}:{sub_category or 'all'}:{demand_level or 'all'}:{limit}:{offset}"
+            cache_key = _cache_key("insights", category=category, sub_category=sub_category,
+                                   demand_level=demand_level, limit=limit, offset=offset)
             cached = _cache_get(cache_key)
             if cached:
                 return jsonify(cached)
@@ -193,8 +218,7 @@ def list_insights():
 
         # 解析 JSON 字段
         for row in results:
-            for field in ('hot_cities', 'hot_industries', 'core_skills'):
-                row[field] = parse_json_field(row.get(field))
+            _parse_json_fields(row, ('hot_cities', 'hot_industries', 'core_skills'))
 
         count_sql = f"SELECT COUNT(*) as total FROM career_insights WHERE {where}"
         count_params = {k: v for k, v in params.items() if k not in ('limit', 'offset')}
@@ -221,7 +245,7 @@ def list_insights():
 def get_insight_detail(role_name: str):
     """获取单个职业方向的完整洞察 (含 day_in_life)"""
     try:
-        cache_key = f"cache:career:detail:{role_name}"
+        cache_key = _cache_key("detail", role_name=role_name)
         cached = _cache_get(cache_key)
         if cached:
             return jsonify(cached)
@@ -237,8 +261,7 @@ def get_insight_detail(role_name: str):
             return jsonify({"success": False, "error": f"未找到方向: {role_name}"}), 404
 
         row = results[0]
-        for field in ('hot_cities', 'hot_industries', 'core_skills'):
-            row[field] = parse_json_field(row.get(field))
+        _parse_json_fields(row, ('hot_cities', 'hot_industries', 'core_skills'))
 
         resp = {"success": True, "data": row}
         _cache_set(cache_key, resp, CACHE_TTL['detail'])
@@ -246,6 +269,101 @@ def get_insight_detail(role_name: str):
 
     except Exception as e:
         return jsonify(safe_error("获取方向洞察详情", e)), 500
+
+
+def _split_day_in_life(text: str) -> list:
+    """把 day_in_life 日程串拆成 responsibilities 列表（仅拆分，不注入默认文案）。"""
+    if not text or not isinstance(text, str):
+        return []
+    parts = []
+    for chunk in text.replace("->", "→").split("→"):
+        item = chunk.strip()
+        if item:
+            parts.append(item)
+    return parts
+
+
+def _build_role_intro(row: dict) -> dict:
+    """career_insights 行 → FE RoleIntro；缺字段给空，不写业务兜底句。"""
+    hot_cities = parse_json_field(row.get("hot_cities")) or []
+    core_skills = parse_json_field(row.get("core_skills")) or []
+    demand = str(row.get("demand_level") or "")
+    if isinstance(hot_cities, list):
+        top_regions = [
+            {"name": str(c), "demand": demand} if isinstance(c, str)
+            else {"name": str(c.get("name") or c), "demand": str(c.get("demand") or demand)}
+            for c in hot_cities
+        ]
+    else:
+        top_regions = []
+
+    requirements = []
+    if row.get("entry_difficulty"):
+        requirements.append(str(row["entry_difficulty"]))
+    if row.get("category"):
+        requirements.append(str(row["category"]))
+
+    outlook_parts = []
+    if row.get("growth_trend"):
+        outlook_parts.append(str(row["growth_trend"]))
+    if row.get("description"):
+        outlook_parts.append(str(row["description"]))
+
+    return {
+        "title": str(row.get("role_name") or ""),
+        "summary": str(row.get("description") or ""),
+        "responsibilities": _split_day_in_life(row.get("day_in_life") or ""),
+        "requirements": requirements,
+        "skills": core_skills if isinstance(core_skills, list) else [],
+        "topRegions": top_regions,
+        "outlook": " ".join(outlook_parts).strip(),
+    }
+
+
+@career_bp.route('/role-intro', methods=['GET'])
+def get_role_intro():
+    """能力图谱侧栏角色简介 — 拼 career_insights；无匹配返回 data:null。"""
+    try:
+        role = (request.args.get("role") or "").strip()
+        if not role:
+            return jsonify({"success": False, "error": "role 必填"}), 400
+
+        # FE 常用展示名（如「Vue 前端工程师」）→ 图谱包别名解析出的库内 role_name
+        lookup_roles = [role]
+        try:
+            from ..services.ability_graph_service import resolve_ability_role
+            resolved = resolve_ability_role(role)
+            if resolved and resolved not in lookup_roles:
+                lookup_roles.append(resolved)
+        except Exception:
+            pass
+
+        mysql = get_mysql_client()
+        rows = []
+        for key in lookup_roles:
+            rows = mysql.execute(
+                """
+                SELECT role_name, category, demand_level, hot_cities, core_skills,
+                       description, day_in_life, entry_difficulty, growth_trend
+                FROM career_insights
+                WHERE role_name = :role OR role_name LIKE :role_like
+                LIMIT 1
+                """,
+                {"role": key, "role_like": f"%{key}%"},
+            )
+            if rows:
+                break
+
+        if not rows:
+            return jsonify({
+                "success": True,
+                "data": None,
+                "message": f"role not found: {role}",
+            })
+
+        return jsonify({"success": True, "data": _build_role_intro(rows[0])})
+    except Exception as e:
+        return jsonify(safe_error("获取角色简介", e)), 500
 
 
 # ──────────────────────────────────────────
@@ -260,7 +378,7 @@ def get_skill_tree():
         dimension = request.args.get('dimension')
         tier = request.args.get('tier', type=int)
 
-        cache_key = f"cache:career:skill-tree:{category or 'all'}:{dimension or 'all'}:{tier or 'all'}"
+        cache_key = _cache_key("skill-tree", category=category, dimension=dimension, tier=tier)
         cached = _cache_get(cache_key)
         if cached:
             return jsonify(cached)
@@ -299,12 +417,7 @@ def get_skill_tree():
 
         for row in results:
             for field in ('prerequisites', 'related_roles'):
-                val = row.get(field)
-                if isinstance(val, str):
-                    try:
-                        row[field] = json.loads(val)
-                    except Exception:
-                        pass
+                row[field] = parse_json_field(row.get(field), default=row.get(field))
 
         # 按 tier 分组方便前端渲染
         tiers = {}
@@ -338,7 +451,7 @@ def get_learning_paths():
         target_role = request.args.get('target_role')
         target_level = request.args.get('target_level', '初级')
 
-        cache_key = f"cache:career:learning-paths:{target_role or 'all'}:{target_level or 'all'}"
+        cache_key = _cache_key("learning-paths", target_role=target_role, target_level=target_level)
         cached = _cache_get(cache_key)
         if cached:
             return jsonify(cached)
@@ -380,7 +493,7 @@ def get_learning_paths():
 def get_learning_path_detail(path_id: str):
     """获取单条学习路径详情"""
     try:
-        cache_key = f"cache:career:learning-path-detail:{path_id}"
+        cache_key = _cache_key("learning-path-detail", path_id=path_id)
         cached = _cache_get(cache_key)
         if cached:
             return jsonify(cached)
@@ -412,88 +525,200 @@ def get_learning_path_detail(path_id: str):
 # 5. 语义探索 (基于兴趣关键词, 走 Milvus)
 # ──────────────────────────────────────────
 
+def _mysql_fuzzy_match(query: str, top_k: int) -> list:
+    """Q29: MySQL 模糊匹配职业方向 (兜底, 不依赖 Milvus)"""
+    mysql = get_mysql_client()
+    sql = """
+    SELECT
+        role_name, category, sub_category,
+        avg_salary_low, avg_salary_high,
+        demand_level, entry_difficulty, growth_trend,
+        core_skills, description
+    FROM career_insights
+    WHERE role_name LIKE :q
+       OR description LIKE :q
+       OR JSON_CONTAINS(core_skills, :q_json)
+    ORDER BY skill_count DESC
+    LIMIT :limit
+    """
+    results = mysql.execute(sql, {
+        "q": f"%{query}%",
+        "q_json": json.dumps(query),
+        "limit": top_k
+    })
+    for row in results:
+        row['core_skills'] = parse_json_field(row.get('core_skills'))
+    return results
+
+
+def _skill_name_from_hit(hit: dict) -> str:
+    """Normalize skill_vectors hit → skill_name (metadata JSON or text prefix)."""
+    meta = hit.get("metadata")
+    if isinstance(meta, str) and meta.strip():
+        try:
+            meta = json.loads(meta)
+        except (TypeError, json.JSONDecodeError):
+            meta = {}
+    if isinstance(meta, dict):
+        name = (meta.get("skill_name") or "").strip()
+        if name:
+            return name
+    text = (hit.get("text") or "").strip()
+    if not text:
+        return ""
+    # seed format: "{skill_name}。{rich_desc}"
+    for sep in ("。", ".", "\n"):
+        if sep in text:
+            return text.split(sep, 1)[0].strip()
+    return text[:64]
+
+
+def _milvus_semantic_match(query: str, top_k: int, existing_results: list) -> list:
+    """Q29: embed → Milvus 向量检索 → 反查 related_roles, 与 existing_results 去重.
+
+    契约与 SemanticSearchTool / milvus_client.search 一致：只接受 query_vector，
+    不接受 pymilvus 不存在的 query_text。
+    """
+    milvus_results = []
+    try:
+        from ..services.embedding_service import get_embedding_service
+
+        embedding = get_embedding_service()
+        if not embedding.is_available():
+            logger.warning("Milvus 语义搜索降级: embedding 不可用")
+            return milvus_results
+
+        query_vector = embedding.encode([query])[0]
+        milvus = get_milvus_client()
+        if not milvus.connect():
+            logger.warning("Milvus 语义搜索降级: 未连接")
+            return milvus_results
+
+        search_results = milvus.search(
+            collection_name="skill_vectors",
+            query_vector=query_vector,
+            top_k=top_k,
+        )
+        if not search_results:
+            return milvus_results
+
+        skill_names = []
+        seen_skills = set()
+        for hit in search_results:
+            name = _skill_name_from_hit(hit if isinstance(hit, dict) else {})
+            if name and name not in seen_skills:
+                seen_skills.add(name)
+                skill_names.append(name)
+        if not skill_names:
+            return milvus_results
+
+        mysql = get_mysql_client()
+        placeholders = ", ".join([f":sn{i}" for i in range(len(skill_names))])
+        role_sql = f"""
+        SELECT skill_name, related_roles
+        FROM skill_taxonomy
+        WHERE skill_name IN ({placeholders})
+        """
+        role_params = {f"sn{i}": sn for i, sn in enumerate(skill_names)}
+        role_rows = mysql.execute(role_sql, role_params)
+        seen = {r.get("role_name") for r in existing_results}
+        for row in role_rows or []:
+            roles = parse_json_field(row.get("related_roles"))
+            if not isinstance(roles, list):
+                continue
+            for rn in roles:
+                if not isinstance(rn, str):
+                    continue
+                rn = rn.strip()
+                if rn and rn not in seen:
+                    milvus_results.append({"role_name": rn, "matched_by": "semantic"})
+                    seen.add(rn)
+    except Exception as e:
+        logger.warning(f"Milvus 语义搜索降级: {e}")
+    return milvus_results
+
+
+def _validate_interest_query(query: str) -> str | None:
+    """Return error message if ``q`` violates Interest Explore contract; else None."""
+    q = (query or "").strip()
+    if not q:
+        return "q 参数不能为空"
+    if len(q) > _EXPLORE_INTEREST_MAX_LEN:
+        return (
+            f"explore 仅接受短兴趣关键词（≤{_EXPLORE_INTEREST_MAX_LEN}字），"
+            "简历方向推断请用 POST /api/career/infer-role（skills）"
+        )
+    if _EXPLORE_EMAIL_RE.search(q) or _EXPLORE_PHONE_RE.search(q) or _EXPLORE_URL_RE.search(q):
+        return (
+            "explore 不接受联系方式/链接等简历字段；"
+            "请传入兴趣关键词，或对抽取技能使用 POST /api/career/infer-role"
+        )
+    # Dense resume paste often has many separators / bullets in a short window
+    if q.count("·") + q.count("|") + q.count("；") + q.count(";") >= 3:
+        return "explore 疑似收到简历片段；请改用 POST /api/career/infer-role"
+    return None
+
+
+@career_bp.route('/infer-role', methods=['POST'])
+def infer_role_from_skills():
+    """从抽取技能推断职业方向 — 与 Interest Explore 分离的 Role Inference 缝。"""
+    try:
+        body = request.get_json(silent=True) or {}
+        skills = body.get("skills") or []
+        if not isinstance(skills, list):
+            return jsonify({"success": False, "error": "skills 必须为数组"}), 400
+        top_k = body.get("top_k", 5)
+        try:
+            top_k = int(top_k)
+        except (TypeError, ValueError):
+            top_k = 5
+        preferred = body.get("preferred_role") or body.get("hint") or None
+        if preferred is not None:
+            preferred = str(preferred).strip() or None
+
+        data = infer_roles_from_skills(
+            skills,
+            top_k=top_k,
+            preferred_role=preferred,
+            mysql_client=get_mysql_client(),
+            neo4j_client=get_neo4j_client(),
+        )
+        return jsonify({"success": True, "data": data})
+    except Exception as e:
+        return jsonify(safe_error("职业方向推断", e, message="服务器内部错误")), 500
+
+
 @career_bp.route('/explore', methods=['GET'])
 def semantic_explore():
-    """语义探索 — 根据兴趣关键词推荐职业方向 (Milvus语义搜索 + MySQL补充)"""
+    """Interest Explore — 短兴趣关键词 → 职业方向（禁止简历原文）。"""
     try:
         query = request.args.get('q', '')
         top_k = request.args.get('top_k', 5, type=int)
 
-        if not query:
-            return jsonify({"success": False, "error": "q 参数不能为空"}), 400
+        err = _validate_interest_query(query)
+        if err:
+            return jsonify({"success": False, "error": err}), 400
+
+        query = query.strip()
 
         # Redis缓存 (query hash)
         qhash = hashlib.md5(query.encode()).hexdigest()[:8]
-        cache_key = f"cache:career:explore:{qhash}:{top_k}"
+        cache_key = _cache_key("explore", qhash=qhash, top_k=top_k)
         cached = _cache_get(cache_key)
         if cached:
             return jsonify(cached)
 
-        # 策略1: MySQL 模糊匹配 (兜底, 不依赖 Milvus)
-        mysql = get_mysql_client()
-        sql = """
-        SELECT
-            role_name, category, sub_category,
-            avg_salary_low, avg_salary_high,
-            demand_level, entry_difficulty, growth_trend,
-            core_skills, description
-        FROM career_insights
-        WHERE role_name LIKE :q
-           OR description LIKE :q
-           OR JSON_CONTAINS(core_skills, :q_json)
-        ORDER BY skill_count DESC
-        LIMIT :limit
-        """
-        results = mysql.execute(sql, {
-            "q": f"%{query}%",
-            "q_json": json.dumps(query),
-            "limit": top_k
-        })
-
-        for row in results:
-            row['core_skills'] = parse_json_field(row.get('core_skills'))
-
-        # 策略2: Milvus 语义搜索 (如果可用)
-        milvus_results = []
-        try:
-            from ..services.vector import get_milvus_client
-            milvus = get_milvus_client()
-            # 用 skill_vectors collection 做语义搜索
-            search_results = milvus.search(
-                collection_name="skill_vectors",
-                query_text=query,
-                top_k=top_k,
-            )
-            if search_results:
-                # 取命中的 skill_name, 再反查 related_roles
-                skill_names = [r.get('skill_name', '') for r in search_results if r.get('skill_name')]
-                if skill_names:
-                    placeholders = ", ".join([f":sn{i}" for i in range(len(skill_names))])
-                    role_sql = f"""
-                    SELECT DISTINCT
-                        JSON_UNQUOTE(JSON_EXTRACT(related_roles, '$[*]')) as role_name
-                    FROM skill_taxonomy
-                    WHERE skill_name IN ({placeholders})
-                    """
-                    role_params = {f"sn{i}": sn for i, sn in enumerate(skill_names)}
-                    role_results = mysql.execute(role_sql, role_params)
-                    # 去重
-                    seen = {r['role_name'] for r in results}
-                    for rr in role_results:
-                        rn = rr.get('role_name', '')
-                        if rn and rn not in seen:
-                            milvus_results.append({"role_name": rn, "matched_by": "semantic"})
-                            seen.add(rn)
-        except Exception as e:
-            logger.warning(f"Milvus 语义搜索降级: {e}")
+        # Q29: 拆分为两个私有函数
+        fuzzy_results = _mysql_fuzzy_match(query, top_k)
+        semantic_results = _milvus_semantic_match(query, top_k, fuzzy_results)
 
         resp = {
             "success": True,
             "data": {
                 "keyword": query,
-                "fuzzy_matches": results,
-                "semantic_matches": milvus_results,
-                "total": len(results) + len(milvus_results)
+                "fuzzy_matches": fuzzy_results,
+                "semantic_matches": semantic_results,
+                "total": len(fuzzy_results) + len(semantic_results)
             }
         }
         _cache_set(cache_key, resp, CACHE_TTL['explore'])
@@ -501,6 +726,20 @@ def semantic_explore():
 
     except Exception as e:
         return jsonify(safe_error("语义探索", e, message="服务器内部错误")), 500
+
+
+def _query_promotion_chains(cypher: str, params: dict) -> list:
+    """Q28: 执行晋升链 Cypher 并转换为 path dict 列表"""
+    neo4j = get_neo4j_client()
+    results = neo4j.execute(cypher, params)
+    return [
+        {
+            "chain": r["chain"],
+            "requirements": r["requirements"],
+            "depth": r["depth"]
+        }
+        for r in results
+    ]
 
 
 @career_bp.route('/paths', methods=['GET'])
@@ -523,14 +762,11 @@ def get_career_paths():
         depth = request.args.get('depth', 3, type=int)
         student_id = request.args.get('student_id', '')
 
-        # 从 Neo4j 查询晋升链
-        from ..services.db import get_neo4j_client
-        neo4j = get_neo4j_client()
+        # Q20: depth 范围保护 (Cypher *1..{depth} 不支持参数化, 需限范围防拖垮 Neo4j)
+        depth = min(max(depth, 1), 5)
 
-        paths = []
-
+        # Q28: 3 个分支统一用 _query_promotion_chains, 仅构造 cypher 和 params
         if role:
-            # 查询从指定岗位开始的晋升链
             cypher = """
             MATCH path = (start:CareerNode)-[:PROMOTION*1..{depth}]->(end:CareerNode)
             WHERE start.position_name CONTAINS $role
@@ -539,16 +775,8 @@ def get_career_paths():
                    length(path) as depth
             LIMIT 10
             """.format(depth=depth)
-            results = neo4j.execute(cypher, {"role": role})
-            for r in results:
-                paths.append({
-                    "chain": r["chain"],
-                    "requirements": r["requirements"],
-                    "depth": r["depth"]
-                })
-
+            paths = _query_promotion_chains(cypher, {"role": role})
         elif category:
-            # 查询某大类下的所有晋升链
             cypher = """
             MATCH (start:CareerNode)-[:PROMOTION*1..{depth}]->(end:CareerNode)
             WHERE start.category = $category OR start.position_name CONTAINS $category
@@ -557,14 +785,7 @@ def get_career_paths():
                    length(path) as depth
             LIMIT 20
             """.format(depth=depth)
-            results = neo4j.execute(cypher, {"category": category})
-            for r in results:
-                paths.append({
-                    "chain": r["chain"],
-                    "requirements": r["requirements"],
-                    "depth": r["depth"]
-                })
-
+            paths = _query_promotion_chains(cypher, {"category": category})
         else:
             # 返回热门晋升链（R-06: ≥3条链）
             cypher = """
@@ -574,13 +795,7 @@ def get_career_paths():
                    length(path) as depth
             LIMIT 12
             """
-            results = neo4j.execute(cypher)
-            for r in results:
-                paths.append({
-                    "chain": r["chain"],
-                    "requirements": r["requirements"],
-                    "depth": r["depth"]
-                })
+            paths = _query_promotion_chains(cypher, {})
 
         # 去重
         unique_paths = []
@@ -601,18 +816,16 @@ def get_career_paths():
         })
 
     except Exception as e:
+        # Q25: 不再返回硬编码假路径, 返回空列表 + fallback 标记
         logger.error(f"获取晋升路径失败: {e}")
-        # 兜底：返回硬编码路径
         return jsonify({
             "success": True,
             "data": {
-                "paths": [
-                    {"chain": ["初级前端工程师", "中级前端工程师", "高级前端工程师"], "requirements": ["1年经验", "3年经验"], "depth": 2},
-                    {"chain": ["初级后端工程师", "中级后端工程师", "高级后端工程师", "架构师"], "requirements": ["1年经验", "3年经验", "5年经验"], "depth": 3},
-                    {"chain": ["算法工程师", "高级算法工程师", "算法专家"], "requirements": ["2年经验", "4年经验"], "depth": 2}
-                ],
-                "total": 3,
-                "fallback": True
+                "paths": [],
+                "total": 0,
+                "query": {"role": role, "category": category, "depth": depth},
+                "fallback": True,
+                "message": "晋升路径数据暂不可用"
             }
         })
 
@@ -639,7 +852,6 @@ def get_transfer_options():
             return jsonify({"success": False, "error": "from_role 参数必填"}), 400
 
         # 从 Neo4j 查询换岗路径
-        from ..services.db import get_neo4j_client
         neo4j = get_neo4j_client()
 
         transfers = []
@@ -661,7 +873,7 @@ def get_transfer_options():
                 transfers.append({
                     "from": r["from_role"],
                     "to": r["to_role"],
-                    "skill_overlap": r["skill_overlap"],
+                    "skill_overlap": round(r["skill_overlap"] * 100, 1),  # Q21: 统一为百分比
                     "gap_skills": r["gap_skills"],
                     "difficulty": r["difficulty"]
                 })
@@ -698,7 +910,6 @@ def get_transfer_options():
             """
             results = mysql.execute(sql, {"from_role": from_role})
 
-            import json
             for r in results:
                 target = r["position_name"]
                 # 简化的技能重叠计算
@@ -721,19 +932,16 @@ def get_transfer_options():
         })
 
     except Exception as e:
+        # Q25: 不再返回硬编码假转岗选项, 返回空列表 + fallback 标记
         logger.error(f"获取换岗路径失败: {e}")
-        # 兜底：返回硬编码转岗选项
         return jsonify({
             "success": True,
             "data": {
-                "from_role": from_role or "后端开发",
-                "transfer_options": [
-                    {"from": "后端开发", "to": "架构师", "skill_overlap": 60, "gap_skills": ["系统设计", "云原生"], "difficulty": "困难"},
-                    {"from": "后端开发", "to": "全栈工程师", "skill_overlap": 70, "gap_skills": ["React", "Vue"], "difficulty": "中等"},
-                    {"from": "后端开发", "to": "DevOps工程师", "skill_overlap": 55, "gap_skills": ["Docker", "K8s", "CI/CD"], "difficulty": "中等"}
-                ],
-                "total": 3,
-                "fallback": True
+                "from_role": from_role,
+                "transfer_options": [],
+                "total": 0,
+                "fallback": True,
+                "message": "换岗路径数据暂不可用"
             }
         })
 
@@ -787,7 +995,6 @@ def submit_self_assessment():
             recommended_roles = mysql.execute(role_sql, role_params)
 
         # 保存自评记录
-        import uuid
         assessment_id = f"asm_{uuid.uuid4().hex[:12]}"
 
         insert_sql = """
@@ -823,7 +1030,7 @@ def submit_self_assessment():
 def get_assessment(student_id: str):
     """获取学生的最新自评结果"""
     try:
-        cache_key = f"cache:career:assessment:{student_id}"
+        cache_key = _cache_key("assessment", student_id=student_id)
         cached = _cache_get(cache_key)
         if cached:
             return jsonify(cached)
@@ -843,8 +1050,7 @@ def get_assessment(student_id: str):
             return jsonify({"success": False, "error": f"未找到自评记录: {student_id}"}), 404
 
         row = results[0]
-        for field in ('assessed_skills', 'assessed_abilities', 'weak_skills', 'recommended_roles'):
-            row[field] = parse_json_field(row.get(field))
+        _parse_json_fields(row, ('assessed_skills', 'assessed_abilities', 'weak_skills', 'recommended_roles'))
 
         resp = {"success": True, "data": row}
         _cache_set(cache_key, resp, CACHE_TTL['assessment'])

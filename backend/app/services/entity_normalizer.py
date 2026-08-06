@@ -452,6 +452,8 @@ class EntityNormalizer:
         collection = ENTITY_COLLECTION_MAP.get(entity_type)
         if not collection:
             return []
+        if not self.embedding.is_available():
+            return []
 
         try:
             query_vec = self.embedding.encode_single(name)

@@ -10,7 +10,6 @@ Phase 4: 逻辑守卫 (简化)
 
 import json
 import logging
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
@@ -101,11 +100,43 @@ class NSLEPipeline:
 
             result = self._phase4_guard(entities)
 
+            # Resume Structure Truth: canonical LLM profile over full text.
+            # No regex repair. Section LLM calls remain for entities/debug only.
+            from .resume_structure import (
+                extract_canonical_profile,
+                structure_windows,
+                validate_structure_truth,
+            )
+
+            win = structure_windows(text)
+            if self.use_deepseek:
+                basic = self._extract_basic_info_with_llm(win["basic"])
+                if basic:
+                    result["basic_info"] = basic
+                awards = self._extract_awards_with_llm(win["awards"])
+                result["awards"] = awards
+                edu = result.get("education") or []
+                edu0 = edu[0] if isinstance(edu, list) and edu and isinstance(edu[0], dict) else {}
+                if not (edu0.get("school") or "").strip():
+                    edu_retry = self._extract_education_with_llm(win["education"])
+                    if edu_retry:
+                        result["education"] = edu_retry
+
+            if self.use_deepseek:
+                profile = extract_canonical_profile(self.llm_client, text)
+            else:
+                profile = entities_to_student_profile(result)
+
+            skills = list(profile.get("skills") or []) or self._extract_skills_from_entities(result)
+            validation = validate_structure_truth(profile)
+
             return {
                 "success": True,
                 "blocks": filtered_blocks,
                 "entities": result,
-                "skills": self._extract_skills_from_entities(entities)
+                "skills": skills,
+                "student_profile": profile,
+                "structure_validation": validation,
             }
 
         except Exception as e:
@@ -279,6 +310,10 @@ class NSLEPipeline:
         if not entities.get("skills"):
             entities["skills"] = self._rule_based_extract(blocks, doc_type).get("skills", [])
 
+        from .resume_structure import structure_windows
+
+        win = structure_windows(all_text)
+
         if experience_blocks:
             exp_text = "\n".join([b.text for b in experience_blocks])
             entities["experience"] = self._extract_experience_with_llm(exp_text)
@@ -287,14 +322,61 @@ class NSLEPipeline:
 
         if education_blocks:
             edu_text = "\n".join([b.text for b in education_blocks])
+            # Prefer dedicated blocks but pad with large window so 教育经历 is not truncated
+            if len(edu_text) < 200:
+                edu_text = win["education"]
             entities["education"] = self._extract_education_with_llm(edu_text)
         else:
             entities["education"] = []
 
-        certs_text = "\n".join([b.text for b in skills_blocks]) if skills_blocks else all_text
+        certs_text = "\n".join([b.text for b in skills_blocks]) if skills_blocks else win["skills"]
         entities["certificates"] = self._extract_certificates_with_llm(certs_text)
 
+        # Prefer project/work blocks; fall back to structure window (not 2k head)
+        if not experience_blocks and self.use_deepseek:
+            entities["experience"] = self._extract_experience_with_llm(win["experience"])
+
+        if not education_blocks and self.use_deepseek:
+            entities["education"] = self._extract_education_with_llm(win["education"])
+
         return entities
+
+    def _extract_basic_info_with_llm(self, text: str) -> Dict[str, Any]:
+        if not text or not text.strip():
+            return {}
+        prompt = load_prompt("pipeline.nsle.extract.basic_info.user", text=text)
+        try:
+            response = self.llm_client.chat(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=400,
+            )
+            data = self._extract_json_from_response(str(response))
+            return data if isinstance(data, dict) else {}
+        except Exception as e:
+            logger.warning(f"LLM基本信息抽取失败: {e}")
+            return {}
+
+    def _extract_awards_with_llm(self, text: str) -> List[Dict]:
+        if not text or not text.strip():
+            return []
+        prompt = load_prompt("pipeline.nsle.extract.awards.user", text=text)
+        try:
+            response = self.llm_client.chat(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=600,
+            )
+            data = self._extract_json_from_response(str(response))
+            if isinstance(data, dict):
+                awards = data.get("awards", [])
+                return awards if isinstance(awards, list) else []
+            if isinstance(data, list):
+                return data
+            return []
+        except Exception as e:
+            logger.warning(f"LLM奖项抽取失败: {e}")
+            return []
 
     def _extract_skills_with_llm(self, text: str) -> List[str]:
         """使用 LLM 抽取技能"""
@@ -492,6 +574,128 @@ class NSLEPipeline:
             elif skills and isinstance(skills[0], dict):
                 return [s.get("name", s.get("skill", "")) for s in skills if s]
         return []
+
+
+def entities_to_student_profile(entities: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Schema adapter only: already-extracted LLM entities → Portrait student_profile.
+    No regex / keyword repair. Missing fields stay absent (no invented GPA/months).
+    Prefer ``extract_canonical_profile`` for Career Nav scoring.
+    """
+    if not isinstance(entities, dict):
+        return {}
+
+    basic = entities.get("basic_info") if isinstance(entities.get("basic_info"), dict) else {}
+    education = entities.get("education") or []
+    experience = entities.get("experience") or []
+    certificates = entities.get("certificates") or []
+    awards = entities.get("awards") or []
+    research_src = entities.get("research") or []
+
+    edu0: Dict[str, Any] = {}
+    if isinstance(education, list) and education:
+        first = education[0]
+        if isinstance(first, dict):
+            edu0 = first
+
+    projects: List[Dict[str, Any]] = []
+    internship_months = 0
+    leadership: List[str] = []
+    for exp in experience if isinstance(experience, list) else []:
+        if not isinstance(exp, dict):
+            continue
+        etype = str(exp.get("type") or "").lower()
+        name = str(exp.get("name") or exp.get("company") or exp.get("position") or "").strip()
+        role = str(exp.get("position") or "").strip() or "成员"
+        desc = str(exp.get("description") or "").strip()
+        if etype in ("project", "") or exp.get("name") or (not exp.get("company") and desc):
+            if name or desc:
+                projects.append({
+                    "name": name or (desc[:40] if desc else "项目"),
+                    "role": role,
+                    "is_team": bool(exp.get("is_team")),
+                    "desc": desc[:400],
+                })
+        months_raw = exp.get("internship_months")
+        if months_raw is not None and str(months_raw).strip() != "":
+            try:
+                internship_months = max(internship_months, min(int(months_raw), 24))
+            except (TypeError, ValueError):
+                pass
+        for lead in exp.get("leadership_roles") or []:
+            if str(lead).strip():
+                leadership.append(str(lead).strip())
+
+    competitions: List[Dict[str, Any]] = []
+    for a in awards if isinstance(awards, list) else []:
+        if isinstance(a, dict):
+            competitions.append({
+                "name": str(a.get("name") or "").strip(),
+                "level": str(a.get("level") or a.get("award") or "其他").strip(),
+                "award": str(a.get("level") or a.get("award") or "其他").strip(),
+            })
+        elif isinstance(a, str) and a.strip():
+            competitions.append({"name": a.strip(), "level": "其他", "award": "其他"})
+
+    cert_names: List[str] = []
+    for c in certificates if isinstance(certificates, list) else []:
+        if isinstance(c, dict) and c.get("name"):
+            cert_names.append(str(c["name"]).strip())
+        elif isinstance(c, str) and c.strip():
+            cert_names.append(c.strip())
+
+    research: List[Dict[str, Any]] = []
+    for r in research_src if isinstance(research_src, list) else []:
+        if isinstance(r, dict) and (r.get("name") or r.get("level")):
+            research.append({
+                "name": str(r.get("name") or "").strip(),
+                "level": str(r.get("level") or "校级").strip(),
+            })
+
+    school = str(edu0.get("school") or basic.get("school") or "").strip()
+    major = str(edu0.get("major") or basic.get("major") or "").strip()
+
+    top_months = entities.get("internship_months")
+    if top_months is not None and str(top_months).strip() != "":
+        try:
+            internship_months = max(internship_months, min(int(top_months), 24))
+        except (TypeError, ValueError):
+            pass
+
+    for lead in entities.get("leadership_roles") or []:
+        if str(lead).strip():
+            leadership.append(str(lead).strip())
+
+    profile: Dict[str, Any] = {
+        "name": str(basic.get("name") or "").strip(),
+        "phone": str(basic.get("phone") or "").strip(),
+        "email": str(basic.get("email") or "").strip(),
+        "grade": str(basic.get("grade") or "").strip(),
+        "school": school,
+        "major": major,
+        "degree": str(edu0.get("degree") or "").strip() or "本科",
+        "projects": projects,
+        "competitions": [c for c in competitions if c.get("name")],
+        "certificates": cert_names,
+        "research": research,
+        "leadership_roles": list(dict.fromkeys(leadership)),
+        "internship_months": internship_months,
+        "source": "nsle_llm",
+    }
+    gpa_raw = edu0.get("gpa")
+    if gpa_raw is not None and str(gpa_raw).strip() != "":
+        try:
+            profile["gpa"] = float(gpa_raw)
+        except (TypeError, ValueError):
+            pass
+    rank_raw = edu0.get("rank_percent")
+    if rank_raw is not None and str(rank_raw).strip() != "":
+        try:
+            profile["rank_percent"] = float(rank_raw)
+        except (TypeError, ValueError):
+            pass
+
+    return {k: v for k, v in profile.items() if v not in ("", None, [], {})}
 
 
 def run_nsle_resume(text: str) -> Dict[str, Any]:

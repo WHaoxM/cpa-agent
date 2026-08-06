@@ -166,7 +166,12 @@ def test_report_generate_persists_completed_demo_report(monkeypatch):
     assert detail_body["data"]["report_json"]["snapshot"]["topMatchScore"] == 88
 
 
-def test_agent_chat_demo_mode_does_not_require_llm_or_session_store():
+def test_agent_chat_demo_mode_does_not_require_llm_or_session_store(monkeypatch):
+    # Pin demo mode: repo-root .env may set CPA_DEMO_MODE=false (strict), which would
+    # 401 this endpoint. Demo endpoints must not depend on ambient .env.
+    from app.config import Config
+
+    monkeypatch.setattr(Config, "DEMO_MODE", True)
     app = create_app()
     client = app.test_client()
 
