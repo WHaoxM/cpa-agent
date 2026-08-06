@@ -10,8 +10,9 @@ registry.yaml 为唯一索引; base.md 不可被 workspace 覆盖。
 from __future__ import annotations
 
 import os
+import string
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -31,6 +32,7 @@ class PromptRegistry:
         self._prompts_dir = _backend_root() / "config" / "prompts"
         self._registry_path = self._prompts_dir / "registry.yaml"
         self._entries: Dict[str, Dict[str, Any]] = {}
+        self._runtime_routes: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
         self._load_registry()
 
     def _load_registry(self) -> None:
@@ -47,7 +49,55 @@ class PromptRegistry:
             pid = entry.get("id")
             if not pid:
                 raise PromptRegistryError(f"registry.yaml 条目缺少 id: {entry}")
+            if pid in self._entries:
+                raise PromptRegistryError(f"registry.yaml 重复 prompt_id: {pid}")
+            self._validate_entry_files(pid, entry)
             self._entries[pid] = entry
+        routes = data.get("runtime_routes") or []
+        if routes:
+            if not isinstance(routes, list):
+                raise PromptRegistryError("registry.yaml: runtime_routes 必须是列表")
+            for route in routes:
+                key = self._runtime_route_key(route)
+                if key in self._runtime_routes:
+                    raise PromptRegistryError(f"runtime_routes 重复 route: {key}")
+                prompt_ids = route.get("prompt_ids")
+                if not isinstance(prompt_ids, list) or not prompt_ids:
+                    raise PromptRegistryError(f"runtime_route 缺少 prompt_ids: {route}")
+                unknown = [pid for pid in prompt_ids if pid not in self._entries]
+                if unknown:
+                    raise PromptRegistryError(f"runtime_route 引用未知 prompt_id: {unknown}")
+                self._runtime_routes[key] = dict(route)
+
+    def _validate_entry_files(self, prompt_id: str, entry: Dict[str, Any]) -> None:
+        for layer in ("base", "tone"):
+            rel = entry.get(layer)
+            if not rel:
+                raise PromptRegistryError(f"prompt_id={prompt_id} 缺少 {layer}")
+            path = self._prompts_dir / str(rel)
+            if not path.is_file():
+                raise PromptRegistryError(f"Prompt 文件不存在: {path}")
+        declared = set(entry.get("variables") or [])
+        for layer in ("base", "tone"):
+            text = (self._prompts_dir / str(entry[layer])).read_text(encoding="utf-8")
+            for name in _extract_format_fields(text, prompt_id=prompt_id):
+                root = name.split(".", 1)[0].split("[", 1)[0]
+                if root and root not in declared:
+                    raise PromptRegistryError(
+                        f"prompt_id={prompt_id} 存在未声明变量: {root}"
+                    )
+
+    def _runtime_route_key(self, route: Dict[str, Any]) -> Tuple[str, str, str, str]:
+        try:
+            engine = str(route["engine"]).strip().lower()
+            mode = str(route["mode"]).strip().lower()
+            kind = str(route["content_kind"]).strip().lower()
+        except KeyError as e:
+            raise PromptRegistryError(f"runtime_route 缺少字段: {e}") from e
+        subagent = str(route.get("subagent") or "").strip().lower()
+        if not engine or not mode or not kind:
+            raise PromptRegistryError(f"runtime_route 字段不能为空: {route}")
+        return engine, mode, kind, subagent
 
     def _read_file(self, path: Path) -> str:
         if not path.is_file():
@@ -76,17 +126,56 @@ class PromptRegistry:
 
         prompt = base.rstrip() + "\n\n" + tone.rstrip() + "\n"
 
-        if variables:
-            try:
-                prompt = prompt.format(**variables)
-            except KeyError as e:
-                raise PromptRegistryError(
-                    f"prompt_id={prompt_id} 缺少变量: {e}"
-                )
+        declared = list(entry.get("variables") or [])
+        missing = [v for v in declared if v not in variables]
+        if missing:
+            raise PromptRegistryError(f"prompt_id={prompt_id} 缺少变量: {missing[0]}")
+        try:
+            prompt = prompt.format(**variables)
+        except KeyError as e:
+            raise PromptRegistryError(f"prompt_id={prompt_id} 缺少变量: {e}") from e
+        except ValueError as e:
+            raise PromptRegistryError(f"prompt_id={prompt_id} 模板格式非法: {e}") from e
         return prompt
 
     def list_prompt_ids(self) -> List[str]:
         return list(self._entries.keys())
+
+    def get_entry(self, prompt_id: str) -> Dict[str, Any]:
+        if prompt_id not in self._entries:
+            raise PromptRegistryError(f"未知 prompt_id: {prompt_id}")
+        return dict(self._entries[prompt_id])
+
+    def get_runtime_route(
+        self,
+        *,
+        engine: str,
+        mode: str,
+        content_kind: str,
+        subagent: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        key = (
+            str(engine).strip().lower(),
+            str(mode).strip().lower(),
+            str(content_kind).strip().lower(),
+            str(subagent or "").strip().lower(),
+        )
+        route = self._runtime_routes.get(key)
+        return dict(route) if route else None
+
+    def list_runtime_routes(self) -> List[Dict[str, Any]]:
+        return [dict(r) for r in self._runtime_routes.values()]
+
+
+def _extract_format_fields(text: str, *, prompt_id: str) -> List[str]:
+    fields: List[str] = []
+    try:
+        for _, field_name, _, _ in string.Formatter().parse(text):
+            if field_name:
+                fields.append(str(field_name))
+    except ValueError as e:
+        raise PromptRegistryError(f"prompt_id={prompt_id} 模板格式非法: {e}") from e
+    return fields
 
 
 def init_prompt_registry(*, force: bool = False) -> PromptRegistry:

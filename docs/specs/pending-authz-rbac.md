@@ -88,7 +88,7 @@
 
 ### 2.9 密钥管理 — 严重泄露风险
 
-- 根目录 `.env:8`：`LLM_API_KEY=sk-49051c0b0c5541f8b470006f73a5b5a0`（真实 DeepSeek API Key 明文）
+- 根目录 `.env:8`：`LLM_API_KEY=sk-49051c0b***`（已吊销；记录时确认为真实 DeepSeek API Key 明文）
 - 根目录无 `.gitignore`，`.env` 极可能被 git 跟踪并提交
 - `backend/.env` 同样含明文密钥
 - `config.py:35-41`：`SECRET_KEY` 未配置时用 `'cpa-agent-insecure-default-do-not-use-in-production'`，仅 warning 不阻止启动
@@ -223,6 +223,7 @@
 | 4.5 (P3) | `matcher.py` 的 D3 软硬编码迁移到 YAML + 修复 `match_level` 阈值不一致 bug | `rules/thresholds.yaml`（新增 `match_level` 节统一阈值 `{excellent: 85, good: 70, fair: 60}` + `d3` 节：`level_map` 3 项 + `keywords` 4 组（communication/teamwork/stress_tolerance/responsibility）+ `keyword_score_factor/min/cap` 魔数 + `rule_bonus` 4 项 + `score_formula` 总分公式参数）；`loader.py`（新增 `match_level_thresholds`/`d3_params` 属性）；`matcher.py` 的 `_calc_d3_detailed` 改走 `self._d3_params`，模块级 `_get_match_level` 改走 `get_rules_config().match_level_thresholds`；`pipeline_ext.py:2474-2483` 修复 `>=75 → 良好` 的硬编码 bug，改为调用 `matcher._get_match_level` 统一走权威源 |
 | 4.6 | 模型缓存路径迁移（缓解 C 盘空间压力 + 修复 YOLO 路径 bug + 统一本地 LLM 权重存放） | `run.py`（新增 `_MODELS_ROOT` + 5 个环境变量：`MODELSCOPE_CACHE`→`models/mineru/`、`HF_HOME`/`SENTENCE_TRANSFORMERS_HOME`/`HF_HUB_CACHE`/`TRANSFORMERS_CACHE`→`models/embeddings/` 子目录）；`embedding_service.py`（新增 `_EMBEDDING_CACHE` 常量，`SentenceTransformer` 显式传 `cache_folder`）；`l0_full_parser.py`（新增 `_YOLO_MODEL_PATH` 常量指向 `models/yolo/SmartResume/yolov10/best.onnx`，修复原 `backend/app/model/SmartResume/yolov10/` 路径错误导致的 YOLO 永久不可用 bug）；`.env`/`.env.example`（新增模型缓存路径配置节）；`.gitignore`（新增 `models/mineru/` 忽略规则，移除已清理的 `model/` 和 `modelscope_cache/` 规则）；物理迁移：`modelscope_cache/` (3.06GB) → `models/mineru/`，`model/ResumeNER/yolov10/best.onnx` (253MB) → `models/yolo/SmartResume/yolov10/`，`model/Qwen3.5-4B/` (8.7GB, 17 文件) → `models/llm/Qwen3.5-4B/`，`model/ResumeNER/Qwen3-0.6B/` (1.13GB, 9 文件) → `models/llm/Qwen3-0.6B/`（用于本地实体和关系识别，代码加载入口待后续接入）；`model/` 目录（含 ResumeNER git clone 元数据）已完全清理 |
 | 4.7 | API 模块共享 helper 提取（消除 `backend/app/api/` 下 13 个文件的错误处理/JSON 解析/维度字典重复代码） | `api/_helpers.py`（新建，4 个纯函数：`safe_error(context, error, *, message, code)` 统一错误响应+日志；`parse_json_field(value, default)` 处理 MySQL JSON 列的字符串序列化；`build_dimensions_d1_d4(d1..d4)` 构造 D1-D4 维度字典（消除 match.py ×2 + profile.py ×1 重复）；`build_sub_dimensions(skill, cert, ...)` 构造七维子维度字典（消除 match.py ×2 + profile.py ×1 重复））；改造 12 个 API 文件全部接入 helper：`match.py`/`profile.py`/`report.py`/`career.py`/`agent.py`/`pipeline.py`/`admin.py`/`admin_kb.py`/`favorites.py`/`graph.py`/`learning.py` 共替换 50+ 处 try/except 错误响应模板 + 20+ 处 `isinstance(str)+json.loads+except:pass` JSON 解析模板 + 4 处维度字典字面量；`pipeline_ext.py` 保留其本地 `_safe_error(error, context)` helper（签名顺序与共享版相反，40+ 调用点改写收益微小，按"简单功能直接实现"原则保留）；移除 9 个文件中冗余的 `from ..exceptions import ErrorCode` 导入；移除 `admin.py` 中 3 处函数内 `import json` 内联导入（顶部已有）；保留特殊错误场景的 `message=` 参数覆盖（如 `semantic_explore` 的 "服务器内部错误"、`graph.build_graph` 的 "任务创建失败，请稍后重试"） |
+| 4.8 (P1) | `pipeline_ext.py` 3979 行单文件按功能区拆分为 11 个子模块（63 路由不变） | `api/pipeline_ext_common.py`（蓝图单例 `pipeline_ext_bp` + `logger` + `_normalize_skills`）；`api/pipeline_ext_extract.py`（20 路由，L0+L1 文本解析与技能抽取）；`api/pipeline_ext_normalizer.py`（5 路由）；`api/pipeline_ext_assessment.py`（2 路由）；`api/pipeline_ext_parse_text.py`（1 路由）；`api/pipeline_ext_portrait.py`（4 路由，L2）；`api/pipeline_ext_report.py`（2 路由，L4）；`api/pipeline_ext_vector.py`（7 路由，Milvus）；`api/pipeline_ext_upload.py`（2 路由）；`api/pipeline_ext_graph.py`（10 路由，L1 图谱+JD聚合）；`api/pipeline_ext_match.py`（6 路由，L3）；`api/pipeline_ext_agent.py`（3 Agent 路由 + 1 `/db/health`）；原 `pipeline_ext.py` 已删除；`api/__init__.py` 从 `pipeline_ext_common` 导入 `pipeline_ext_bp`；`app/__init__.py` 改用 `pipeline_ext_bp`；所有子模块错误处理统一用 `safe_error`，JSON 解析统一用 `parse_json_field`；拆分按 12 阶段分步执行，每阶段验证 63 路由不变 |
 
 **验证结果**：
 - `admin_kb._fallback_extract` 函数体零硬编码列表，全部走 `dictionary_loader` 加载
@@ -239,6 +240,8 @@
 - P3 D3 硬编码迁移验证：`_calc_d3_detailed(None)` 返回 50.0（参数全部从 `self._d3_params` 加载），无回归
 - 模型缓存路径迁移验证：5 个环境变量全部指向项目内 `models/` 子目录（覆盖系统级 `MODELSCOPE_CACHE`）；`_YOLO_MODEL_PATH` 文件存在（253.49 MB），`_check_yolo()` 返回 True（修复了原路径错误导致 YOLO 永久不可用的 bug）；3.06GB `modelscope_cache/` 已迁移到 `models/mineru/`；本地 LLM 权重 `Qwen3.5-4B` (8.7GB, 17 文件) 和 `Qwen3-0.6B` (1.13GB, 9 文件) 已迁移到 `models/llm/`；原 `model/` 目录（含 ResumeNER git clone 元数据）已完全清理；`.gitignore` 正确忽略 `models/{embeddings,llm,mineru,yolo}/` 下的实际模型文件，仅保留 `.gitkeep`
 - API helper 提取验证：4 个 helper 单元测试全部通过（`safe_error` 默认/自定义消息、`parse_json_field` 4 种输入、`build_dimensions_d1_d4` 4 维结构、`build_sub_dimensions` 7 维结构）；13 个 API 文件语法检查 + 12 个模块导入检查全部通过；Flask app 创建成功，148 路由全部注册；7 个改造端点（admin/knowledge-base、saved-jobs、learning/courses、graph/overview、career/landscape、pipeline/list、graph/skill-categories）结构化测试全部返回 200 + `success` 字段；9 个文件 `from ..exceptions import ErrorCode` 导入已全部移除（无残留 `ErrorCode` 引用）
+- P1 拆分验证：原 `pipeline_ext.py` (3979 行) 已删除，拆分为 11 个子模块 + 1 个 common 模块；Flask app 创建成功，`pipeline_ext` 蓝图 63 路由全部注册（extract=20, normalizer=5, assessment=2, parse_text=1, portrait=4, report=2, vector=7, upload=2, graph=10, match=6, agent=3+health=1），总路由 148 不变；所有子模块错误处理统一用 `safe_error`，JSON 解析统一用 `parse_json_field`
+- 生产级工程原则验证（4 阶段）：①DRY — `career.py`/`learning.py` 的 `json.loads+isinstance` 改用 `parse_json_field`（2 处）；②配置外部化 — `_get_dimension_weights()` 封装 `get_rules_config().dimension_weights`，`pipeline_ext_portrait.py` 1 处 + `pipeline_ext_graph.py` 7 处 D1-D4 权重硬编码改读 `matching.yaml`（3 处 docstring 保留）；③错误处理一致性 — 7 个文件 19 处 `ErrorCode.INTERNAL_ERROR.value` 的 500 错误响应改用 `safe_error`，5 个文件移除冗余 `ErrorCode` 导入；④输入验证 — `_helpers.py` 新增 `clamp_pagination` + `MAX_LIMIT=100`，12 个文件 25 处 `limit/offset` 裸调用改用 `clamp_pagination` 边界保护；验证 `clamp_pagination(200, -1)=(100,0)`、`clamp_pagination(None,None,50)=(50,0)`、`clamp_pagination(10,5)=(10,5)`；总路由 148 不变
 
 #### 7.2.2 待改进项（未实施）
 
@@ -246,7 +249,6 @@
 
 | 文件:行号 | 硬编码内容 | 分类 | 建议 |
 |----------|-----------|------|------|
-| `pipeline_ext.py` 多处 | `{"D1": 0.25, "D2": 0.35, "D3": 0.20, "D4": 0.20}` | 调参 | 统一改读 `matching.yaml` 的 `dimension_weights` |
 | `skill_extractor.py:539` | `confidence = base + positive*0.15 - negative*0.1` | 调参 | 命名并迁入 YAML |
 | `yolo_layout_detector.py:64-67` | `INPUT_SIZE=640, CONFIDENCE=0.25, IOU=0.45` | 调参 | 迁入 `yolo.yaml` |
 | `seed_from_mock.py` / `seed_seven_dim.py` | 七维 D5-D10 权重 | 调参 | `matching.yaml` 增加 `seven_dim_weights` 节 |

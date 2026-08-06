@@ -119,7 +119,21 @@ class PipelineRunTool(BaseTool):
                 commit=True
             )
 
-            return f"[pipeline_run] 任务完成\n任务ID: {task_id}\n管线: {pipeline}\n结果: {result.get('summary', '处理完成')}"
+            summary = result.get("summary", "处理完成")
+            return json.dumps({
+                "message": f"[pipeline_run] 任务完成\n任务ID: {task_id}\n管线: {pipeline}\n结果: {summary}",
+                "summary": f"{PIPELINE_TASKS.get(pipeline, pipeline)}完成",
+                "task_id": task_id,
+                "pipeline": pipeline,
+                "status": "completed",
+                "result": result,
+                "artifact_candidates": self._artifact_candidates_for_pipeline(
+                    task_id=task_id,
+                    pipeline=pipeline,
+                    status="completed",
+                    result=result,
+                ),
+            }, ensure_ascii=False)
 
         except Exception as e:
             logger.error(f"管线执行失败: {e}")
@@ -128,7 +142,19 @@ class PipelineRunTool(BaseTool):
                 {"status": "failed", "error_message": str(e), "task_id": task_id},
                 commit=True
             )
-            return f"[pipeline_run] 任务失败，请稍后重试"
+            return json.dumps({
+                "message": "[pipeline_run] 任务失败，请稍后重试",
+                "summary": f"{PIPELINE_TASKS.get(pipeline, pipeline)}失败",
+                "task_id": task_id,
+                "pipeline": pipeline,
+                "status": "failed",
+                "artifact_candidates": self._artifact_candidates_for_pipeline(
+                    task_id=task_id,
+                    pipeline=pipeline,
+                    status="failed",
+                    result={"summary": "任务失败"},
+                ),
+            }, ensure_ascii=False)
 
     def _execute_pipeline(self, pipeline: str, params: dict) -> dict:
         if pipeline == "L0_parse_resume":
@@ -142,6 +168,41 @@ class PipelineRunTool(BaseTool):
         elif pipeline == "L4_generate_report":
             return self._run_l4_generate_report(params)
         return {"summary": "未知管线"}
+
+    def _artifact_candidates_for_pipeline(
+        self,
+        *,
+        task_id: str,
+        pipeline: str,
+        status: str,
+        result: dict,
+    ) -> list:
+        summary = str((result or {}).get("summary") or PIPELINE_TASKS.get(pipeline, pipeline))
+        kind_by_pipeline = {
+            "L0_parse_resume": "pipeline_task",
+            "L1_build_graph": "pipeline_task",
+            "L2_generate_portrait": "pipeline_task",
+            "L3_run_match": "pipeline_task",
+            "L4_generate_report": "pipeline_task",
+        }
+        return [{
+            "kind": kind_by_pipeline.get(pipeline, "pipeline_task"),
+            "status": status,
+            "title": PIPELINE_TASKS.get(pipeline, "管线任务"),
+            "summary": summary,
+            "preview": {
+                "pipeline": pipeline,
+                "task_id": task_id,
+                "status": status,
+            },
+            "actions": [{
+                "id": "open_pipeline_task",
+                "label": "查看任务",
+            }],
+            "resource_type": "pipeline_task",
+            "resource_id": task_id,
+            "version": 1,
+        }]
 
     def _get_student_profile(self, student_id: str) -> Optional[Dict]:
         """从 MySQL 获取学生 profile 数据"""

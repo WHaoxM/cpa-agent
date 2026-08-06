@@ -11,6 +11,8 @@ import json
 import re
 from typing import Dict, Any, List, Optional
 
+from config.prompt_loader import load_prompt
+
 from .base import BaseTool
 from ...services.db import get_neo4j_client, Neo4jClient
 from ...utils.logger import get_logger
@@ -108,9 +110,12 @@ class GraphQueryTool(BaseTool):
 
     def _generate_cypher(self, user_query: str, query_type: str = "") -> str:
         """使用 LLM 生成 Cypher 查询"""
+        # 方法内导入：避免进程未热重载时模块级 NameError 残留
+        from config.prompt_loader import load_prompt as _load_prompt
+
         schema_prompt = self._get_schema_prompt()
 
-        system_prompt = load_prompt(
+        system_prompt = _load_prompt(
             "tool.graph_query.system",
             schema=schema_prompt,
             query_type=query_type if query_type else "自动判断",
@@ -178,8 +183,11 @@ class GraphQueryTool(BaseTool):
             return False, "Cypher 为空"
 
         cypher_upper = cypher.upper()
-
-        has_safe_start = any(cypher_upper.strip().startswith(pattern.lower()) for pattern in SAFE_PATTERNS)
+        # SAFE_PATTERNS 为规范大小写；必须与 upper 后的语句比较（旧代码用 pattern.lower() 导致 MATCH 永远不通过）
+        cypher_stripped = cypher_upper.lstrip()
+        has_safe_start = any(
+            cypher_stripped.startswith(pattern.upper()) for pattern in SAFE_PATTERNS
+        )
         if not has_safe_start:
             return False, f"查询必须以 MATCH/RETURN 等开头，当前: {cypher[:50]}..."
 

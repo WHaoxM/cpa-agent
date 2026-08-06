@@ -149,6 +149,22 @@ class MySQLClient:
         results = self.execute(sql, parameters)
         return results[0] if results else None
 
+    def fetch_one(
+        self,
+        sql: str,
+        parameters: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """execute_single 别名（memory_store / 调用方兼容）"""
+        return self.execute_single(sql, parameters)
+
+    def query_one(
+        self,
+        sql: str,
+        parameters: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """execute_single 别名（pipeline 调用方兼容）"""
+        return self.execute_single(sql, parameters)
+
     def execute_write(
         self,
         sql: str,
@@ -205,9 +221,13 @@ class MySQLClient:
         "student_profile", "student_portrait_4d", "job_posting", "job_portrait_4d",
         "match_result", "skill_gap", "career_path", "career_report",
         # 会话与任务 (3)
-        "conversation", "conversation_message", "pipeline_task",
+        "conversation", "conversation_message", "pipeline_task", "agent_artifact",
+        # Agent 记忆 (3)
+        "memory_store", "memory_entry", "memory_entry_version",
         # API 扩展表 (5)
         "saved_job", "target_role", "course", "chapter", "learning_progress",
+        # 站内信 (2)
+        "inbox_message", "inbox_message_user_state",
         # 冷启动/规范实体 (7)
         "canonical_entity", "normalization_rule", "career_insights",
         "skill_taxonomy", "learning_path_template", "student_self_assessment",

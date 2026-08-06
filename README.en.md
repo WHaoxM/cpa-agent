@@ -11,7 +11,7 @@
 [![GitHub Stars](https://img.shields.io/github/stars/WHaoxM/cpa-agent?style=flat-square&color=DAA520)](https://github.com/WHaoxM/cpa-agent/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/WHaoxM/cpa-agent?style=flat-square)](https://github.com/WHaoxM/cpa-agent/network)
 [![GitHub Issues](https://img.shields.io/github/issues/WHaoxM/cpa-agent?style=flat-square)](https://github.com/WHaoxM/cpa-agent/issues)
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![Vue](https://img.shields.io/badge/Vue-3.5-42b883?style=flat-square&logo=vue.js&logoColor=white)](https://vuejs.org/)
 [![Flask](https://img.shields.io/badge/Flask-3.x-000000?style=flat-square&logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
@@ -36,7 +36,7 @@ CPA-Agent is dedicated to breaking through the limitations of traditional career
 
 - **For Students**: Personalized diagnosis based on real resumes and job data, not generic career advice
 - **For Universities**: Batch parsing, standardized portraits and report generation, suitable for career centers to use at scale
-- **For Researchers**: L0–L4 pipeline, dual-engine Agent, and NSLE entity extraction all have clear module boundaries, facilitating paper experiments and ablation studies
+- **For Researchers**: L0–L4 pipeline, multi-mode Agent, and NSLE entity extraction all have clear module boundaries, facilitating paper experiments and ablation studies
 
 From resume input to career report, every step has Agent Trace observability, and recommendation results can be traced back to graph nodes and matching weights—rather than a black-box "you should be a product manager."
 
@@ -58,7 +58,7 @@ Experience the frontend online demo (primarily uses Mock data, no backend requir
 Two capabilities define the fundamental difference between CPA-Agent and general chatbots:
 
 - 🧭 **L0–L4 Layered Pipeline.** Resume parsing, graph building, portrait generation, job matching, and report generation are each independent yet can be chained. Each layer has clear inputs/outputs and `pipeline_task` state tracking, suitable for batch processing and async tasks in university scenarios.
-- 🤖 **Dual-Engine Agent + 12 Tools.** LangGraph (primary) with native function calling + MySQL Checkpoint persistence; ReAct (fallback) compatible with LLMs that don't support tool calls. The Agent can invoke graph queries, semantic search, pipeline triggers, and more—maintaining clear boundaries between reasoning and deterministic business logic.
+- 🤖 **Multi-Mode Agent + 13 Tools.** The default runtime is a **Supervisor orchestrator** (Ask / Agent / Experts interaction modes; Plan steps + blackboard + per-student memory store + PreToolUse gating). The legacy LangGraph monolith / ReAct engines are disabled by default and enabled only via a demo switch. The Agent can invoke graph queries, semantic search, pipeline triggers, and more—maintaining clear boundaries between reasoning and deterministic business logic.
 
 ## 🔄 Workflow
 
@@ -80,7 +80,7 @@ Visit the [Live Demo](https://whaoxm.github.io/cpa-xingtu/) directly and log in 
 
 | Tool | Version | Description | Check |
 |------|---------|-------------|-------|
-| **Python** | 3.11+ | Backend runtime | `python --version` |
+| **Python** | 3.10+ | Backend runtime (dev env: conda `mkg` = 3.10) | `python --version` |
 | **Node.js** | ^20.19.0 \|\| >=22.12.0 | Frontend runtime | `node -v` |
 | **Conda** | Recommended | Environment management | `conda --version` |
 | **Docker** | Latest | Database dependencies | `docker --version` |
@@ -176,10 +176,10 @@ Vue 3 Frontend (cpa-xingtu)
         │ HTTP / SSE
         ▼
 Flask Backend (backend/app)
-  API Routes → Service Layer → Agent Engine (LangGraph / ReAct)
+  API Routes → Service Layer → Agent Runtime (Supervisor orchestration; Ask/Agent/Experts modes)
                         │
                         ▼
-              Tools (12) ──→ MySQL / Neo4j / Redis / Milvus
+              Tools (13) ──→ MySQL / Neo4j / Redis / Milvus
                         │
                         ▼
               L0–L4 Pipeline (Resume→Graph→Portrait→Match→Report)
@@ -212,8 +212,8 @@ The matching engine combines weighted scoring, skill gap analysis, and promotion
 
 ### Backend
 
-- **Python 3.11+** / Flask 3.x
-- **LangGraph + LangChain** - Agent orchestration (primary engine)
+- **Python 3.10+** / Flask 3.x
+- **Supervisor multi-mode Agent runtime** - Ask / Agent / Experts orchestration (legacy LangGraph monolith / ReAct engines disabled by default)
 - **ReAct** - Compatible fallback engine
 - **SQLAlchemy** - ORM
 - **PyMilvus Lite** - Embedded vector database
@@ -268,7 +268,7 @@ This is not generic career advice, but actionable recommendations based on graph
 - **University Career Centers** — Batch parse student resumes, generate standardized capability portraits and reports
 - **Career Planning Courses / Competitions** — Demonstrate the complete engineering implementation of "Knowledge Graph + RAG + Agent"
 - **Individual Developers** — Build your own career knowledge base, connect to real job data, do personalized matching
-- **Research Reproduction** — L0–L4 pipeline, NSLE entity extraction, dual-engine Agent all have clear module boundaries, facilitating paper experiments and ablation studies
+- **Research Reproduction** — L0–L4 pipeline, NSLE entity extraction, multi-mode Agent all have clear module boundaries, facilitating paper experiments and ablation studies
 
 ## 🤝 Contributing
 

@@ -28,16 +28,30 @@ class SessionStatus(str, Enum):
 SESSION_EXPIRE_SECONDS = 86400 * 7
 
 
+def derive_session_title(messages: List[Dict[str, Any]], *, fallback: str = "新对话") -> str:
+    """Title from first user utterance — Claude/Qoder style conversation label."""
+    for msg in messages or []:
+        if (msg.get("role") or "") != "user":
+            continue
+        text = str(msg.get("content") or "").strip().replace("\n", " ")
+        if not text:
+            continue
+        return text[:36] + ("…" if len(text) > 36 else "")
+    return fallback
+
+
 @dataclass
 class SessionMessage:
     """会话消息"""
     role: str
     content: str
+    message_id: str = field(default_factory=lambda: f"msg_{uuid.uuid4().hex[:12]}")
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     metadata: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "message_id": self.message_id,
             "role": self.role,
             "content": self.content,
             "timestamp": self.timestamp,
@@ -47,6 +61,7 @@ class SessionMessage:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SessionMessage":
         return cls(
+            message_id=data.get("message_id") or f"msg_{uuid.uuid4().hex[:12]}",
             role=data.get("role", "user"),
             content=data.get("content", ""),
             timestamp=data.get("timestamp", datetime.now().isoformat()),
@@ -64,6 +79,8 @@ class SessionState:
     updated_at: str
     messages: List[Dict[str, Any]] = field(default_factory=list)
     context: Dict[str, Any] = field(default_factory=dict)
+    conversation_summary: str = ""
+    summary_message_count: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -74,6 +91,8 @@ class SessionState:
             "updated_at": self.updated_at,
             "messages": self.messages,
             "context": self.context,
+            "conversation_summary": self.conversation_summary,
+            "summary_message_count": self.summary_message_count,
         }
 
     @classmethod
@@ -86,6 +105,8 @@ class SessionState:
             updated_at=data.get("updated_at", datetime.now().isoformat()),
             messages=data.get("messages", []),
             context=data.get("context", {}),
+            conversation_summary=data.get("conversation_summary", "") or "",
+            summary_message_count=int(data.get("summary_message_count") or 0),
         )
 
 
@@ -188,30 +209,55 @@ class SessionManager:
         except Exception as e:
             logger.warning(f"保存会话到 MySQL 失败: {e}")
 
-    def _save_message_to_mysql(self, session_id: str, role: str, content: str, metadata: Optional[Dict[str, Any]] = None):
+    def _save_message_to_mysql(
+        self,
+        session_id: str,
+        role: str,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        *,
+        message_id: Optional[str] = None,
+    ):
         """将消息保存到 MySQL"""
         try:
             from .db import get_mysql_client
             mysql = get_mysql_client()
 
-            message_id = f"msg_{uuid.uuid4().hex[:12]}"
+            message_id = message_id or f"msg_{uuid.uuid4().hex[:12]}"
             now = datetime.now().isoformat()
 
             tool_calls_json = None
+            thinking_json = None
             elapsed_seconds = None
             iterations = None
 
             if metadata:
                 if 'tool_calls' in metadata:
                     tool_calls_json = json.dumps(metadata['tool_calls'], ensure_ascii=False)
+                thinking_payload: Dict[str, Any] = {}
+                for key in (
+                    "thinking_steps",
+                    "parts_v1",
+                    "turn_id",
+                    "interaction_mode",
+                    "upgrade_hint",
+                    "artifacts",
+                    "orchestration",
+                ):
+                    if key in metadata:
+                        thinking_payload[key] = metadata[key]
+                if thinking_payload:
+                    thinking_json = json.dumps(thinking_payload, ensure_ascii=False)
                 if 'iterations' in metadata:
                     iterations = metadata['iterations']
+                if 'elapsed_seconds' in metadata:
+                    elapsed_seconds = metadata['elapsed_seconds']
 
             mysql.execute(
                 """
                 INSERT INTO conversation_message 
-                (session_id, message_id, role, content, tool_calls_json, iterations, elapsed_seconds, created_at)
-                VALUES (:session_id, :message_id, :role, :content, :tool_calls_json, :iterations, :elapsed_seconds, :created_at)
+                (session_id, message_id, role, content, tool_calls_json, thinking_json, iterations, elapsed_seconds, created_at)
+                VALUES (:session_id, :message_id, :role, :content, :tool_calls_json, :thinking_json, :iterations, :elapsed_seconds, :created_at)
                 """,
                 {
                     "session_id": session_id,
@@ -219,6 +265,7 @@ class SessionManager:
                     "role": role,
                     "content": content,
                     "tool_calls_json": tool_calls_json,
+                    "thinking_json": thinking_json,
                     "iterations": iterations,
                     "elapsed_seconds": elapsed_seconds,
                     "created_at": now,
@@ -306,13 +353,48 @@ class SessionManager:
 
         if role == "user":
             state.status = SessionStatus.ACTIVE
+            # First user turn stamps conversation title (MySQL + context)
+            user_turns = sum(1 for m in state.messages if m.get("role") == "user")
+            if user_turns == 1:
+                title = derive_session_title(state.messages)
+                ctx = dict(state.context) if isinstance(state.context, dict) else {}
+                ctx["conversation_title"] = title
+                state.context = ctx
+                self._update_mysql_title(session_id, title)
         state.updated_at = datetime.now().isoformat()
 
         self._cache[session_id] = state
         self._save_to_redis(state)
-        self._save_message_to_mysql(session_id, role, content, metadata)
+        self._save_message_to_mysql(
+            session_id,
+            role,
+            content,
+            metadata,
+            message_id=message.message_id,
+        )
 
         return state
+
+    def _update_mysql_title(self, session_id: str, title: str) -> None:
+        try:
+            from .db import get_mysql_client
+
+            mysql = get_mysql_client()
+            mysql.execute(
+                """
+                UPDATE conversation
+                SET title = :title, updated_at = :updated_at
+                WHERE session_id = :session_id
+                """,
+                {
+                    "title": title,
+                    "updated_at": datetime.now().isoformat(),
+                    "session_id": session_id,
+                },
+                commit=True,
+            )
+        except Exception as e:
+            logger.warning(f"更新会话标题失败: {e}")
 
     def get_messages(
         self,
@@ -333,13 +415,11 @@ class SessionManager:
     def get_history_for_agent(
         self,
         session_id: str,
-        max_messages: int = 20,
+        max_messages: int = 16,
     ) -> List[Dict[str, str]]:
         """
-        获取适合传给 Agent 的历史消息格式
-        [{"role": "user/assistant", "content": "..."}]
-
-        从 Redis 内存获取最新消息，若不足 max_messages 则从 MySQL 补充
+        获取适合传给 Agent 的历史消息格式（单通道 STM）。
+        默认 max_messages=16 ≈ K=8 轮。不把同一批消息再塞进 structured context。
         """
         messages = self.get_messages(session_id, limit=max_messages)
 
@@ -358,39 +438,136 @@ class SessionManager:
             for m in messages[-max_messages:]
         ]
 
+    def get_conversation_summary(self, session_id: str) -> str:
+        state = self.get_session(session_id)
+        if not state:
+            return ""
+        return state.conversation_summary or ""
+
+    def set_conversation_summary(self, session_id: str, summary: str) -> Optional[SessionState]:
+        state = self.get_session(session_id)
+        if not state:
+            return None
+        state.conversation_summary = summary or ""
+        state.updated_at = datetime.now().isoformat()
+        self._cache[session_id] = state
+        self._save_to_redis(state)
+        return state
+
+    def maybe_rollup_summary(self, session_id: str, keep_messages: int = 16) -> Optional[str]:
+        """
+        When message count exceeds keep_messages, compress older turns into conversation_summary.
+        Best-effort; skips if LLM unavailable.
+        """
+        state = self.get_session(session_id)
+        if not state or len(state.messages) <= keep_messages:
+            return state.conversation_summary if state else None
+
+        cutoff = max(0, len(state.messages) - keep_messages)
+        cursor = max(0, min(int(getattr(state, "summary_message_count", 0) or 0), cutoff))
+        if cutoff <= cursor:
+            return state.conversation_summary
+
+        older = state.messages[cursor:cutoff]
+        if not older:
+            return state.conversation_summary
+
+        blob = "\n".join(
+            f"{m.get('role')}: {str(m.get('content') or '')[:300]}" for m in older[-20:]
+        )
+        prev = state.conversation_summary or ""
+        try:
+            from ..utils.llm_client import get_llm_client
+
+            llm = get_llm_client()
+            prompt = (
+                "将以下对话压缩为不超过 800 字的中文摘要，保留用户目标、已确认约束与未决问题。\n"
+                f"已有摘要:\n{prev}\n\n新增对话:\n{blob}"
+            )
+            summary = llm.chat(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+                max_tokens=600,
+            )
+            if summary:
+                state.conversation_summary = summary.strip()
+                state.summary_message_count = cutoff
+                state.updated_at = datetime.now().isoformat()
+                self._cache[session_id] = state
+                self._save_to_redis(state)
+                return summary.strip()
+        except Exception as e:
+            logger.warning(f"滚动摘要失败: {e}")
+            # deterministic fallback without LLM
+            fallback = (prev + "\n" + blob)[-1500:]
+            state.conversation_summary = fallback
+            state.summary_message_count = cutoff
+            state.updated_at = datetime.now().isoformat()
+            self._cache[session_id] = state
+            self._save_to_redis(state)
+            return fallback
+        return state.conversation_summary
+
+    def persist_blackboard(self, session_id: str, blackboard: Dict[str, Any]) -> Optional[SessionState]:
+        """Store nested blackboard under session.context['blackboard']."""
+        state = self.get_session(session_id)
+        if not state:
+            return None
+        if not isinstance(state.context, dict):
+            state.context = {}
+        state.context["blackboard"] = blackboard
+        state.updated_at = datetime.now().isoformat()
+        self._cache[session_id] = state
+        self._save_to_redis(state)
+        return state
+
     def build_structured_context(
         self,
         session_id: str,
         student_id: Optional[str] = None,
         recent_limit: int = 6,
+        include_recent_messages: bool = False,
     ) -> Dict[str, Any]:
         """
-        构建给 Agent 的结构化上下文。
+        构建给 Agent / Supervisor 的结构化上下文。
 
-        输出结构:
-        {
-          "session": {...},
-          "student": {...},
-          "conversation": {...},
-          "business": {...}
-        }
+        默认不再附带 conversation.recent_messages（避免与 history 双注入）。
+        legacy 模式可传 include_recent_messages=True。
         """
         state = self.get_session(session_id)
         if not state:
             return {
                 "session": {"session_id": session_id, "exists": False},
                 "student": {"student_id": student_id},
-                "conversation": {"recent_messages": []},
+                "conversation": {
+                    "summary": "",
+                },
                 "business": {},
+                "blackboard": {},
             }
 
         effective_student_id = student_id or state.student_id
-        recent_msgs = self.get_messages(session_id, limit=recent_limit)
-
-        last_user = next((m for m in reversed(recent_msgs) if m.get("role") == "user"), None)
-        last_assistant = next((m for m in reversed(recent_msgs) if m.get("role") == "assistant"), None)
-
         context_payload = state.context if isinstance(state.context, dict) else {}
+        blackboard = context_payload.get("blackboard")
+        if not isinstance(blackboard, dict):
+            blackboard = {}
+
+        conversation: Dict[str, Any] = {
+            "summary": state.conversation_summary or "",
+            "message_count": len(state.messages),
+        }
+        if include_recent_messages:
+            recent_msgs = self.get_messages(session_id, limit=recent_limit)
+            last_user = next((m for m in reversed(recent_msgs) if m.get("role") == "user"), None)
+            last_assistant = next(
+                (m for m in reversed(recent_msgs) if m.get("role") == "assistant"), None
+            )
+            conversation["recent_messages"] = [
+                {"role": m.get("role"), "content": m.get("content", "")[:500]}
+                for m in recent_msgs
+            ]
+            conversation["last_user_message"] = (last_user or {}).get("content", "")
+            conversation["last_assistant_message"] = (last_assistant or {}).get("content", "")
 
         return {
             "session": {
@@ -404,15 +581,11 @@ class SessionManager:
             "student": {
                 "student_id": effective_student_id,
             },
-            "conversation": {
-                "recent_messages": [
-                    {"role": m.get("role"), "content": m.get("content", "")[:500]}
-                    for m in recent_msgs
-                ],
-                "last_user_message": (last_user or {}).get("content", ""),
-                "last_assistant_message": (last_assistant or {}).get("content", ""),
+            "conversation": conversation,
+            "business": {
+                k: v for k, v in context_payload.items() if k != "blackboard"
             },
-            "business": context_payload,
+            "blackboard": blackboard,
         }
 
     def _get_messages_from_mysql(
@@ -428,7 +601,7 @@ class SessionManager:
 
             rows = mysql.fetch_all(
                 """
-                SELECT role, content, created_at
+                SELECT message_id, role, content, tool_calls_json, thinking_json, created_at
                 FROM conversation_message
                 WHERE session_id = :session_id
                 ORDER BY created_at ASC
@@ -438,16 +611,30 @@ class SessionManager:
             )
 
             return [
-                {
-                    "role": row.get("role", "user"),
-                    "content": row.get("content", ""),
-                    "timestamp": row.get("created_at", "")
-                }
+                self._mysql_row_to_message(row)
                 for row in rows
             ]
         except Exception as e:
             logger.warning(f"从 MySQL 获取消息失败: {e}")
             return []
+
+    def _mysql_row_to_message(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        metadata: Dict[str, Any] = {}
+        tool_calls = _loads_json(row.get("tool_calls_json"), None)
+        thinking_payload = _loads_json(row.get("thinking_json"), None)
+        if isinstance(tool_calls, list):
+            metadata["tool_calls"] = tool_calls
+        if isinstance(thinking_payload, list):
+            metadata["thinking_steps"] = thinking_payload
+        elif isinstance(thinking_payload, dict):
+            metadata.update(thinking_payload)
+        return {
+            "message_id": row.get("message_id") or f"msg_{uuid.uuid4().hex[:12]}",
+            "role": row.get("role", "user"),
+            "content": row.get("content", ""),
+            "timestamp": row.get("created_at", ""),
+            "metadata": metadata or None,
+        }
 
     def set_context(
         self,
@@ -483,10 +670,19 @@ class SessionManager:
     def list_sessions(
         self,
         student_id: Optional[str] = None,
-        status: Optional[SessionStatus] = None,
+        status: Optional[SessionStatus | str] = None,
         limit: int = 50,
     ) -> List[SessionState]:
         """列出会话（使用 hscan 优化）"""
+        status_filter: Optional[SessionStatus] = None
+        if isinstance(status, SessionStatus):
+            status_filter = status
+        elif isinstance(status, str) and status.strip():
+            try:
+                status_filter = SessionStatus(status.strip())
+            except ValueError:
+                status_filter = None
+
         cursor = 0
         collected = 0
         session_ids = []
@@ -506,7 +702,7 @@ class SessionManager:
             if state:
                 if student_id and state.student_id != student_id:
                     continue
-                if status and state.status != status:
+                if status_filter and state.status != status_filter:
                     continue
                 sessions.append(state)
 
@@ -514,7 +710,7 @@ class SessionManager:
         return sessions
 
     def archive_session(self, session_id: str) -> bool:
-        """归档会话"""
+        """归档会话，并触发 Memory Store Reflection（有 student_id 时）"""
         state = self.get_session(session_id)
         if not state:
             return False
@@ -524,6 +720,29 @@ class SessionManager:
 
         self._cache[session_id] = state
         self._save_to_redis(state)
+
+        if state.student_id:
+            try:
+                from .agent_runtime.fork_jobs import enqueue as fork_enqueue
+
+                summary = state.conversation_summary or ""
+                if not summary and state.messages:
+                    summary = " | ".join(
+                        str(m.get("content") or "")[:80]
+                        for m in state.messages[-6:]
+                    )
+                # Qoder-style fork: do not block archive on Reflection LLM/DB
+                fork_enqueue(
+                    session_id,
+                    "reflect_session",
+                    {
+                        "student_id": state.student_id,
+                        "summary": summary,
+                        "promote": True,
+                    },
+                )
+            except Exception as e:
+                logger.warning(f"Reflection fork 入队失败 session={session_id}: {e}")
 
         logger.info(f"归档会话: {session_id}")
         return True
@@ -541,3 +760,14 @@ def get_session_manager() -> SessionManager:
             if _session_manager is None:
                 _session_manager = SessionManager()
     return _session_manager
+
+
+def _loads_json(value: Any, fallback: Any) -> Any:
+    if value in (None, ""):
+        return fallback
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except Exception:
+        return fallback

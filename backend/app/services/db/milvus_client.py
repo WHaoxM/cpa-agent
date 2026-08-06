@@ -1,18 +1,46 @@
 """
 Milvus 向量数据库客户端
 提供向量检索接口，支持 BGE-M3 embedding
-支持独立 Milvus 服务器 (19530) 和 Lite 嵌入式模式
+支持独立 Milvus 服务器与 Lite 嵌入式 (.db) 模式
 """
 
-import os
-import json
-import threading
-from typing import Optional, Dict, Any, List
+from __future__ import annotations
 
-from ...config import Config
+import json
+import os
+import threading
+from typing import Any, Dict, List, Optional
+
+from ...config import Config, _is_milvus_file_uri
 from ...utils.logger import get_logger
 
-logger = get_logger('cpa-agent.db.milvus')
+logger = get_logger("cpa-agent.db.milvus")
+
+# Agent / 归一化默认依赖的集合；连接成功后按需创建空壳
+DEFAULT_COLLECTIONS = (
+    ("skill_vectors", 1024, "COSINE"),
+    ("jd_vectors", 1024, "COSINE"),
+    ("resume_vectors", 1024, "COSINE"),
+    ("conversation_vectors", 1024, "COSINE"),
+)
+
+
+def _import_pymilvus_client():
+    """安全 import pymilvus.MilvusClient。
+
+    pymilvus 在 import 时会读环境变量 MILVUS_URI，只接受 http(s)。
+    Config 加载阶段已剥离文件型 URI；此处再做一次防御。
+    """
+    poisoned = os.environ.get("MILVUS_URI", "")
+    popped = None
+    if _is_milvus_file_uri(poisoned):
+        popped = os.environ.pop("MILVUS_URI", None)
+    try:
+        from pymilvus import MilvusClient as _Client
+        return _Client
+    finally:
+        if popped is not None and not _is_milvus_file_uri(popped):
+            os.environ["MILVUS_URI"] = popped
 
 
 class MilvusClient:
@@ -40,35 +68,72 @@ class MilvusClient:
                 return True
 
             logger.info(f"连接 Milvus: {self.uri}")
+            Client = _import_pymilvus_client()
 
-            is_lite = self.uri.endswith(".db") or os.path.exists(self.uri)
-
-            if is_lite:
-                from pymilvus import MilvusLiteClient
-                if self.uri.startswith("./"):
-                    milvus_uri = os.path.abspath(self.uri)
-                else:
-                    milvus_uri = self.uri
+            if _is_milvus_file_uri(self.uri):
+                milvus_uri = self.uri
+                if not os.path.isabs(milvus_uri):
+                    milvus_uri = os.path.abspath(milvus_uri)
                 milvus_dir = os.path.dirname(milvus_uri)
                 if milvus_dir:
                     os.makedirs(milvus_dir, exist_ok=True)
-                self._client = MilvusLiteClient(uri=milvus_uri)
+                self._client = Client(uri=milvus_uri)
                 self._connected = True
                 logger.info(f"Milvus Lite 嵌入式连接成功: {milvus_uri}")
             else:
-                from pymilvus import MilvusClient
                 uri = self.uri
                 if not uri.startswith("http://") and not uri.startswith("https://"):
                     uri = f"http://{uri}"
-                self._client = MilvusClient(uri=uri)
+                self._client = Client(uri=uri)
                 self._connected = True
                 logger.info(f"Milvus 独立服务器连接成功: {uri}")
-            
+
+            self.ensure_default_collections()
             return True
-            
+
         except Exception as e:
             logger.error(f"Milvus 连接失败: {e}")
             self._connected = False
+            return False
+
+    def ensure_default_collections(self) -> None:
+        """确保 Agent 默认集合存在（空集合即可，避免 insert/search 直接 100）。"""
+        if not self._connected or self._client is None:
+            return
+        for name, dim, metric in DEFAULT_COLLECTIONS:
+            try:
+                if self._client.has_collection(name):
+                    continue
+                self._client.create_collection(
+                    collection_name=name,
+                    dimension=dim,
+                    metric_type=metric,
+                    auto_id=True,
+                    primary_field_name="id",
+                    vector_field_name="embedding",
+                )
+                logger.info("已创建 Milvus collection: %s (dim=%s)", name, dim)
+            except Exception as e:
+                logger.warning("创建 Milvus collection 失败 %s: %s", name, e)
+
+    def ensure_collection(self, collection_name: str, dimension: int = 1024) -> bool:
+        if not self._connected and not self.connect():
+            return False
+        try:
+            if self._client.has_collection(collection_name):
+                return True
+            self._client.create_collection(
+                collection_name=collection_name,
+                dimension=dimension,
+                metric_type="COSINE",
+                auto_id=True,
+                primary_field_name="id",
+                vector_field_name="embedding",
+            )
+            logger.info("已创建 Milvus collection: %s", collection_name)
+            return True
+        except Exception as e:
+            logger.error("ensure_collection(%s) 失败: %s", collection_name, e)
             return False
 
     def disconnect(self, alias: str = "default"):
@@ -103,18 +168,11 @@ class MilvusClient:
     ) -> bool:
         """创建集合"""
         try:
-            from pymilvus import DataType
-            
+            if not self._connected and not self.connect():
+                return False
             if self._client.has_collection(collection_name):
                 logger.info(f"集合 {collection_name} 已存在")
                 return True
-
-            fields = [
-                {"name": primary_field_name, "dtype": DataType.INT64, "is_primary": True, "auto_id": True},
-                {"name": "text", "dtype": DataType.VARCHAR, "max_length": 65535},
-                {"name": vector_field_name, "dtype": DataType.FLOAT_VECTOR, "dimension": dimension},
-                {"name": "metadata", "dtype": DataType.VARCHAR, "max_length": 65535},
-            ]
 
             self._client.create_collection(
                 collection_name=collection_name,
@@ -140,7 +198,15 @@ class MilvusClient:
     ) -> List[int]:
         """插入向量数据"""
         try:
-            meta_strs = [json.dumps(m, ensure_ascii=False) if m else "{}" for m in (metadata or [{}] * len(texts))]
+            if not self._connected and not self.connect():
+                raise RuntimeError("Milvus 未连接")
+            dim = len(vectors[0]) if vectors and vectors[0] else 1024
+            if not self.ensure_collection(collection_name, dimension=dim):
+                raise RuntimeError(f"collection '{collection_name}' 不存在且创建失败")
+            meta_strs = [
+                json.dumps(m, ensure_ascii=False) if m else "{}"
+                for m in (metadata or [{}] * len(texts))
+            ]
 
             data = {
                 "text": texts,
@@ -167,25 +233,40 @@ class MilvusClient:
     ) -> List[Dict[str, Any]]:
         """向量检索"""
         try:
-            if not self._client.has_collection(collection_name):
-                logger.warning(f"集合 {collection_name} 不存在")
+            if not self._connected and not self.connect():
                 return []
+            if not self._client.has_collection(collection_name):
+                logger.warning(f"集合 {collection_name} 不存在（将尝试创建空集合）")
+                dim = len(query_vector) if query_vector else 1024
+                if not self.ensure_collection(collection_name, dimension=dim):
+                    return []
 
-            results = self._client.search(
-                collection_name=collection_name,
-                data=[query_vector],
-                limit=top_k,
-                output_fields=output_fields or ["text", "metadata"],
-            )
+            kwargs: Dict[str, Any] = {
+                "collection_name": collection_name,
+                "data": [query_vector],
+                "limit": top_k,
+                "output_fields": output_fields or ["text", "metadata"],
+            }
+            if expr:
+                kwargs["filter"] = expr
+
+            results = self._client.search(**kwargs)
 
             formatted_results = []
             for hits in results:
                 for hit in hits:
+                    entity = hit.get("entity") if isinstance(hit, dict) else None
+                    if isinstance(entity, dict):
+                        text = entity.get("text")
+                        metadata = entity.get("metadata")
+                    else:
+                        text = hit.get("text") if isinstance(hit, dict) else None
+                        metadata = hit.get("metadata") if isinstance(hit, dict) else None
                     formatted_results.append({
-                        "id": hit.get("id"),
-                        "distance": hit.get("distance"),
-                        "text": hit.get("text"),
-                        "metadata": hit.get("metadata"),
+                        "id": hit.get("id") if isinstance(hit, dict) else getattr(hit, "id", None),
+                        "distance": hit.get("distance") if isinstance(hit, dict) else getattr(hit, "distance", None),
+                        "text": text,
+                        "metadata": metadata,
                     })
 
             logger.debug(f"检索 {collection_name}, top_k={top_k}, 返回 {len(formatted_results)} 条")
@@ -198,6 +279,8 @@ class MilvusClient:
     def delete_collection(self, collection_name: str) -> bool:
         """删除集合"""
         try:
+            if not self._connected and not self.connect():
+                return False
             if self._client.has_collection(collection_name):
                 self._client.drop_collection(collection_name)
                 logger.info(f"集合 {collection_name} 已删除")
@@ -209,6 +292,8 @@ class MilvusClient:
     def list_collections(self) -> List[str]:
         """列出所有集合"""
         try:
+            if not self._connected and not self.connect():
+                return []
             return self._client.list_collections()
         except Exception as e:
             logger.error(f"列出集合失败: {e}")
@@ -217,9 +302,11 @@ class MilvusClient:
     def get_collection_stats(self, collection_name: str) -> Dict[str, Any]:
         """获取集合统计信息"""
         try:
+            if not self._connected and not self.connect():
+                return {"exists": False}
             if not self._client.has_collection(collection_name):
                 return {"exists": False}
-            
+
             return {
                 "exists": True,
                 "name": collection_name,

@@ -50,6 +50,14 @@ class EmbeddingService:
         self._load_time = None
         self._call_count = 0
 
+    def is_available(self) -> bool:
+        """embedding 依赖是否可用（不触发重型模型下载）。"""
+        try:
+            import importlib.util
+            return importlib.util.find_spec("sentence_transformers") is not None
+        except Exception:
+            return False
+
     def _load_model(self):
         """延迟加载模型"""
         if self._model is not None:
@@ -74,9 +82,15 @@ class EmbeddingService:
 
             logger.info(f"BGE-M3 模型加载成功, 耗时: {self._load_time:.2f}s")
 
-        except ImportError:
-            logger.error("sentence-transformers 未安装，请运行: pip install sentence-transformers")
-            raise
+        except ImportError as e:
+            logger.error(
+                "sentence-transformers 未安装，语义检索不可用。"
+                "请运行: pip install sentence-transformers"
+            )
+            raise ImportError(
+                "sentence-transformers 未安装；语义检索/归一化降级。"
+                "安装: pip install 'sentence-transformers>=3.0.0'"
+            ) from e
         except Exception as e:
             logger.error(f"BGE-M3 模型加载失败: {e}")
             raise

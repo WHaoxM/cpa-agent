@@ -23,6 +23,7 @@ Use this order when documents disagree:
 | Runbooks | `runbooks/` | Operate, diagnose, recover | Operational procedure changes |
 | Guides | `guides/` | Maintainer implementation guidance | Repeated maintenance workflow |
 | API Notes | `api/` | Internal API contract notes | Endpoint contract or integration changes |
+| Frontend (cpa-xingtu) | `frontend/cpa-xingtu/` | Route-level FE design contracts, fixtures/adapter conventions | cpa-xingtu page or ideal API contract changes |
 | Archive | `archive/YYYY-MM/` | Stale or superseded docs | Quarterly or after major rewrites |
 
 Folders may be created lazily when the first current document of that type is needed.
@@ -52,9 +53,14 @@ For open-source runnable hardening, keep these active and maintained:
 - `../CONTEXT.md`
 - `README.md`
 - `adr/0001-config-and-workspace-layers.md`
+- `adr/0002-pattern-upgrade-retrieve-parse.md`
 - `guides/open-source-hardening.md`
 - `guides/documentation-governance.md`
+- `guides/windows-powershell-encoding.md` — Windows/PS 5.1 下乱码是解码假象，文件均为 UTF-8；读写姿势与真损坏判定
 - `specs/runnable-demo-hardening.md`
+- `specs/pending-code-quality.md`
+- `specs/frontend-api-contract-matrix.md` — 真库冒烟快照（非 cpa-xingtu 产品契约权威）
+- `frontend/cpa-xingtu/README.md` — cpa-xingtu 全路由设计文档入口
 - `runbooks/local-smoke-test.md`
 
 ## Archive Policy

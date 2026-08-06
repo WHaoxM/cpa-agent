@@ -1,16 +1,24 @@
 """
 匹配与分析 API 路由
-/api/match — 四维匹配、技能差距、职业路径推荐
+/api/match — 四维匹配、技能差距、职业路径推荐、hybrid 召回、可解释匹配
+
+分数权威：rules/代码确定性 scorer；hybrid/explain 不得改写 total_score。
 """
 
 import uuid
 from flask import request, jsonify
 
 from . import match_bp
-from ._helpers import build_dimensions_d1_d4, build_sub_dimensions, parse_json_field, safe_error
+from ._helpers import (
+    build_dimensions_d1_d4,
+    clamp_pagination,
+    parse_json_field,
+    safe_error,
+    sub_dimensions_from_payload,
+)
 from ..services.db import get_mysql_client
+from ..services.hybrid_retrieve import build_match_explain, hybrid_recommend
 from ..utils.logger import get_logger
-from ..exceptions import ErrorCode
 
 logger = get_logger('cpa-agent.api.match')
 
@@ -59,12 +67,7 @@ def run_match():
             }), 500
 
     except Exception as e:
-        logger.error(f"人岗匹配执行失败: {e}")
-        return jsonify({
-            "success": False,
-            "error": "匹配执行失败，请稍后重试",
-            "code": ErrorCode.INTERNAL_ERROR.value
-        }), 500
+        return jsonify(safe_error("人岗匹配执行", e, message="匹配执行失败，请稍后重试")), 500
 
 
 @match_bp.route('/result/<student_id>/<job_portrait_id>', methods=['GET'])
@@ -82,12 +85,6 @@ def get_match_result(student_id: str, job_portrait_id: str):
             mr.d2_match,
             mr.d3_match,
             mr.d4_match,
-            mr.d5_match,
-            mr.d6_match,
-            mr.d7_match,
-            mr.d8_match,
-            mr.d9_match,
-            mr.d10_match,
             mr.total_score,
             mr.d1_pass,
             mr.skill_coverage,
@@ -138,14 +135,10 @@ def get_match_result(student_id: str, job_portrait_id: str):
                 "job_portrait_id": result['job_portrait_id'],
                 "position_name": result.get('position_name'),
                 "dimensions": dimensions,
-                "sub_dimensions": build_sub_dimensions(
+                # 七维子分未落列；从 result_json 取，缺省为 0（schema 仅存 D1–D4）
+                "sub_dimensions": sub_dimensions_from_payload(
                     result.get('d2_match', 0),
-                    result.get('d5_match') or 0,
-                    result.get('d6_match') or 0,
-                    result.get('d7_match') or 0,
-                    result.get('d8_match') or 0,
-                    result.get('d9_match') or 0,
-                    result.get('d10_match') or 0,
+                    result.get('result_json'),
                 ),
                 "total_score": result.get('total_score', 0),
                 "is_matched": result.get('is_matched', False),
@@ -199,6 +192,33 @@ def get_skill_gap(student_id: str, job_portrait_id: str):
         if not isinstance(gaps, list):
             gaps = []
 
+        # Enrich with explain fields (does not change stored scores)
+        mr_rows = mysql.execute(
+            """
+            SELECT total_score, skill_coverage, result_json
+            FROM match_result
+            WHERE student_id = :student_id AND job_portrait_id = :job_portrait_id
+            LIMIT 1
+            """,
+            {"student_id": student_id, "job_portrait_id": job_portrait_id},
+        ) or []
+        mr = mr_rows[0] if mr_rows else {}
+        result_json = parse_json_field(mr.get("result_json"), default={}) or {}
+        matched = result_json.get("matched_skills") or []
+        missing = result_json.get("missing_skills") or [
+            g.get("skill") for g in gaps if isinstance(g, dict) and g.get("skill")
+        ]
+        explain = build_match_explain(
+            student_id=student_id,
+            job_portrait_id=job_portrait_id,
+            matched_skills=matched,
+            missing_skills=missing,
+            total_score=mr.get("total_score"),
+            skill_coverage=mr.get("skill_coverage"),
+            position_name=gap.get("position_name"),
+            gaps=gaps,
+        )
+
         return jsonify({
             "success": True,
             "data": {
@@ -209,17 +229,106 @@ def get_skill_gap(student_id: str, job_portrait_id: str):
                 "quick_learn_count": gap.get('quick_learn_count', 0),
                 "total_gap_count": gap.get('total_gap_count', 0),
                 "gaps": gaps,
-                "created_at": gap.get('created_at')
+                "created_at": gap.get('created_at'),
+                "keyword_coverage": explain.get("keyword_coverage"),
+                "evidence": explain.get("evidence"),
+                "graph_paths": explain.get("graph_paths"),
+                "related_courses": explain.get("related_courses"),
             }
         })
 
     except Exception as e:
-        logger.error(f"获取技能差距失败: {e}")
-        return jsonify({
-            "success": False,
-            "error": "查询失败，请稍后重试",
-            "code": ErrorCode.INTERNAL_ERROR.value
-        }), 500
+        return jsonify(safe_error("获取技能差距", e, message="查询失败，请稍后重试")), 500
+
+
+@match_bp.route('/explain/<student_id>/<job_portrait_id>', methods=['GET'])
+def explain_match(student_id: str, job_portrait_id: str):
+    """可解释匹配：evidence + 关键词覆盖 + 图谱路径；分数只读自 match_result。"""
+    try:
+        mysql = get_mysql_client()
+        mr_rows = mysql.execute(
+            """
+            SELECT
+                mr.total_score,
+                mr.skill_coverage,
+                mr.result_json,
+                mr.is_matched,
+                mr.match_level,
+                jp.position_name
+            FROM match_result mr
+            LEFT JOIN job_portrait_4d jp ON mr.job_portrait_id = jp.portrait_id
+            WHERE mr.student_id = :student_id AND mr.job_portrait_id = :job_portrait_id
+            LIMIT 1
+            """,
+            {"student_id": student_id, "job_portrait_id": job_portrait_id},
+        ) or []
+        if not mr_rows:
+            return jsonify({
+                "success": False,
+                "error": f"未找到匹配结果: student={student_id}, job={job_portrait_id}",
+            }), 404
+
+        mr = mr_rows[0]
+        result_json = parse_json_field(mr.get("result_json"), default={}) or {}
+        matched = result_json.get("matched_skills") or []
+        missing = result_json.get("missing_skills") or result_json.get("missing_required") or []
+
+        gap_rows = mysql.execute(
+            """
+            SELECT gap_json FROM skill_gap
+            WHERE student_id = :student_id AND job_portrait_id = :job_portrait_id
+            LIMIT 1
+            """,
+            {"student_id": student_id, "job_portrait_id": job_portrait_id},
+        ) or []
+        gaps = []
+        if gap_rows:
+            gaps = parse_json_field(gap_rows[0].get("gap_json"), default=[]) or []
+            if not isinstance(gaps, list):
+                gaps = []
+            if not missing:
+                missing = [
+                    g.get("skill") for g in gaps if isinstance(g, dict) and g.get("skill")
+                ]
+
+        explain = build_match_explain(
+            student_id=student_id,
+            job_portrait_id=job_portrait_id,
+            matched_skills=matched,
+            missing_skills=missing,
+            total_score=mr.get("total_score"),
+            skill_coverage=mr.get("skill_coverage"),
+            position_name=mr.get("position_name"),
+            gaps=gaps,
+        )
+        explain["is_matched"] = mr.get("is_matched")
+        explain["match_level"] = mr.get("match_level")
+        return jsonify({"success": True, "data": explain})
+    except Exception as e:
+        return jsonify(safe_error("匹配解释", e, message="查询失败，请稍后重试")), 500
+
+
+@match_bp.route('/hybrid-candidates', methods=['POST'])
+def hybrid_candidates():
+    """Hybrid 召回候选（向量+关键词+图 hop）。返回 retrieve_score，不含确定性 match 总分。"""
+    data = request.get_json() or {}
+    skills = data.get("skills") or []
+    preferred_role = data.get("preferred_role") or data.get("role")
+    top_k = int(data.get("top_k") or 10)
+    top_k = max(1, min(top_k, 50))
+    enable_graph = data.get("enable_graph_hop", True)
+    if not skills:
+        return jsonify({"success": False, "error": "skills 必填"}), 400
+    try:
+        payload = hybrid_recommend(
+            skills,
+            preferred_role=preferred_role,
+            top_k=top_k,
+            enable_graph_hop=bool(enable_graph),
+        )
+        return jsonify({"success": True, "data": payload})
+    except Exception as e:
+        return jsonify(safe_error("hybrid 召回", e, message="召回失败，请稍后重试")), 500
 
 
 @match_bp.route('/career-recommendation/<student_id>', methods=['GET'])
@@ -299,12 +408,7 @@ def get_career_recommendation(student_id: str):
         })
 
     except Exception as e:
-        logger.error(f"获取职业推荐失败: {e}")
-        return jsonify({
-            "success": False,
-            "error": "查询失败，请稍后重试",
-            "code": ErrorCode.INTERNAL_ERROR.value
-        }), 500
+        return jsonify(safe_error("获取职业推荐", e, message="查询失败，请稍后重试")), 500
 
 
 @match_bp.route('/list/<student_id>', methods=['GET'])
@@ -313,8 +417,11 @@ def list_match_results(student_id: str):
     try:
         mysql = get_mysql_client()
 
-        limit = request.args.get('limit', 20, type=int)
-        offset = request.args.get('offset', 0, type=int)
+        limit, offset = clamp_pagination(
+            request.args.get('limit', type=int),
+            request.args.get('offset', type=int),
+            default_limit=20,
+        )
 
         sql = """
         SELECT
@@ -325,15 +432,10 @@ def list_match_results(student_id: str):
             mr.d2_match,
             mr.d3_match,
             mr.d4_match,
-            mr.d5_match,
-            mr.d6_match,
-            mr.d7_match,
-            mr.d8_match,
-            mr.d9_match,
-            mr.d10_match,
             mr.total_score,
             mr.is_matched,
             mr.match_level,
+            mr.result_json,
             mr.created_at,
             jp.position_name,
             sp.name as student_name
@@ -353,14 +455,10 @@ def list_match_results(student_id: str):
 
         # 构造 sub_dimensions 字段 (与 /result 端点保持一致)
         for row in results:
-            row['sub_dimensions'] = build_sub_dimensions(
+            row['result_json'] = parse_json_field(row.get('result_json'))
+            row['sub_dimensions'] = sub_dimensions_from_payload(
                 row.get('d2_match', 0),
-                row.get('d5_match') or 0,
-                row.get('d6_match') or 0,
-                row.get('d7_match') or 0,
-                row.get('d8_match') or 0,
-                row.get('d9_match') or 0,
-                row.get('d10_match') or 0,
+                row.get('result_json'),
             )
 
         count_sql = "SELECT COUNT(*) as total FROM match_result WHERE student_id = :student_id"

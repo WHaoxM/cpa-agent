@@ -144,6 +144,11 @@ class SemanticSearchTool(BaseTool):
         logger.info(f"semantic_search 执行: query={query}, collection={collection}, top_k={top_k}")
 
         try:
+            if not self.embedding.is_available():
+                return (
+                    "[semantic_search] 不可用: 未安装 sentence-transformers。"
+                    "请执行 pip install 'sentence-transformers>=3.0.0' 后重启后端。"
+                )
             query_vector = self._encode([query])[0]
 
             collections = self._get_collections(collection)

@@ -313,9 +313,10 @@ def skill_neighbors(skill_name: str):
                 }
 
             if n:
+                labels = list(n.labels()) if hasattr(n, 'labels') else []
                 neighbor = {
                     "name": n.get('name', n.get('title', 'Unknown')),
-                    "type": list(n.labels())[0] if hasattr(n, 'labels') and n.labels else 'Unknown',
+                    "type": labels[0] if labels else 'Unknown',
                     "relationship": r.type() if hasattr(r, 'type') else 'related'
                 }
                 neighbors.append(neighbor)

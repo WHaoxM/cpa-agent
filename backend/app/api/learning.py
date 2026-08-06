@@ -6,11 +6,39 @@ import uuid
 from flask import request, jsonify
 
 from . import learning_bp
-from ._helpers import safe_error
+from ._helpers import clamp_pagination, parse_json_field, safe_error
 from ..services.db import get_mysql_client
 from ..utils.logger import get_logger
 
 logger = get_logger('cpa-agent.api.learning')
+
+_CHAPTER_COLS_READY = False
+
+
+def _ensure_chapter_video_columns() -> None:
+    """为已有库补 video_url / video_provider 列（无业务文案）。"""
+    global _CHAPTER_COLS_READY
+    if _CHAPTER_COLS_READY:
+        return
+    mysql = get_mysql_client()
+    cols = {
+        r["COLUMN_NAME"]
+        for r in mysql.execute(
+            """
+            SELECT COLUMN_NAME FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'chapter'
+            """
+        )
+    }
+    if "video_url" not in cols:
+        mysql.execute_write(
+            "ALTER TABLE chapter ADD COLUMN video_url VARCHAR(500) DEFAULT NULL"
+        )
+    if "video_provider" not in cols:
+        mysql.execute_write(
+            "ALTER TABLE chapter ADD COLUMN video_provider VARCHAR(64) DEFAULT NULL"
+        )
+    _CHAPTER_COLS_READY = True
 
 
 @learning_bp.route('/courses', methods=['GET'])
@@ -19,8 +47,11 @@ def list_courses():
     try:
         mysql = get_mysql_client()
         category = request.args.get('category')
-        limit = request.args.get('limit', 20, type=int)
-        offset = request.args.get('offset', 0, type=int)
+        limit, offset = clamp_pagination(
+            request.args.get('limit', type=int),
+            request.args.get('offset', type=int),
+            default_limit=20,
+        )
 
         if category:
             sql = "SELECT * FROM course WHERE category = :category ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
@@ -40,8 +71,9 @@ def list_courses():
 
 @learning_bp.route('/courses/<course_id>', methods=['GET'])
 def get_course(course_id: str):
-    """获取课程详情"""
+    """获取课程详情（含章节 video_url）"""
     try:
+        _ensure_chapter_video_columns()
         mysql = get_mysql_client()
         sql = "SELECT * FROM course WHERE course_id = :course_id"
         results = mysql.execute(sql, {"course_id": course_id})
@@ -49,7 +81,19 @@ def get_course(course_id: str):
         if not results:
             return jsonify({"success": False, "error": "课程不存在"}), 404
 
-        return jsonify({"success": True, "data": results[0]})
+        course = results[0]
+        chapters = mysql.execute(
+            """
+            SELECT id, course_id, title, sequence, duration_hours, content_summary,
+                   video_url, video_provider, created_at
+            FROM chapter
+            WHERE course_id = :course_id
+            ORDER BY sequence ASC
+            """,
+            {"course_id": course_id},
+        )
+        course["chapters"] = chapters
+        return jsonify({"success": True, "data": course})
 
     except Exception as e:
         return jsonify(safe_error("获取课程详情", e)), 500
@@ -151,7 +195,7 @@ def recommend_courses():
         weak_skills_str = request.args.get('weak_skills', '')
         target_role = request.args.get('target_role', '')
         student_id = request.args.get('student_id', '')
-        limit = request.args.get('limit', 10, type=int)
+        limit, _ = clamp_pagination(request.args.get('limit', type=int), None, default_limit=10)
 
         mysql = get_mysql_client()
 
@@ -204,8 +248,7 @@ def recommend_courses():
             """
             result = mysql.execute(sql, {"student_id": student_id})
             if result and result[0]["weak_skills"]:
-                import json
-                stored_weak = json.loads(result[0]["weak_skills"])
+                stored_weak = parse_json_field(result[0]["weak_skills"], default=[])
                 if stored_weak:
                     conditions = []
                     params = {}
@@ -247,3 +290,24 @@ def recommend_courses():
 
     except Exception as e:
         return jsonify(safe_error("课程推荐", e)), 500
+
+
+@learning_bp.route('/course-system-graph', methods=['GET'])
+def course_system_graph():
+    """课程体系富图（Neo4j）；无数据 404。"""
+    try:
+        from ..services.ability_graph_service import get_course_system_graph
+
+        role = (request.args.get("role") or "").strip()
+        if not role:
+            return jsonify({"success": False, "error": "role required"}), 400
+        data = get_course_system_graph(role)
+        if not data or not data.get("nodes"):
+            return jsonify({
+                "success": False,
+                "error": f"course system graph empty for role={role}",
+                "data": None,
+            }), 404
+        return jsonify({"success": True, "data": data})
+    except Exception as e:
+        return jsonify(safe_error("get course system graph", e)), 500

@@ -23,7 +23,7 @@ import json
 from flask import request, jsonify
 
 from ._helpers import safe_error, parse_json_field
-from .pipeline_ext_common import pipeline_ext_bp, logger
+from .pipeline_ext_common import pipeline_ext_bp, logger, _get_dimension_weights
 
 
 @pipeline_ext_bp.route('/graph/career/summary', methods=['GET'])
@@ -217,7 +217,7 @@ def aggregate_job_portraits():
             "salary_range": {"min": avg_salary_min, "max": avg_salary_max},
             "required_skills": required_skills[:20],
             "required_skill_cnt": len(required_skills),
-            "weights": {"D1": 0.25, "D2": 0.35, "D3": 0.20, "D4": 0.20},
+            "weights": _get_dimension_weights(),
             "source_jobs": [r['job_id'] for r in results[:10]]
         }
 
@@ -402,11 +402,14 @@ def save_job_portrait():
         from ..services.db import get_mysql_client
         mysql = get_mysql_client()
 
+        default_weights = _get_dimension_weights()
+        weights = data.get('weights') or default_weights
+
         portrait_json = {
             "position_name": position_name,
             "jd_count": jd_count,
             "required_skills": data.get('required_skills', []),
-            "weights": data.get('weights', {"D1": 0.25, "D2": 0.35, "D3": 0.20, "D4": 0.20}),
+            "weights": weights,
             "required_degree": data.get('required_degree', '不限'),
             "avg_experience": data.get('avg_experience_years', 0),
             "salary_range": data.get('salary_range', {})
@@ -430,18 +433,16 @@ def save_job_portrait():
             updated_at = NOW()
         """
 
-        weights = data.get('weights', {"D1": 0.25, "D2": 0.35, "D3": 0.20, "D4": 0.20})
-
         mysql.execute(sql, {
             "portrait_id": portrait_id,
             "position_name": position_name,
             "jd_count": jd_count,
             "required_degree": data.get('required_degree', '不限'),
             "required_skill_cnt": len(data.get('required_skills', [])),
-            "d1_weight": weights.get("D1", 0.25),
-            "d2_weight": weights.get("D2", 0.35),
-            "d3_weight": weights.get("D3", 0.20),
-            "d4_weight": weights.get("D4", 0.20),
+            "d1_weight": weights.get("D1", default_weights["D1"]),
+            "d2_weight": weights.get("D2", default_weights["D2"]),
+            "d3_weight": weights.get("D3", default_weights["D3"]),
+            "d4_weight": weights.get("D4", default_weights["D4"]),
             "portrait_json": json.dumps(portrait_json)
         })
 

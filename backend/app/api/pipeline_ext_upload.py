@@ -18,7 +18,6 @@ from flask import request, jsonify
 
 from ._helpers import safe_error
 from .pipeline_ext_common import pipeline_ext_bp, logger
-from ..exceptions import ErrorCode
 
 # 文件类型白名单
 _ALLOWED_EXT = {'pdf', 'docx', 'doc', 'txt', 'png', 'jpg', 'jpeg', 'bmp', 'webp', 'tiff'}
@@ -59,12 +58,16 @@ def parse_resume_file_api():
         l0_result = parser.parse_file(temp_path)
 
         if not l0_result.success:
-            logger.warning(f"简历解析失败: {l0_result.error}")
-            return jsonify({"success": False, "error": "文件解析失败，请检查文件格式", "code": ErrorCode.INTERNAL_ERROR.value}), 500
+            return jsonify(safe_error("简历解析", l0_result.error, message="文件解析失败，请检查文件格式")), 500
 
+        # Structure truth: never silently truncate raw resume text (old [:5000] dropped 教育经历).
+        full_text = (l0_result.text or "").strip()
         response_data = {
             "student_id": f"student_{uuid.uuid4().hex[:8]}",
-            "text": l0_result.text[:5000] if l0_result.text else "",
+            "text": full_text,
+            "raw_text": full_text,
+            "text_chars": len(full_text),
+            "truncated": False,
             "block_count": len(l0_result.blocks),
             "blocks": [
                 {
@@ -75,12 +78,13 @@ def parse_resume_file_api():
                     "source": b.source,
                     "page": b.page
                 }
-                for b in l0_result.blocks
+                for b in l0_result.blocks[:80]
             ],
             "metadata": {
                 **l0_result.metadata,
                 "engine": l0_result.engine,
-                "file_size": os.path.getsize(temp_path)
+                "file_size": os.path.getsize(temp_path),
+                "text_chars": len(full_text),
             }
         }
 
@@ -137,8 +141,7 @@ def parse_jd_file_api():
         l0_result = parser.parse_file(temp_path)
 
         if not l0_result.success:
-            logger.warning(f"JD解析失败: {l0_result.error}")
-            return jsonify({"success": False, "error": "文件解析失败，请检查文件格式", "code": ErrorCode.INTERNAL_ERROR.value}), 500
+            return jsonify(safe_error("JD解析", l0_result.error, message="文件解析失败，请检查文件格式")), 500
 
         response_data = {
             "text": l0_result.text[:5000] if l0_result.text else "",

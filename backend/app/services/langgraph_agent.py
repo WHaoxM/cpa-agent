@@ -24,7 +24,15 @@ from langchain_core.tools import tool as lc_tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode, tools_condition
+from pydantic import BaseModel, Field, create_model
+
+try:
+    from langgraph.prebuilt import ToolNode, tools_condition
+except ImportError as _lg_err:  # pragma: no cover
+    raise ImportError(
+        "缺少 langgraph.prebuilt.ToolNode。请在 mkg 中安装: "
+        'pip install "langgraph>=0.4.0" "langgraph-prebuilt>=0.1.0"'
+    ) from _lg_err
 
 from config.prompt_loader import load_prompt
 
@@ -52,6 +60,43 @@ class CPAState(TypedDict):
 # 全局缓存, 避免重复创建
 _tool_registry: Dict[str, Any] = {}
 
+_JSON_TYPE_MAP = {
+    "string": str,
+    "integer": int,
+    "number": float,
+    "boolean": bool,
+    "array": list,
+    "object": dict,
+}
+
+
+def _parameters_to_args_model(tool_name: str, params_schema: Any) -> Optional[type[BaseModel]]:
+    """BaseTool.parameters（JSON Schema 或 {名:说明}）→ Pydantic args_schema。"""
+    if not isinstance(params_schema, dict) or not params_schema:
+        return None
+
+    fields: Dict[str, Any] = {}
+    if "properties" in params_schema:
+        required = set(params_schema.get("required") or [])
+        for key, prop in (params_schema.get("properties") or {}).items():
+            prop = prop if isinstance(prop, dict) else {}
+            py_type = _JSON_TYPE_MAP.get(str(prop.get("type") or "string"), str)
+            desc = str(prop.get("description") or "")
+            if key in required:
+                fields[key] = (py_type, Field(description=desc))
+            else:
+                default = prop.get("default", None)
+                fields[key] = (Optional[py_type], Field(default=default, description=desc))
+    else:
+        for key, desc in params_schema.items():
+            if key in ("type", "required", "properties"):
+                continue
+            fields[str(key)] = (str, Field(default="", description=str(desc)))
+
+    if not fields:
+        return None
+    return create_model(f"{tool_name}Args", **fields)
+
 
 def _adapt_existing_tool(base_tool_instance) -> Any:
     """
@@ -62,30 +107,26 @@ def _adapt_existing_tool(base_tool_instance) -> Any:
     if name in _tool_registry:
         return _tool_registry[name]
 
-    # 从 BaseTool.parameters 构造参数签名
-    params_schema = base_tool_instance.parameters
     desc = base_tool_instance.description
+    args_model = _parameters_to_args_model(name, base_tool_instance.parameters)
 
-    # 动态创建 @tool 函数
-    @lc_tool(name=name, description=desc)
     def adapted_tool(**kwargs) -> str:
         result = base_tool_instance.execute(**kwargs)
         if isinstance(result, dict):
             return json.dumps(result, ensure_ascii=False)
         return str(result)
 
-    # 注入参数 schema (如果 BaseTool 提供了 JSON Schema 格式)
-    if isinstance(params_schema, dict) and "properties" in params_schema:
-        adapted_tool.args_schema = type(
-            f"{name}Args",
-            (),
-            {"__annotations__": {
-                k: str for k in params_schema.get("properties", {}).keys()
-            }},
-        )
+    adapted_tool.__name__ = name
+    adapted_tool.__doc__ = desc
 
-    _tool_registry[name] = adapted_tool
-    return adapted_tool
+    # langchain_core>=1.x: 工具名走首位位置参数，不再接受 name=
+    if args_model is not None:
+        wrapped = lc_tool(name, description=desc, args_schema=args_model)(adapted_tool)
+    else:
+        wrapped = lc_tool(name, description=desc)(adapted_tool)
+
+    _tool_registry[name] = wrapped
+    return wrapped
 
 
 def _build_langchain_tools() -> List[Any]:
@@ -128,7 +169,10 @@ def _build_langchain_tools() -> List[Any]:
         instances.append(jd_cleaner)
 
     # ── 归一化工具 (原生 @tool, 非 BaseTool) ──
-    @lc_tool(name="normalize_entity", description="将实体名归一化为数据库规范名。输入: name(实体名), entity_type(skill/position/major/certificate)。返回: canonical_name, match_type, is_oov。OOV时自动注册到数据库。")
+    @lc_tool(
+        "normalize_entity",
+        description="将实体名归一化为数据库规范名。输入: name(实体名), entity_type(skill/position/major/certificate)。返回: canonical_name, match_type, is_oov。OOV时自动注册到数据库。",
+    )
     def normalize_entity_tool(name: str, entity_type: str = "skill", context: str = "") -> str:
         try:
             from .entity_normalizer import get_entity_normalizer
@@ -178,6 +222,37 @@ def agent_node(state: CPAState, llm_with_tools) -> Dict:
 # 5. Graph Builder
 # ═══════════════════════════════════════════════════════════════
 
+def _build_llm_with_tools(lc_tools: List[Any], temperature: float, max_tokens: int):
+    """按 LLM_FAILOVER_ORDER 构建 ChatOpenAI + tools；402/鉴权等自动落到下一厂商。"""
+    from config.integration_loader import get_failover_order, get_provider_config
+
+    bound: List[Any] = []
+    for provider in get_failover_order():
+        cfg = get_provider_config(provider)
+        if not cfg.get("api_key") or not cfg.get("base_url") or not cfg.get("model"):
+            continue
+        llm = ChatOpenAI(
+            api_key=cfg["api_key"],
+            base_url=cfg["base_url"],
+            model=cfg["model"],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=cfg.get("timeout") or Config.LLM_TIMEOUT,
+        )
+        bound.append(llm.bind_tools(lc_tools))
+        logger.info(
+            "LangGraph LLM candidate provider=%s model=%s",
+            provider,
+            cfg["model"],
+        )
+
+    if not bound:
+        raise ValueError("未配置可用 LLM（LangGraph 需要至少一个 provider 的 API Key）")
+    if len(bound) == 1:
+        return bound[0]
+    return bound[0].with_fallbacks(bound[1:])
+
+
 def build_cpa_agent(
     checkpointer=None,
     temperature: float = 0.5,
@@ -197,18 +272,8 @@ def build_cpa_agent(
     # 构建 tools
     lc_tools = _build_langchain_tools()
 
-    # 构建 LLM (OpenAI SDK 格式, 兼容 DeepSeek / Qwen)
-    llm = ChatOpenAI(
-        api_key=Config.LLM_API_KEY,
-        base_url=Config.LLM_BASE_URL,
-        model=Config.LLM_MODEL_NAME,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        timeout=Config.LLM_TIMEOUT,
-    )
-
-    # 绑定 tools — LLM 将使用原生 function_calling
-    llm_with_tools = llm.bind_tools(lc_tools)
+    # 绑定 tools + 多厂商 failover（DeepSeek 402 → Qwen）
+    llm_with_tools = _build_llm_with_tools(lc_tools, temperature, max_tokens)
 
     # ToolNode — 支持并行执行 + 错误处理
     tool_node = ToolNode(
@@ -262,31 +327,103 @@ def build_cpa_agent(
 _checkpointer_instance = None
 
 
+_checkpointer_cm = None  # 保持 from_conn_string 的 context manager 存活
+
+
+def _mysql_checkpoint_uri() -> str:
+    """构造 PyMySQLSaver 连接串，与业务 MySQL 使用同一套 Config。
+
+    注意：langgraph/pymysql 对 userinfo 里的 %XX 解码不完整。
+    把密码里的 ``!`` 编成 ``%21`` 会导致 1045 Access denied。
+    因此只编码会破坏 URI 结构的字符（:@/?# 等），保留 ``!`` 等子分隔符原文。
+    """
+    from urllib.parse import quote
+
+    user = quote(str(Config.MYSQL_USER or ""), safe="")
+    # safe 保留 ! 等；必须编码 @ : / ? # % 以免截断 userinfo/host
+    password = quote(str(Config.MYSQL_PASSWORD or ""), safe="!")
+    return (
+        f"mysql://{user}:{password}"
+        f"@{Config.MYSQL_HOST}:{Config.MYSQL_PORT}/{Config.MYSQL_DATABASE}"
+    )
+
+
+def _align_checkpoint_collation() -> None:
+    """对齐 checkpoint 表 collation，消除 1267 Illegal mix of collations。
+
+    库默认多为 utf8mb4_unicode_ci；langgraph-checkpoint-mysql 的 JSON_TABLE
+    只写了 CHARACTER SET utf8mb4、未写 COLLATE，MySQL 8 会落到
+    utf8mb4_0900_ai_ci，与表列比较时报错。
+    见 https://github.com/tjni/langgraph-checkpoint-mysql/issues/55
+    """
+    from .db import get_mysql_client
+
+    mysql = get_mysql_client()
+    target = "utf8mb4_0900_ai_ci"
+    rows = mysql.execute(
+        """
+        SELECT TABLE_NAME
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME IN (
+            'checkpoints', 'checkpoint_blobs',
+            'checkpoint_writes', 'checkpoint_migrations'
+          )
+        """
+    )
+    for row in rows or []:
+        name = row["TABLE_NAME"] if isinstance(row, dict) else row[0]
+        # 已是目标 collation 则跳过
+        status = mysql.execute(
+            """
+            SELECT TABLE_COLLATION
+            FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :name
+            LIMIT 1
+            """,
+            {"name": name},
+        )
+        current = (status[0].get("TABLE_COLLATION") if status else None) or ""
+        if current == target:
+            continue
+        mysql.execute(
+            f"ALTER TABLE `{name}` CONVERT TO CHARACTER SET utf8mb4 COLLATE {target}"
+        )
+        logger.info("checkpoint 表 collation 已对齐: %s -> %s", name, target)
+
+
 def get_checkpointer():
     """
     获取 MySQL checkpointer (单例)
     使用 PyMySQLSaver 持久化对话状态到 MySQL
     """
-    global _checkpointer_instance
+    global _checkpointer_instance, _checkpointer_cm
     if _checkpointer_instance is not None:
         return _checkpointer_instance
 
     try:
         from langgraph.checkpoint.mysql.pymysql import PyMySQLSaver
 
-        db_uri = (
-            f"mysql://{Config.MYSQL_USER}:{Config.MYSQL_PASSWORD}"
-            f"@{Config.MYSQL_HOST}:{Config.MYSQL_PORT}/{Config.MYSQL_DATABASE}"
-        )
+        db_uri = _mysql_checkpoint_uri()
 
-        _checkpointer_instance = PyMySQLSaver.from_conn_string(db_uri)
-        # 首次使用需要 setup() 创建 checkpoint 表
-        _checkpointer_instance.setup()
+        # 新版 from_conn_string → GeneratorContextManager，须 enter 且勿提前 exit
+        _checkpointer_cm = PyMySQLSaver.from_conn_string(db_uri)
+        saver = _checkpointer_cm.__enter__()
+        saver.setup()
+        try:
+            _align_checkpoint_collation()
+        except Exception as align_err:
+            logger.warning("checkpoint collation 对齐失败（可稍后跑 fix SQL）: %s", align_err)
+        _checkpointer_instance = saver
         logger.info("MySQL Checkpointer 初始化成功")
         return _checkpointer_instance
 
     except Exception as e:
-        logger.warning(f"MySQL Checkpointer 初始化失败, 回退 MemorySaver: {e}")
+        logger.warning(
+            "MySQL Checkpointer 初始化失败, 回退 MemorySaver: %s: %s",
+            type(e).__name__,
+            e,
+        )
         from langgraph.checkpoint.memory import MemorySaver
         _checkpointer_instance = MemorySaver()
         return _checkpointer_instance

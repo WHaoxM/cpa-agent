@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "roles": [
+    {
+      "role": "前端开发",
+      "aliases": [
+        "Vue 前端工程师",
+        "React 前端工程师",
+        "前端工程师",
+        "前端开发工程师"
+      ],
+      "nodes": [
+        { "id": "job-center", "name": "前端开发", "level": 0, "group": "job", "heat": 100 },
+        { "id": "board-pro", "name": "专业技能", "level": 1, "group": "professional", "parentId": "job-center", "heat": 85 },
+        { "id": "board-pos", "name": "岗位技能", "level": 1, "group": "position", "parentId": "job-center", "heat": 85 },
+        { "id": "board-cog", "name": "认知技能", "level": 1, "group": "cognitive", "parentId": "job-center", "heat": 80 },
+        { "id": "board-gen", "name": "通用技能", "level": 1, "group": "general", "parentId": "job-center", "heat": 78 },
+        { "id": "vue3", "name": "Vue 3", "level": 2, "group": "professional", "parentId": "board-pro", "heat": 92 },
+        { "id": "ts", "name": "TypeScript", "level": 2, "group": "professional", "parentId": "board-pro", "heat": 90 },
+        { "id": "eng", "name": "工程化", "level": 2, "group": "position", "parentId": "board-pos", "heat": 88 },
+        { "id": "perf", "name": "性能优化", "level": 2, "group": "position", "parentId": "board-pos", "heat": 84 },
+        { "id": "logic", "name": "逻辑思维", "level": 2, "group": "cognitive", "parentId": "board-cog", "heat": 86 },
+        { "id": "comm", "name": "沟通协作", "level": 2, "group": "general", "parentId": "board-gen", "heat": 82 }
+      ],
+      "edges": [
+        { "source": "job-center", "target": "board-pro", "relation": "belong" },
+        { "source": "job-center", "target": "board-pos", "relation": "belong" },
+        { "source": "job-center", "target": "board-cog", "relation": "belong" },
+        { "source": "job-center", "target": "board-gen", "relation": "belong" },
+        { "source": "board-pro", "target": "vue3", "relation": "belong" },
+        { "source": "board-pro", "target": "ts", "relation": "belong" },
+        { "source": "board-pos", "target": "eng", "relation": "belong" },
+        { "source": "board-pos", "target": "perf", "relation": "belong" },
+        { "source": "board-cog", "target": "logic", "relation": "belong" },
+        { "source": "board-gen", "target": "comm", "relation": "belong" },
+        { "source": "ts", "target": "vue3", "relation": "prerequisite" },
+        { "source": "vue3", "target": "eng", "relation": "synergy" }
+      ],
+      "courseNodes": [
+        {
+          "id": "c-vue",
+          "title": "Vue 3 入门",
+          "group": "framework-course",
+          "difficulty": "beginner",
+          "relatedSkillIds": ["vue3"],
+          "importance": "core"
+        },
+        {
+          "id": "c-ts",
+          "title": "TypeScript 基础",
+          "group": "foundation-course",
+          "difficulty": "beginner",
+          "relatedSkillIds": ["ts"],
+          "importance": "core"
+        },
+        {
+          "id": "c-eng",
+          "title": "前端工程化实践",
+          "group": "engineering-course",
+          "difficulty": "intermediate",
+          "relatedSkillIds": ["eng"],
+          "importance": "recommended"
+        }
+      ],
+      "skillCourseEdges": [
+        { "skillId": "vue3", "courseId": "c-vue", "relation": "core" },
+        { "skillId": "ts", "courseId": "c-ts", "relation": "core" },
+        { "skillId": "eng", "courseId": "c-eng", "relation": "recommended" }
+      ],
+      "skillTierNodes": [
+        { "id": "html", "name": "HTML/CSS", "tier": "foundation", "heat": 90, "domainId": "frontend" },
+        { "id": "js", "name": "JavaScript", "tier": "foundation", "heat": 95, "domainId": "frontend" },
+        { "id": "vue3-tier", "name": "Vue 3", "tier": "junior", "heat": 92, "domainId": "frontend", "relatedCareers": ["job-frontend-0"] },
+        { "id": "job-frontend-0", "name": "Vue 前端工程师", "tier": "job", "heat": 100, "domainId": "frontend" }
+      ],
+      "skillTierEdges": [
+        { "source": "html", "target": "js", "relation": "prerequisite" },
+        { "source": "js", "target": "vue3-tier", "relation": "prerequisite", "isCareerPath": true },
+        { "source": "vue3-tier", "target": "job-frontend-0", "relation": "compose", "isCareerPath": true }
+      ]
+    },
+    {
+      "role": "后端开发",
+      "aliases": [
+        "Java 后端工程师",
+        "后端工程师",
+        "后端开发工程师"
+      ],
+      "nodes": [
+        { "id": "job-center", "name": "后端开发", "level": 0, "group": "job", "heat": 100 },
+        { "id": "board-pro", "name": "专业技能", "level": 1, "group": "professional", "parentId": "job-center", "heat": 85 },
+        { "id": "board-pos", "name": "岗位技能", "level": 1, "group": "position", "parentId": "job-center", "heat": 85 },
+        { "id": "java", "name": "Java", "level": 2, "group": "professional", "parentId": "board-pro", "heat": 93 },
+        { "id": "mysql", "name": "MySQL", "level": 2, "group": "professional", "parentId": "board-pro", "heat": 90 },
+        { "id": "api", "name": "API 设计", "level": 2, "group": "position", "parentId": "board-pos", "heat": 88 }
+      ],
+      "edges": [
+        { "source": "job-center", "target": "board-pro", "relation": "belong" },
+        { "source": "job-center", "target": "board-pos", "relation": "belong" },
+        { "source": "board-pro", "target": "java", "relation": "belong" },
+        { "source": "board-pro", "target": "mysql", "relation": "belong" },
+        { "source": "board-pos", "target": "api", "relation": "belong" },
+        { "source": "mysql", "target": "api", "relation": "dependency" }
+      ],
+      "courseNodes": [
+        {
+          "id": "c-java",
+          "title": "Java 后端基础",
+          "group": "backend-course",
+          "difficulty": "beginner",
+          "relatedSkillIds": ["java"],
+          "importance": "core"
+        }
+      ],
+      "skillCourseEdges": [
+        { "skillId": "java", "courseId": "c-java", "relation": "core" }
+      ],
+      "skillTierNodes": [
+        { "id": "java-tier", "name": "Java", "tier": "foundation", "heat": 93, "domainId": "backend" },
+        { "id": "mysql-tier", "name": "MySQL", "tier": "junior", "heat": 90, "domainId": "backend" },
+        { "id": "job-backend-0", "name": "Java 后端工程师", "tier": "job", "heat": 100, "domainId": "backend" }
+      ],
+      "skillTierEdges": [
+        { "source": "java-tier", "target": "mysql-tier", "relation": "prerequisite", "isCareerPath": true },
+        { "source": "mysql-tier", "target": "job-backend-0", "relation": "compose", "isCareerPath": true }
+      ]
+    }
+  ]
+}

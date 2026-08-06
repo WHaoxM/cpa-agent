@@ -316,6 +316,148 @@ CREATE TABLE IF NOT EXISTS conversation_message (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='对话消息';
 
 
+-- 2.2b memory_store (Qoder-aligned Awareness store, scoped by student)
+CREATE TABLE IF NOT EXISTS memory_store (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    store_id        VARCHAR(128) NOT NULL UNIQUE COMMENT 'student:{student_id}',
+    student_id      VARCHAR(64)  NOT NULL COMMENT '学生ID',
+    status          VARCHAR(20)  NOT NULL DEFAULT 'active' COMMENT 'active/archived',
+    created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_student (student_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学生记忆 Store';
+
+CREATE TABLE IF NOT EXISTS memory_entry (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    entry_id        VARCHAR(64)  NOT NULL UNIQUE COMMENT 'mem_xxx',
+    store_id        VARCHAR(128) NOT NULL COMMENT '→ memory_store.store_id',
+    path            VARCHAR(255) NOT NULL COMMENT 'USER.md / MEMORY.md / memory/session-*.md',
+    body_md         MEDIUMTEXT   NOT NULL COMMENT 'Markdown body',
+    version         INT          NOT NULL DEFAULT 1,
+    is_current      TINYINT(1)   NOT NULL DEFAULT 1,
+    source          VARCHAR(64)  DEFAULT NULL COMMENT 'user_confirm/reflection_*/rollback/system',
+    created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_store_path (store_id, path),
+    INDEX idx_current (store_id, path, is_current)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='记忆条目（当前版本）';
+
+CREATE TABLE IF NOT EXISTS memory_entry_version (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    entry_id        VARCHAR(64)  NOT NULL COMMENT '被快照的 entry',
+    store_id        VARCHAR(128) NOT NULL,
+    path            VARCHAR(255) NOT NULL,
+    body_md         MEDIUMTEXT   NOT NULL,
+    version         INT          NOT NULL,
+    source          VARCHAR(64)  DEFAULT 'snapshot',
+    created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_store_path_ver (store_id, path, version DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='记忆版本快照（rollback）';
+
+-- 2.2c agent_file (Claude/Qoder 风格会话文件)
+CREATE TABLE IF NOT EXISTS agent_file (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    file_id         VARCHAR(64)  NOT NULL UNIQUE,
+    student_id      VARCHAR(64)  DEFAULT NULL,
+    session_id      VARCHAR(64)  DEFAULT NULL,
+    filename        VARCHAR(255) NOT NULL,
+    mime_type       VARCHAR(128) DEFAULT NULL,
+    size_bytes      BIGINT       NOT NULL DEFAULT 0,
+    storage_path    VARCHAR(512) NOT NULL,
+    status          VARCHAR(32)  NOT NULL DEFAULT 'uploading' COMMENT 'uploading/ingesting/ready/failed',
+    purpose         VARCHAR(64)  DEFAULT 'chat_attachment',
+    downloadable    TINYINT(1)   NOT NULL DEFAULT 0,
+    error           VARCHAR(512) DEFAULT NULL,
+    ingest_meta_json JSON        DEFAULT NULL,
+    created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_student (student_id),
+    INDEX idx_session (session_id),
+    INDEX idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent 会话文件（upload once）';
+
+CREATE TABLE IF NOT EXISTS agent_file_artifact (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    artifact_id     VARCHAR(64)  NOT NULL UNIQUE,
+    file_id         VARCHAR(64)  NOT NULL,
+    kind            VARCHAR(32)  NOT NULL COMMENT 'excerpt/full_text/chunk/block',
+    ordinal         INT          NOT NULL DEFAULT 0,
+    body_text       MEDIUMTEXT   NOT NULL,
+    meta_json       JSON         DEFAULT NULL,
+    created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_file_kind (file_id, kind, ordinal)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文件 ingest 产物';
+
+CREATE TABLE IF NOT EXISTS session_resource (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    resource_id     VARCHAR(64)  NOT NULL UNIQUE,
+    session_id      VARCHAR(64)  NOT NULL,
+    file_id         VARCHAR(64)  NOT NULL,
+    resource_type   VARCHAR(32)  NOT NULL DEFAULT 'file',
+    mount_path      VARCHAR(512) NOT NULL,
+    meta_json       JSON         DEFAULT NULL,
+    created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_session_file (session_id, file_id),
+    INDEX idx_session (session_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会话资源挂载（Qoder resources）';
+
+CREATE TABLE IF NOT EXISTS agent_artifact (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    artifact_id     VARCHAR(64)  NOT NULL UNIQUE,
+    student_id      VARCHAR(64)  NOT NULL,
+    session_id      VARCHAR(64)  DEFAULT NULL,
+    turn_id         VARCHAR(64)  DEFAULT NULL,
+    kind            VARCHAR(32)  NOT NULL COMMENT 'portrait/match/career_report/action_plan/file/pipeline_task',
+    status          VARCHAR(32)  NOT NULL DEFAULT 'completed',
+    title           VARCHAR(160) NOT NULL,
+    summary         VARCHAR(512) DEFAULT NULL,
+    preview_json    JSON         DEFAULT NULL,
+    actions_json    JSON         DEFAULT NULL,
+    resource_type   VARCHAR(64)  NOT NULL,
+    resource_id     VARCHAR(128) NOT NULL,
+    version         INT          NOT NULL DEFAULT 1,
+    created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_owner_kind (student_id, kind, created_at),
+    INDEX idx_session_turn (session_id, turn_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent 类型化成果物索引';
+
+CREATE TABLE IF NOT EXISTS voice_turn (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    turn_id         VARCHAR(64)  NOT NULL UNIQUE,
+    session_id      VARCHAR(64)  NOT NULL DEFAULT '',
+    student_id      VARCHAR(64)  DEFAULT NULL,
+    status          VARCHAR(32)  NOT NULL COMMENT 'capturing/transcribing/ready/failed',
+    stt_provider    VARCHAR(64)  DEFAULT 'browser_web_speech',
+    lang            VARCHAR(16)  DEFAULT 'zh-CN',
+    transcript      TEXT,
+    interim_transcript TEXT,
+    confidence      FLOAT        DEFAULT NULL,
+    audio_file_id   VARCHAR(64)  DEFAULT NULL,
+    error           VARCHAR(512) DEFAULT NULL,
+    created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_session (session_id),
+    INDEX idx_student (student_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='语音回合（Voice Turn）';
+
+-- 2.2d tool_audit_event (工具权限/执行审计，不进聊天 UI)
+CREATE TABLE IF NOT EXISTS tool_audit_event (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    event_id        VARCHAR(64)  NOT NULL UNIQUE,
+    session_id      VARCHAR(64)  NOT NULL DEFAULT '',
+    student_id      VARCHAR(64)  DEFAULT NULL,
+    tool_name       VARCHAR(128) NOT NULL,
+    decision        VARCHAR(32)  NOT NULL COMMENT 'allow/deny/ask',
+    args_digest     VARCHAR(64)  DEFAULT NULL,
+    result_digest   VARCHAR(64)  DEFAULT NULL,
+    reason          VARCHAR(512) DEFAULT NULL,
+    created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_session_time (session_id, created_at DESC),
+    INDEX idx_student_time (student_id, created_at DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent 工具审计事件';
+
+
 -- 2.3 pipeline_task (管线任务)
 CREATE TABLE IF NOT EXISTS pipeline_task (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -708,6 +850,8 @@ CREATE TABLE IF NOT EXISTS chapter (
     sequence        INT          NOT NULL DEFAULT 0 COMMENT '章节序号',
     duration_hours  FLOAT        DEFAULT 0 COMMENT '章节时长(小时)',
     content_summary TEXT         DEFAULT NULL COMMENT '内容摘要',
+    video_url       VARCHAR(500) DEFAULT NULL COMMENT '章节视频外链',
+    video_provider  VARCHAR(64)  DEFAULT NULL COMMENT '视频提供方标识',
     created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     INDEX idx_course (course_id),
@@ -730,8 +874,32 @@ CREATE TABLE IF NOT EXISTS learning_progress (
     INDEX idx_user_course (user_id, course_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学习进度';
 
+-- 8.6 inbox_message (运营公告/站内消息)
+CREATE TABLE IF NOT EXISTS inbox_message (
+    id          VARCHAR(64)  NOT NULL PRIMARY KEY,
+    title       VARCHAR(200) NOT NULL COMMENT '标题',
+    body        TEXT         NOT NULL COMMENT '正文',
+    type        VARCHAR(64)  NOT NULL DEFAULT '系统消息' COMMENT '消息类型',
+    created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    INDEX idx_created (created_at DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='运营公告/站内消息';
+
+-- 8.7 inbox_message_user_state (按用户已读/删除)
+CREATE TABLE IF NOT EXISTS inbox_message_user_state (
+    id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id     VARCHAR(64)  NOT NULL COMMENT '用户ID',
+    message_id  VARCHAR(64)  NOT NULL COMMENT '消息ID',
+    is_read     TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '是否已读',
+    is_deleted  TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '是否对该用户隐藏',
+    updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uk_user_msg (user_id, message_id),
+    INDEX idx_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='消息按用户已读/删除状态';
+
 
 -- ===========================================
 -- 九、初始化完成
 -- ===========================================
-SELECT 'CPA-Agent 数据库初始化完成 (含账号/权限/管理员端表/API扩展表)' AS status;
+SELECT 'CPA-Agent 数据库初始化完成 (含账号/权限/管理员端表/API扩展表/消息表)' AS status;

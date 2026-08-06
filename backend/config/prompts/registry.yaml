@@ -2,6 +2,123 @@
 # 每个 prompt_id 一个文件夹，层文件固定命名 base.md / tone.md
 # workspace 只允许覆盖 tone.md (经 PromptLoader 合并)
 
+runtime_routes:
+  - engine: supervisor
+    mode: ask
+    content_kind: text
+    description: Ask 普通问答模型头
+    prompt_ids:
+      - agent.ask.manual
+      - agent.ask.system
+
+  - engine: supervisor
+    mode: ask
+    content_kind: attachment
+    description: Ask 附件问答模型头，不含内部工具名
+    prompt_ids:
+      - agent.ask.manual
+      - agent.ask.attachment_qa.system
+      - agent.attachment.integrity.system
+
+  - engine: supervisor
+    mode: ask
+    content_kind: thinking
+    description: Ask thinking 操作指令
+    prompt_ids:
+      - agent.ask.thinking.system
+
+  - engine: supervisor
+    mode: agent
+    content_kind: text
+    description: Agent 单子任务编排模型头
+    prompt_ids:
+      - agent.manual
+      - agent.agent.system
+
+  - engine: supervisor
+    mode: agent
+    content_kind: router
+    description: Agent 路由器 JSON 契约
+    prompt_ids:
+      - agent.router.system
+
+  - engine: supervisor
+    mode: experts
+    content_kind: text
+    description: Experts 多步编排模型头
+    prompt_ids:
+      - agent.manual
+      - agent.experts.system
+
+  - engine: supervisor
+    mode: experts
+    content_kind: lead
+    description: Experts Lead JSON 契约
+    prompt_ids:
+      - agent.experts.lead.system
+
+  - engine: subagent
+    mode: ask
+    content_kind: attachment
+    subagent: qa
+    description: Ask 附件 QA 子调用模型头，不加载 Agent QA 工具手册
+    prompt_ids:
+      - agent.ask.manual
+      - agent.ask.attachment_qa.system
+      - agent.task_packet.system
+
+  - engine: subagent
+    mode: agent
+    content_kind: text
+    subagent: profile
+    prompt_ids: [agent.manual, agent.profile.system, agent.task_packet.system]
+  - engine: subagent
+    mode: agent
+    content_kind: text
+    subagent: match
+    prompt_ids: [agent.manual, agent.match.system, agent.task_packet.system]
+  - engine: subagent
+    mode: agent
+    content_kind: text
+    subagent: report
+    prompt_ids: [agent.manual, agent.report.system, agent.task_packet.system]
+  - engine: subagent
+    mode: agent
+    content_kind: text
+    subagent: planner
+    prompt_ids: [agent.manual, agent.planner.system, agent.task_packet.system]
+  - engine: subagent
+    mode: agent
+    content_kind: text
+    subagent: qa
+    prompt_ids: [agent.manual, agent.qa.system, agent.task_packet.system]
+
+  - engine: subagent
+    mode: experts
+    content_kind: text
+    subagent: profile
+    prompt_ids: [agent.manual, agent.profile.system, agent.task_packet.system]
+  - engine: subagent
+    mode: experts
+    content_kind: text
+    subagent: match
+    prompt_ids: [agent.manual, agent.match.system, agent.task_packet.system]
+  - engine: subagent
+    mode: experts
+    content_kind: text
+    subagent: report
+    prompt_ids: [agent.manual, agent.report.system, agent.task_packet.system]
+  - engine: subagent
+    mode: experts
+    content_kind: text
+    subagent: planner
+    prompt_ids: [agent.manual, agent.planner.system, agent.task_packet.system]
+  - engine: subagent
+    mode: experts
+    content_kind: text
+    subagent: qa
+    prompt_ids: [agent.manual, agent.qa.system, agent.task_packet.system]
+
 prompts:
   - id: agent.chat.system
     description: ReAct Agent 对话系统提示词 (工具调用 + 阶段感知)
@@ -198,11 +315,157 @@ prompts:
   # langgraph_agent — 备用 agent 系统提示词（基于 LangGraph 状态机）
   # ------------------------------------------------------------------
   - id: agent.langgraph.system
-    description: LangGraph Agent 系统提示词（含用户阶段感知）
+    description: LangGraph Agent 系统提示词（含用户阶段感知；legacy mode）
     base: agent.langgraph.system/base.md
     tone: agent.langgraph.system/tone.md
     consumers:
       - app.services.langgraph_agent
+      - app.services.agent_runtime.legacy
+
+  # ------------------------------------------------------------------
+  # Supervisor + Expert bundles（上下文隔离运行时）
+  # ------------------------------------------------------------------
+  - id: agent.manual
+    description: 共享 Work Manual（隔离/黑板 ACL/工具/记忆禁令）
+    base: agent.manual/base.md
+    tone: agent.manual/tone.md
+    consumers:
+      - app.services.agent_runtime.supervisor
+      - app.services.agent_runtime.scoped_invoke
+      - app.services.agent_runtime.subagent_graphs
+
+  - id: agent.supervisor.system
+    description: Supervisor 编排器系统提示
+    base: agent.supervisor.system/base.md
+    tone: agent.supervisor.system/tone.md
+    consumers:
+      - app.services.agent_runtime.supervisor
+
+  - id: agent.ask.manual
+    description: Ask 用户通道契约（产品语义，不含内部工具/黑板名）
+    base: agent.ask.manual/base.md
+    tone: agent.ask.manual/tone.md
+    consumers:
+      - app.services.agent_runtime.prefix
+
+  - id: agent.ask.system
+    description: Ask 交互模式系统提示（轻量问答）
+    base: agent.ask.system/base.md
+    tone: agent.ask.system/tone.md
+    consumers:
+      - app.services.agent_runtime.mode_runtime
+      - app.services.agent_runtime.prefix
+
+  - id: agent.agent.system
+    description: Agent 交互模式系统提示（单子 Agent）
+    base: agent.agent.system/base.md
+    tone: agent.agent.system/tone.md
+    consumers:
+      - app.services.agent_runtime.mode_runtime
+      - app.services.agent_runtime.prefix
+
+  - id: agent.experts.system
+    description: Experts 交互模式系统提示（Lead 多步）
+    base: agent.experts.system/base.md
+    tone: agent.experts.system/tone.md
+    consumers:
+      - app.services.agent_runtime.mode_runtime
+      - app.services.agent_runtime.prefix
+
+  - id: agent.profile.system
+    description: profile 子 Agent 系统提示
+    base: agent.profile.system/base.md
+    tone: agent.profile.system/tone.md
+    consumers:
+      - app.services.agent_runtime.scoped_invoke
+      - app.services.agent_runtime.subagent_graphs
+
+  - id: agent.match.system
+    description: match 子 Agent 系统提示
+    base: agent.match.system/base.md
+    tone: agent.match.system/tone.md
+    consumers:
+      - app.services.agent_runtime.scoped_invoke
+      - app.services.agent_runtime.subagent_graphs
+
+  - id: agent.report.system
+    description: report 子 Agent 系统提示
+    base: agent.report.system/base.md
+    tone: agent.report.system/tone.md
+    consumers:
+      - app.services.agent_runtime.scoped_invoke
+      - app.services.agent_runtime.subagent_graphs
+
+  - id: agent.planner.system
+    description: planner 子 Agent 系统提示
+    base: agent.planner.system/base.md
+    tone: agent.planner.system/tone.md
+    consumers:
+      - app.services.agent_runtime.scoped_invoke
+      - app.services.agent_runtime.subagent_graphs
+
+  - id: agent.qa.system
+    description: qa 子 Agent 系统提示
+    base: agent.qa.system/base.md
+    tone: agent.qa.system/tone.md
+    consumers:
+      - app.services.agent_runtime.scoped_invoke
+
+  - id: agent.ask.attachment_qa.system
+    description: Ask 附件问答系统提示（产品语义，不暴露内部工具名）
+    base: agent.ask.attachment_qa.system/base.md
+    tone: agent.ask.attachment_qa.system/tone.md
+    consumers:
+      - app.services.agent_runtime.prompt_selector
+      - app.services.agent_runtime.scoped_invoke
+
+  - id: agent.router.system
+    description: Agent 模式路由器 JSON 契约
+    base: agent.router.system/base.md
+    tone: agent.router.system/tone.md
+    consumers:
+      - app.services.agent_runtime.mode_runtime
+    variables:
+      - router_context
+      - message
+
+  - id: agent.experts.lead.system
+    description: Experts Lead JSON 契约
+    base: agent.experts.lead.system/base.md
+    tone: agent.experts.lead.system/tone.md
+    consumers:
+      - app.services.agent_runtime.experts_lead
+    variables:
+      - templates
+      - slots
+      - known_slots_json
+      - template_hint
+      - card
+      - summary
+      - memory_digest
+      - message
+
+  - id: agent.ask.thinking.system
+    description: Ask thinking 操作指令（只进模型，不出站）
+    base: agent.ask.thinking.system/base.md
+    tone: agent.ask.thinking.system/tone.md
+    consumers:
+      - app.services.agent_runtime.thinking_trace
+
+  - id: agent.attachment.integrity.system
+    description: 附件完整性模型指令
+    base: agent.attachment.integrity.system/base.md
+    tone: agent.attachment.integrity.system/tone.md
+    consumers:
+      - app.services.agent_runtime.mode_runtime
+      - app.services.agent_runtime.scoped_invoke
+
+  - id: agent.task_packet.system
+    description: 子 Agent TaskPacket 瘦包规则
+    base: agent.task_packet.system/base.md
+    tone: agent.task_packet.system/tone.md
+    consumers:
+      - app.services.agent_runtime.scoped_invoke
 
   # ------------------------------------------------------------------
   # llm_skill_extractor — LLM 技能抽取 prompt
@@ -255,6 +518,43 @@ prompts:
     variables:
       - text
 
+  - id: pipeline.nsle.extract.basic_info.user
+    description: NS-LE 基本信息抽取（姓名/联系方式/年级）
+    base: pipeline.nsle.extract.basic_info.user/base.md
+    tone: pipeline.nsle.extract.basic_info.user/tone.md
+    consumers:
+      - app.pipeline.entity_extractor.nsle_pipeline
+    variables:
+      - text
+
+  - id: pipeline.nsle.extract.awards.user
+    description: NS-LE 竞赛/奖学金/荣誉抽取
+    base: pipeline.nsle.extract.awards.user/base.md
+    tone: pipeline.nsle.extract.awards.user/tone.md
+    consumers:
+      - app.pipeline.entity_extractor.nsle_pipeline
+    variables:
+      - text
+
+  - id: pipeline.nsle.extract.student_profile.user
+    description: Resume Structure Truth — 全文/窗口 canonical student_profile（LLM only）
+    base: pipeline.nsle.extract.student_profile.user/base.md
+    tone: pipeline.nsle.extract.student_profile.user/tone.md
+    consumers:
+      - app.pipeline.entity_extractor.resume_structure
+      - app.pipeline.entity_extractor.nsle_pipeline
+    variables:
+      - text
+
+  - id: pipeline.nsle.merge.student_profile.user
+    description: Resume Structure Truth — 多窗口 LLM merge 为单一 student_profile
+    base: pipeline.nsle.merge.student_profile.user/base.md
+    tone: pipeline.nsle.merge.student_profile.user/tone.md
+    consumers:
+      - app.pipeline.entity_extractor.resume_structure
+    variables:
+      - partials_json
+
   # ------------------------------------------------------------------
   # admin_kb — 知识库智能上传实体解析
   # ------------------------------------------------------------------
@@ -306,3 +606,21 @@ prompts:
       - sub
       - tier
       - orig
+
+  - id: agent.career_suggestions.user
+    description: 职业匹配建议 — 仅输出 JSON suggestions 数组
+    base: agent.career_suggestions.user/base.md
+    tone: agent.career_suggestions.user/tone.md
+    consumers:
+      - app.api.ai_analysis
+    variables:
+      - context_json
+
+  - id: ai.growth_analysis.user
+    description: 报告成长分析 — AIAnalysisResult JSON
+    base: ai.growth_analysis.user/base.md
+    tone: ai.growth_analysis.user/tone.md
+    consumers:
+      - app.api.ai_analysis
+    variables:
+      - context_json

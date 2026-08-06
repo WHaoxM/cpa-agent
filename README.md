@@ -11,7 +11,7 @@
 [![GitHub Stars](https://img.shields.io/github/stars/WHaoxM/cpa-agent?style=flat-square&color=DAA520)](https://github.com/WHaoxM/cpa-agent/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/WHaoxM/cpa-agent?style=flat-square)](https://github.com/WHaoxM/cpa-agent/network)
 [![GitHub Issues](https://img.shields.io/github/issues/WHaoxM/cpa-agent?style=flat-square)](https://github.com/WHaoxM/cpa-agent/issues)
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![Vue](https://img.shields.io/badge/Vue-3.5-42b883?style=flat-square&logo=vue.js&logoColor=white)](https://vuejs.org/)
 [![Flask](https://img.shields.io/badge/Flask-3.x-000000?style=flat-square&logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
@@ -55,7 +55,7 @@
 
 - **于学生**：基于真实简历与岗位数据的个性化诊断，而非泛泛的职业鸡汤
 - **于高校**：批量解析、标准化画像与报告生成，适合就业指导中心规模化使用
-- **于研究**：L0–L4 管线、双引擎 Agent、NSLE 实体抽取均有清晰模块边界，便于论文实验与消融
+- **于研究**：L0–L4 管线、多模式 Agent、NSLE 实体抽取均有清晰模块边界，便于论文实验与消融
 
 从简历输入到职业报告，每一步都有 Agent Trace 可观测，推荐结果可追溯到图谱节点与匹配权重，而不是黑盒式的一句"建议你去做产品经理"。
 
@@ -77,7 +77,7 @@
 两个能力决定了 CPA-Agent 与通用 Chatbot 的本质差异：
 
 - 🧭 **L0–L4 分层管线。** 简历解析、图谱构建、画像生成、人岗匹配、报告生成各自独立、又可串联调度。每层有明确的输入输出与 `pipeline_task` 状态追踪，适合高校场景下的批处理与异步任务。
-- 🤖 **双引擎 Agent + 12 工具。** LangGraph（主）原生 function calling + MySQL Checkpoint 持久化；ReAct（备）兼容不支持 tool call 的 LLM。Agent 可调用图谱查询、语义检索、管线触发等工具，在推理与确定性业务逻辑之间保持边界清晰。
+- 🤖 **多模式 Agent + 13 工具。** 默认运行时为 **Supervisor 编排器**（Ask / Agent / Experts 三种交互模式，Plan 步骤 + 黑板 + 记忆分库 + PreToolUse 门禁）。旧 LangGraph（单体）/ ReAct 引擎默认关闭，仅 demo 开关显式启用。Agent 可调用图谱查询、语义检索、管线触发等 13 个工具，在推理与确定性业务逻辑之间保持边界清晰。
 
 ## 🔄 工作流程
 
@@ -86,6 +86,60 @@
 3. **画像生成（L2）**：学生 ID + 技能 → 四维评分（D1 基础/D2 技能/D3 素养/D4 潜力）→ `student_portrait_4d`
 4. **人岗匹配（L3）**：学生画像 + 岗位画像 → 加权匹配分 + 技能差距 + 晋升路径
 5. **报告生成（L4）**：学生 + 目标岗位 → 六章 `career_report`（含学习路径与评估周期）
+
+## ⚙️ 运行环境（Agent / 开发者必读）
+
+> 陌生 Agent 在本机执行任何后端命令或测试前，**必须先读本节**。默认的 `python` 命令指向系统 Python 3.11，**没有安装本项目依赖**，直接跑测试会立刻报 `ModuleNotFoundError: No module named 'flask'`。
+
+### 权威 Python 运行时
+
+后端运行与测试统一使用 conda 环境 **`mkg`**（Python 3.10）：
+
+```bash
+conda activate mkg
+python --version   # Python 3.10.x
+```
+
+Windows 下若当前 shell 没有 `conda`，可直接用解释器绝对路径：
+
+```powershell
+D:\Miniconda\miniconda3\envs\mkg\python.exe -m pytest backend/tests
+```
+
+> ⚠️ conda 环境 `cpa-agent`（Python 3.11）依赖不完整（缺 langgraph），**不要**用它运行后端或测试。
+
+### 安装依赖
+
+```bash
+conda activate mkg
+pip install -r backend/requirements.txt
+```
+
+### 运行后端
+
+```bash
+conda activate mkg
+cd backend
+python run.py      # http://localhost:5001
+```
+
+### 运行测试
+
+```bash
+conda activate mkg
+python -B -m pytest backend/tests   # 在仓库根目录执行
+```
+
+- 纯单元测试无需外部服务；含 DB 的集成用例依赖本机 Docker 容器（MySQL `localhost:13306`、Neo4j `localhost:17687`、Redis `localhost:16379`）。
+- 容器未启动时，`test_hybrid_retrieve_explain.py`、`test_demo_endpoints.py` 会出现连接拒绝类失败，属环境问题而非代码回归。
+- 当前基线（2026-08，容器未启动）：**249 passed / 7 failed**；其中 4 个 `test_pdf_engines.py` 用例与 ADR-0002 新模式契约不一致（旧契约假设 MinerU 参与 auto 阶梯、运行时故障一律粘性），已落后于代码行为，待对齐。
+- 根目录 `.env` 当前 `CPA_DEMO_MODE=false`（strict 模式）：用户资源 API 需要认证适配器提供 Principal，否则返回 401；联调前请先启动数据库容器。
+
+### 数据依赖
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mysql neo4j redis
+```
 
 ## 🚀 快速开始
 
@@ -99,7 +153,7 @@
 
 | 工具 | 版本 | 说明 | 安装检查 |
 |------|------|------|---------|
-| **Python** | 3.11+ | 后端运行环境 | `python --version` |
+| **Python** | 3.10+ | 后端运行环境（本机开发用 conda 环境 `mkg` = 3.10） | `python --version` |
 | **Node.js** | ^20.19.0 \|\| >=22.12.0 | 前端运行环境 | `node -v` |
 | **Conda** | 推荐 | 环境管理 | `conda --version` |
 | **Docker** | 最新 | 数据库依赖 | `docker --version` |
@@ -195,10 +249,10 @@ Vue 3 前端 (cpa-xingtu)
         │ HTTP / SSE
         ▼
 Flask 后端 (backend/app)
-  API 路由 → 服务层 → Agent 引擎 (LangGraph / ReAct)
+  API 路由 → 服务层 → Agent 运行时 (Supervisor 编排；Ask/Agent/Experts 模式)
                         │
                         ▼
-              Tools (12) ──→ MySQL / Neo4j / Redis / Milvus
+              Tools (13) ──→ MySQL / Neo4j / Redis / Milvus
                         │
                         ▼
               L0–L4 Pipeline (简历→图谱→画像→匹配→报告)
@@ -231,8 +285,8 @@ Flask 后端 (backend/app)
 
 ### 后端
 
-- **Python 3.11+** / Flask 3.x
-- **LangGraph + LangChain** - Agent 编排（主引擎）
+- **Python 3.10+** / Flask 3.x
+- **Supervisor 多模式 Agent 运行时** - Ask / Agent / Experts 编排（旧 LangGraph 单体 / ReAct 引擎默认关闭）
 - **ReAct** - 兼容备引擎
 - **SQLAlchemy** - ORM
 - **PyMilvus Lite** - 向量数据库嵌入式模式
@@ -284,11 +338,11 @@ cpa-agent/                  # 主仓库（后端 + 文档）
 
 ## 📌 当前状态
 
-- **后端** Flask + LangGraph / LangChain，Python 3.11+，默认端口 `5001`
+- **后端** Flask + Supervisor 多模式 Agent 运行时（Ask / Agent / Experts），Python 3.10+，默认端口 `5001`
 - **前端** Vue 3 + TypeScript + Element Plus + D3 / ECharts / Three.js，开发端口 `5173`
 - **数据层** MySQL 8.0 · Neo4j 5.x · Redis 7 · Milvus Lite / Server
-- **简历解析** MinerU + YOLOv10 布局检测 + Qwen3-SFT NER + 实体归一化
-- **Agent 工具** 图谱查询、DB 查询、语义检索、管线触发、LLM 推理、JD 清洗、技能工具集等 12 个
+- **简历解析** MinerU + YOLOv10 布局检测 + Qwen3-SFT NER + 实体归一化（auto 阶梯 = Parse Sidecar → PyMuPDF，MinerU 仅显式启用）
+- **Agent 工具** 图谱查询、DB 查询、语义检索、管线触发、LLM 推理、JD 清洗、技能工具集等 13 个
 - **输出模式** 四维画像、人岗匹配、技能差距、六章职业发展报告、SSE 流式对话
 - **部署** Dev Docker Compose 只拉起 MySQL + Neo4j + Redis；后端本机运行，前端可独立部署至 GitHub Pages
 
@@ -320,7 +374,7 @@ cpa-agent/                  # 主仓库（后端 + 文档）
 - **高校就业指导中心** — 批量解析学生简历，生成标准化能力画像与报告
 - **职业规划课程 / 竞赛项目** — 演示"知识图谱 + RAG + Agent"的完整工程落地
 - **个人开发者** — 自建职业知识库，对接真实招聘 JD 数据，做个性化匹配
-- **研究复现** — L0–L4 管线、NSLE 实体抽取、双引擎 Agent 均有清晰模块边界，便于论文实验与消融
+- **研究复现** — L0–L4 管线、NSLE 实体抽取、多模式 Agent 均有清晰模块边界，便于论文实验与消融
 
 ## 🤝 参与贡献
 

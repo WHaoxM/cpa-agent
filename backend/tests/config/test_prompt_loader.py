@@ -46,10 +46,10 @@ def _fake_variables(prompt_id: str, declared_vars: list) -> dict:
 
 class TestPromptRegistryCount:
     def test_total_prompts_count(self):
-        """当前应有 28 个 prompt（阶段五后续收尾）"""
+        """Prompt registry 不能回退到阶段五的 28 个旧快照。"""
         r = get_prompt_registry()
         ids = r.list_prompt_ids()
-        assert len(ids) == 28, f"期望 28, 实际 {len(ids)}: {ids}"
+        assert len(ids) >= 45, f"实际 {len(ids)}: {ids}"
 
     def test_registry_yaml_consistent(self):
         """registry.yaml 列出的 prompt 与 list_prompt_ids 一致"""
@@ -60,10 +60,21 @@ class TestPromptRegistryCount:
             f"yaml 声明 {declared_ids - loaded_ids} 与加载器 {loaded_ids - declared_ids} 不一致"
         )
 
+    def test_runtime_routes_reference_known_prompts(self):
+        r = get_prompt_registry()
+        declared = set(r.list_prompt_ids())
+        routes = r.list_runtime_routes()
+        assert routes
+        for route in routes:
+            assert route.get("engine")
+            assert route.get("mode")
+            assert route.get("content_kind")
+            assert set(route.get("prompt_ids") or []).issubset(declared)
+
 
 class TestPromptLoadAll:
     def test_all_loadable(self):
-        """28 个 prompt 全部能加载（不带变量）"""
+        """registry 中的 prompt 全部能加载（按声明变量填充）"""
         r = get_prompt_registry()
         data = _load_registry_yaml()
         for entry in data["prompts"]:
