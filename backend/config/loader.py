@@ -232,3 +232,51 @@ def competitiveness_level(score: float, rules: Optional[RulesConfig] = None) -> 
     if score >= levels["weak"]:
         return "偏弱"
     return "弱"
+
+
+# ---------------------------------------------------------------------------
+# grep / llm_extraction / chunking 配置加载器
+# ---------------------------------------------------------------------------
+
+_GREP_CONFIG: Optional[Dict[str, Any]] = None
+_EXTRACTION_CONFIG: Optional[Dict[str, Any]] = None
+_CHUNKING_CONFIG: Optional[Dict[str, Any]] = None
+
+
+def _load_rules_yaml(filename: str) -> Dict[str, Any]:
+    """加载 config/defaults/rules/{filename}.yaml"""
+    path = _defaults_rules_dir() / filename
+    return _load_yaml(path)
+
+
+def get_grep_config() -> Dict[str, Any]:
+    """加载 grep 搜索配置（含关键词库 + 语义匹配配置）"""
+    global _GREP_CONFIG
+    if _GREP_CONFIG is None:
+        _GREP_CONFIG = _load_rules_yaml("grep.yaml")
+    return _GREP_CONFIG
+
+
+def get_extraction_config() -> Dict[str, Any]:
+    """加载 LLM 抽取配置（含窗口大小 + 归一化规则）"""
+    global _EXTRACTION_CONFIG
+    if _EXTRACTION_CONFIG is None:
+        _EXTRACTION_CONFIG = _load_rules_yaml("llm_extraction.yaml")
+    return _EXTRACTION_CONFIG
+
+
+def get_chunking_config() -> Dict[str, Any]:
+    """加载分块策略配置（含语义分块 + 文件类型配置）"""
+    global _CHUNKING_CONFIG
+    if _CHUNKING_CONFIG is None:
+        _CHUNKING_CONFIG = _load_rules_yaml("chunking.yaml")
+    return _CHUNKING_CONFIG
+
+
+def reload_all_configs() -> None:
+    """强制刷新所有配置缓存（包括 rules、grep、extraction、chunking）"""
+    global _RULES, _GREP_CONFIG, _EXTRACTION_CONFIG, _CHUNKING_CONFIG
+    _RULES = None
+    _GREP_CONFIG = None
+    _EXTRACTION_CONFIG = None
+    _CHUNKING_CONFIG = None

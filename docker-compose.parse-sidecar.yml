@@ -1,4 +1,4 @@
-# Optional Parse Sidecar profile (RAGFlow-class).
+# Contract-only Parse Sidecar stub. NOT an OCR service.
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.parse-sidecar.yml --profile parse-sidecar up -d
 #
@@ -8,8 +8,10 @@
 #   CPA_L0_PARSE_SIDECAR_HEALTH=http://127.0.0.1:9380/v1/health
 #   CPA_L0_PARSE_SIDECAR_PARSE_PATH=/api/cpa/parse
 #
-# Default image is a thin stub for local contract wiring. Replace with InfiniFlow RAGFlow
-# for production-quality DeepDoc parsing when ready.
+# This stub intentionally reports HTTP 503 and ocr_pdf=false. It cannot turn a
+# scanned resume into text. For real local OCR run backend/scripts/parse_sidecar_mineru.py
+# under the mkg environment with a complete local PDF-Extract-Kit, or provide a
+# compatible sidecar whose /v1/health advertises ocr_pdf=true.
 
 services:
   parse-sidecar:

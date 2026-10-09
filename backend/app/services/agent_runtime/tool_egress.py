@@ -18,7 +18,7 @@ _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 _ID_CARD_RE = re.compile(r"\b(\d{6})\d{8}(\d{3}[\dXx])\b")
 
 
-def redact_text(text: str, *, max_len: int = 160) -> str:
+def redact_text(text: str, *, max_len: Optional[int] = 160) -> str:
     if not text:
         return ""
     out = str(text)
@@ -29,7 +29,7 @@ def redact_text(text: str, *, max_len: int = 160) -> str:
     if "profile_json=" in out or "posting_json=" in out:
         out = re.sub(r"profile_json=\{[^}]{0,2000}", "profile_json=[redacted]", out)
         out = re.sub(r"posting_json=\{[^}]{0,2000}", "posting_json=[redacted]", out)
-    if len(out) > max_len:
+    if max_len is not None and len(out) > max_len:
         out = out[: max_len - 1] + "…"
     return out
 

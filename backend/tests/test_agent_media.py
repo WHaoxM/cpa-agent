@@ -14,6 +14,8 @@ from app.services.agent_runtime.media.context_mount import (
 )
 from app.services.agent_runtime.media.file_store import AgentFileService
 from app.services.agent_runtime.media.ingest import (
+    _fallback_docx,
+    _fallback_pdf,
     build_artifacts,
     extract_text_from_path,
     purpose_allows_heavy,
@@ -49,6 +51,91 @@ def test_chat_purpose_escalates_heavy_by_default(monkeypatch):
     assert purpose_allows_heavy("pipeline") is True
     monkeypatch.setenv("CPA_CHAT_INGEST_HEAVY", "0")
     assert purpose_allows_heavy("chat_attachment") is False
+
+
+def test_full_text_artifact_keeps_content_after_80k():
+    text = "正文" * 40_000 + "文末关键结论"
+    artifacts = build_artifacts(text, {"engine": "utf8", "ext": "txt"})
+    full = next(a for a in artifacts if a["kind"] == "full_text")
+    assert full["body_text"].endswith("文末关键结论")
+    assert full["meta"]["truncated"] is False
+
+
+def test_light_pdf_fallback_reads_page_after_40(monkeypatch):
+    class FakePage:
+        def __init__(self, number):
+            self.number = number
+
+        def extract_text(self):
+            return f"page-{self.number}"
+
+    class FakeReader:
+        pages = [FakePage(number) for number in range(1, 42)]
+
+    monkeypatch.setattr("pypdf.PdfReader", lambda _path: FakeReader())
+    text, engine = _fallback_pdf("sample.pdf")
+    assert engine == "pypdf"
+    assert "page-41" in text
+
+
+def test_docx_fallback_preserves_body_order_and_header(tmp_path):
+    from docx import Document
+
+    document = Document()
+    document.sections[0].header.paragraphs[0].text = "页眉联系信息"
+    document.add_paragraph("教育经历")
+    table = document.add_table(rows=1, cols=1)
+    table.cell(0, 0).text = "学校与专业"
+    document.add_paragraph("项目经历")
+    path = tmp_path / "resume.docx"
+    document.save(path)
+
+    text, engine = _fallback_docx(str(path))
+    assert engine == "mammoth+python-docx"
+    assert "页眉联系信息" in text
+    assert text.index("教育经历") < text.index("学校与专业") < text.index("项目经历")
+
+
+def test_docx_fallback_reads_text_box_in_body_order(tmp_path):
+    from docx import Document
+    from docx.oxml import OxmlElement
+
+    document = Document()
+    document.add_paragraph("教育经历")
+    host = document.add_paragraph()
+    box = OxmlElement("w:txbxContent")
+    paragraph = OxmlElement("w:p")
+    run = OxmlElement("w:r")
+    text_element = OxmlElement("w:t")
+    text_element.text = "文本框中的项目经历"
+    run.append(text_element)
+    paragraph.append(run)
+    box.append(paragraph)
+    host.add_run()._r.append(box)
+    document.add_paragraph("专业技能")
+    path = tmp_path / "boxed-resume.docx"
+    document.save(path)
+
+    text, engine = _fallback_docx(str(path))
+    assert engine == "mammoth+python-docx"
+    assert text.index("教育经历") < text.index("文本框中的项目经历") < text.index("专业技能")
+
+    from app.pipeline.entity_extractor.l0_full_parser import L0FullParser
+
+    pipeline_result = L0FullParser().parse_file(path)
+    assert pipeline_result.success is True
+    assert pipeline_result.text == text
+
+
+def test_l0_blank_docx_does_not_claim_parse_success(tmp_path):
+    from docx import Document
+    from app.pipeline.entity_extractor.l0_full_parser import L0FullParser
+
+    path = tmp_path / "blank.docx"
+    Document().save(path)
+    result = L0FullParser().parse_file(path)
+    assert result.success is False
+    assert result.text == ""
 
 
 def test_chat_extract_skips_l0_when_heavy_disabled(tmp_path, monkeypatch):
@@ -106,6 +193,36 @@ def test_chat_extract_escalates_to_l0_when_light_empty(tmp_path, monkeypatch):
     assert "L0" in text
     assert meta.get("escalated_heavy") is True
     assert meta.get("engine") == "mineru"
+
+
+def test_l0_retains_layout_blocks_after_first_40(tmp_path, monkeypatch):
+    pdf = tmp_path / "scan.pdf"
+    pdf.write_bytes(b"%PDF-1.4 empty-ish")
+
+    class FakeResult:
+        success = True
+        text = "简历两页正文"
+        blocks = [
+            SimpleNamespace(block_id=str(i), block_type="text", text=f"第{i}块", page=i // 40)
+            for i in range(68)
+        ]
+        engine = "mineru"
+        error = None
+
+    class FakeParser:
+        def parse_file(self, _path):
+            return FakeResult()
+
+    monkeypatch.setattr(
+        "app.pipeline.entity_extractor.l0_full_parser.L0FullParser",
+        FakeParser,
+    )
+    _, meta = extract_text_from_path(
+        str(pdf), "scan.pdf", prefer_light=False, allow_heavy=True,
+    )
+    assert meta["block_count"] == 68
+    assert len(meta["blocks"]) == 68
+    assert meta["blocks"][-1]["page"] == 1
 
 
 def test_mineru_runtime_fault_is_not_sticky():

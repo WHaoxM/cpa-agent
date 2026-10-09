@@ -168,7 +168,31 @@ class L0FullParser:
                 error=payload.get("error") or "sidecar failed",
             )
         text = payload.get("text") or ""
-        blocks = self._text_to_blocks(text, "resume")
+        raw_blocks = payload.get("blocks") or []
+        blocks = []
+        if isinstance(raw_blocks, list):
+            for index, item in enumerate(raw_blocks):
+                if not isinstance(item, dict) or not str(item.get("text") or "").strip():
+                    continue
+                try:
+                    page = max(0, int(item.get("page", item.get("page_idx", 0))))
+                except (TypeError, ValueError):
+                    page = 0
+                try:
+                    confidence = float(item.get("confidence", 0.9))
+                except (TypeError, ValueError):
+                    confidence = 0.9
+                blocks.append(L0Block(
+                    block_id=str(item.get("block_id") or f"sidecar_{index + 1}"),
+                    block_type=str(item.get("block_type") or item.get("type") or "TEXT"),
+                    text=str(item["text"]),
+                    confidence=confidence,
+                    source=str(payload.get("engine") or "sidecar"),
+                    bbox=item.get("bbox"),
+                    page=page,
+                ))
+        if not blocks:
+            blocks = self._text_to_blocks(text, "resume")
         return L0Result(
             success=True,
             text=text,
@@ -191,40 +215,42 @@ class L0FullParser:
 
             from mineru.cli.common import do_parse, read_fn
             import json
+            import tempfile
 
             pdf_path = Path(file_path)
-            output_dir = Path("./mineru_output") / pdf_path.stem
-            output_dir.mkdir(parents=True, exist_ok=True)
-
             pdf_bytes = read_fn(file_path, "pdf")
+            # MinerU writes derived JSON/images. Use a per-parse temporary output
+            # root; reusing ./mineru_output/<stem> can read another resume's stale
+            # JSON and leaves sensitive artifacts behind after a successful parse.
+            with tempfile.TemporaryDirectory(prefix="cpa-mineru-") as temp_root:
+                output_dir = Path(temp_root)
+                do_parse(
+                    output_dir=str(output_dir),
+                    pdf_file_names=[pdf_path.stem],
+                    pdf_bytes_list=[pdf_bytes],
+                    p_lang_list=["ch"],
+                    backend="pipeline",
+                    parse_method="auto",
+                    formula_enable=formula_enable,
+                    f_draw_layout_bbox=False,
+                    f_draw_span_bbox=False,
+                    f_dump_md=False,
+                    f_dump_middle_json=True,
+                    f_dump_model_output=False,
+                    f_dump_orig_pdf=False,
+                    f_dump_content_list=True,
+                )
 
-            do_parse(
-                output_dir=str(output_dir),
-                pdf_file_names=[pdf_path.stem],
-                pdf_bytes_list=[pdf_bytes],
-                p_lang_list=["ch"],
-                backend="pipeline",
-                parse_method="auto",
-                formula_enable=formula_enable,
-                f_draw_layout_bbox=False,
-                f_draw_span_bbox=False,
-                f_dump_md=False,
-                f_dump_middle_json=True,
-                f_dump_model_output=False,
-                f_dump_orig_pdf=False,
-                f_dump_content_list=True,
-            )
+                # 优先找 content_list.json（V1），其次 _middle.json
+                json_files = list(output_dir.rglob("*_content_list.json"))
+                if not json_files:
+                    json_files = list(output_dir.rglob("*_middle.json"))
+                if not json_files:
+                    raise FileNotFoundError(f"MinerU 未生成输出文件, output_dir={output_dir}")
 
-            # 优先找 content_list.json（V1），其次 _middle.json
-            json_files = list(output_dir.rglob("*_content_list.json"))
-            if not json_files:
-                json_files = list(output_dir.rglob("*_middle.json"))
-            if not json_files:
-                raise FileNotFoundError(f"MinerU 未生成输出文件, output_dir={output_dir}")
-
-            latest_json = max(json_files, key=lambda p: p.stat().st_mtime)
-            with open(latest_json, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+                latest_json = max(json_files, key=lambda p: p.stat().st_mtime)
+                with open(latest_json, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
 
             logger.info(f"MinerU JSON 数据类型: {type(data)}, 长度: {len(data) if isinstance(data, list) else 'N/A'}")
 
@@ -239,7 +265,7 @@ class L0FullParser:
                 metadata={
                     "file": file_path,
                     "engine": "mineru",
-                    "json": str(latest_json),
+                    "derived_artifacts": "temporary_cleaned",
                     "formula_enable": formula_enable,
                 },
                 engine="mineru"
@@ -370,25 +396,28 @@ class L0FullParser:
     def _parse_docx(self, file_path: str) -> L0Result:
         """解析 DOCX 文件"""
         try:
-            from docx import Document
+            from app.utils.docx_text import extract_docx_text
 
-            doc = Document(file_path)
-            paragraphs = [p.text for p in doc.paragraphs]
-            full_text = "\n".join(paragraphs)
+            full_text = extract_docx_text(file_path)
+            if not full_text.strip():
+                return L0Result(
+                    success=False, text="", blocks=[], metadata={"file": file_path},
+                    engine="mammoth+python-docx", error="DOCX 未提取到文本",
+                )
             blocks = self._text_to_blocks(full_text, "resume")
 
             return L0Result(
                 success=True,
                 text=full_text,
                 blocks=blocks,
-                metadata={"file": file_path, "engine": "docx"},
-                engine="docx"
+                metadata={"file": file_path, "engine": "mammoth+python-docx"},
+                engine="mammoth+python-docx"
             )
 
         except ImportError:
             return L0Result(
                 success=False, text="", blocks=[], metadata={},
-                engine="docx", error="需要安装 python-docx"
+                engine="docx", error="需要安装 mammoth 和 python-docx"
             )
 
     def _parse_txt(self, file_path: str) -> L0Result:

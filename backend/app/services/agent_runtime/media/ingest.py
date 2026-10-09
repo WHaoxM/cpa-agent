@@ -70,17 +70,11 @@ def _ext(filename: str) -> str:
 
 def _fallback_docx(path: str) -> Tuple[str, str]:
     try:
-        import docx  # python-docx
-        document = docx.Document(path)
-        parts = [p.text.strip() for p in document.paragraphs if p.text and p.text.strip()]
-        for table in document.tables:
-            for row in table.rows:
-                cells = [c.text.strip() for c in row.cells if c.text and c.text.strip()]
-                if cells:
-                    parts.append(" | ".join(cells))
-        return "\n".join(parts), "python-docx"
+        from ....utils.docx_text import extract_docx_text
+
+        return extract_docx_text(path), "mammoth+python-docx"
     except Exception as e:
-        return "", f"python-docx:{e}"
+        return "", f"docx_extract:{e}"
 
 
 def _fallback_pdf(path: str) -> Tuple[str, str]:
@@ -89,7 +83,7 @@ def _fallback_pdf(path: str) -> Tuple[str, str]:
         from pypdf import PdfReader
         reader = PdfReader(path)
         parts = []
-        for page in reader.pages[:40]:
+        for page in reader.pages:
             t = page.extract_text() or ""
             if t.strip():
                 parts.append(t)
@@ -102,7 +96,7 @@ def _fallback_pdf(path: str) -> Tuple[str, str]:
         import pdfplumber
         parts = []
         with pdfplumber.open(path) as pdf:
-            for page in pdf.pages[:40]:
+            for page in pdf.pages:
                 t = page.extract_text() or ""
                 if t.strip():
                     parts.append(t)
@@ -207,12 +201,14 @@ def extract_text_from_path(
                 result = parser.parse_file(path)
                 meta["attempts"].append("l0")
                 if result.success and (result.text or "").strip():
+                    from ..tool_egress import redact_text
+
                     blocks = []
-                    for b in (result.blocks or [])[:40]:
+                    for b in (result.blocks or []):
                         blocks.append({
                             "block_id": getattr(b, "block_id", None),
                             "block_type": getattr(b, "block_type", None),
-                            "text": (getattr(b, "text", None) or "")[:500],
+                            "text": redact_text(getattr(b, "text", None) or "", max_len=None),
                             "page": getattr(b, "page", None),
                         })
                     return result.text, {
@@ -236,7 +232,7 @@ def extract_text_from_path(
             if text.strip() and not thin:
                 return text, {
                     **meta,
-                    "engine": eng if eng in ("pypdf", "pdfplumber", "python-docx") else "light",
+                    "engine": eng if eng in ("pypdf", "pdfplumber", "mammoth+python-docx") else "light",
                 }
             if allow_heavy and (not text.strip() or thin):
                 logger.info(
@@ -256,13 +252,13 @@ def extract_text_from_path(
                 if text.strip():
                     return text, {
                         **meta,
-                        "engine": eng if eng in ("pypdf", "pdfplumber", "python-docx") else "light",
+                        "engine": eng if eng in ("pypdf", "pdfplumber", "mammoth+python-docx") else "light",
                         "warning": "heavy_escalation_failed_kept_thin_light",
                     }
             elif text.strip():
                 return text, {
                     **meta,
-                    "engine": eng if eng in ("pypdf", "pdfplumber", "python-docx") else "light",
+                    "engine": eng if eng in ("pypdf", "pdfplumber", "mammoth+python-docx") else "light",
                     "warning": "thin_light_heavy_disabled",
                 }
             return "", {
@@ -288,7 +284,7 @@ def extract_text_from_path(
         if text.strip():
             return text, {
                 **meta,
-                "engine": eng if eng in ("pypdf", "pdfplumber", "python-docx") else "light",
+                "engine": eng if eng in ("pypdf", "pdfplumber", "mammoth+python-docx") else "light",
             }
 
         return "", {
@@ -321,11 +317,10 @@ def build_artifacts(raw_text: str, meta: Dict[str, Any]) -> List[Dict[str, Any]]
         })
         return artifacts
 
-    # Store canonical full text with PII redaction but NO length cap.
-    # (project_tool_result_text uses redact max_len=4000 — that silently destroyed resumes.)
+    # Store the full extracted text; only excerpts and model-facing windows are capped.
     from ..tool_egress import redact_text
 
-    safe_full = redact_text(str(text or ""), max_len=80_000)
+    safe_full = redact_text(text, max_len=None)
     excerpt = safe_full[:CHARS_EXCERPT] + ("…" if len(safe_full) > CHARS_EXCERPT else "")
 
     artifacts.append({
@@ -338,22 +333,21 @@ def build_artifacts(raw_text: str, meta: Dict[str, Any]) -> List[Dict[str, Any]]
         "kind": ArtifactKind.FULL_TEXT.value,
         "ordinal": 0,
         "body_text": safe_full,
-        "meta": {"chars": len(safe_full), "truncated": len(str(text or "")) > 80_000},
+        "meta": {"chars": len(safe_full), "truncated": False},
     })
 
-    chunk_size = 1200
-    for i in range(0, len(safe_full), chunk_size):
-        if i >= 48_000:
-            break
+    # 使用配置驱动的语义分块
+    chunks = _smart_chunk_text(safe_full, meta)
+    for ordinal, (offset, chunk_text) in enumerate(chunks):
         artifacts.append({
             "kind": ArtifactKind.CHUNK.value,
-            "ordinal": i // chunk_size,
-            "body_text": safe_full[i:i + chunk_size],
-            "meta": {"offset": i},
+            "ordinal": ordinal,
+            "body_text": chunk_text,
+            "meta": {"offset": offset},
         })
 
     for i, block in enumerate(meta.get("blocks") or []):
-        bt = redact_text(str(block.get("text") or ""), max_len=2000)
+        bt = redact_text(str(block.get("text") or ""), max_len=None)
         if not bt:
             continue
         artifacts.append({
@@ -368,6 +362,50 @@ def build_artifacts(raw_text: str, meta: Dict[str, Any]) -> List[Dict[str, Any]]
         })
 
     return artifacts
+
+
+def _smart_chunk_text(text: str, meta: Dict[str, Any]) -> List[Tuple[int, str]]:
+    """
+    智能分块：基于配置的语义分块，避免切断关键信息
+
+    Args:
+        text: 待分块的文本
+        meta: 文件元数据（包含ext等信息）
+
+    Returns:
+        分块列表 [(offset, chunk_text), ...]
+    """
+    try:
+        from config.loader import get_chunking_config
+        from app.utils.chunking import semantic_chunk_text
+
+        config = get_chunking_config()
+
+        # 获取文件类型
+        ext = meta.get('ext', '')
+
+        # 构建文件类型特定的配置
+        file_type_config = config.get('file_types', {}).get(ext, {})
+        chunk_config = {
+            'defaults': {
+                'chunk_size': file_type_config.get('chunk_size', config.get('defaults', {}).get('chunk_size', 1200)),
+                'max_chunks': config.get('defaults', {}).get('max_chunks', 40),
+            },
+            'semantic': config.get('semantic', {}),
+        }
+
+        return semantic_chunk_text(text, chunk_config)
+
+    except Exception:
+        # 配置加载失败，回退到固定大小分块
+        chunk_size = 1200
+        max_chunks = 40
+        chunks: List[Tuple[int, str]] = []
+        for i in range(0, len(text), chunk_size):
+            if len(chunks) >= max_chunks:
+                break
+            chunks.append((i, text[i:i + chunk_size]))
+        return chunks
 
 
 def ingest_succeeded(text: str, meta: Dict[str, Any], filename: str) -> bool:

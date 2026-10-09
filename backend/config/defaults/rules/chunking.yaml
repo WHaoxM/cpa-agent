@@ -1,0 +1,50 @@
+# 分块策略配置
+
+# 默认分块大小
+defaults:
+  chunk_size: 1200
+  max_chunks: 40
+  overlap: 100
+
+# 语义分块配置
+semantic:
+  enabled: true
+  # 章节标题模式
+  section_patterns:
+    - '(?:教育|学历)(?:背景|经历)?'
+    - '(?:工作|实习|项目|科研|竞赛|获奖|荣誉|证书|技能|专业|综合)(?:经历|经验|背景|能力|技能)?'
+    - '自我评价|个人简介|基本信息|联系方式|校园经历|社团|志愿'
+    - 'Education|Experience|Projects?|Internships?|Skills?|Awards?|Summary|Work Experience|Research|Publications?'
+
+  # 关键信息保护模式
+  critical_patterns:
+    - '(?:教育|学历)(?:背景|经历)?[\s\S]*?(?=(?:工作|实习|项目|科研|竞赛|$))'
+    - '(?:工作|实习)(?:经历|经验)?[\s\S]*?(?=(?:项目|科研|竞赛|$))'
+    - '(?:项目|开发)(?:经历|经验)?[\s\S]*?(?=(?:科研|竞赛|$))'
+    - '(?:技能|能力)(?:清单|列表)?[\s\S]*?(?=(?:获奖|荣誉|证书|$))'
+
+  # 安全分割点检测
+  safe_split_patterns:
+    - '(?=\n(?:教育|学历)(?:背景|经历)?)'
+    - '(?=\n(?:工作|实习)(?:经历|经验)?)'
+    - '(?=\n(?:项目|开发)(?:经历|经验)?)'
+    - '(?=\n(?:技能|能力)(?:清单|列表)?)'
+    - '(?=\n(?:获奖|荣誉|奖项))'
+    - '(?=\n(?:证书|资格|认证))'
+
+# 特殊文件类型处理
+file_types:
+  pdf:
+    chunk_size: 1500
+    overlap: 150
+  docx:
+    chunk_size: 1200
+    overlap: 100
+  txt:
+    chunk_size: 1000
+    overlap: 80
+
+# 输出格式
+output:
+  include_metadata: true
+  show_chunk_boundaries: false

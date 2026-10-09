@@ -42,9 +42,17 @@ def probe_sidecar() -> Tuple[str, str]:
 
         with httpx.Client(timeout=5.0) as client:
             r = client.get(health)
-            if r.status_code < 500:
-                return "ready", f"health {r.status_code}"
-            return "failed", f"health HTTP {r.status_code}"
+            if r.status_code != 200:
+                return "disabled", f"health HTTP {r.status_code}"
+            try:
+                capability = r.json()
+            except ValueError:
+                return "disabled", "health response is not JSON capability data"
+            if not isinstance(capability, dict):
+                return "disabled", "health capability response is invalid"
+            if capability.get("engine") == "stub" or capability.get("ocr_pdf") is not True:
+                return "disabled", "sidecar does not advertise real PDF OCR capability"
+            return "ready", f"PDF OCR ready ({capability.get('engine') or 'sidecar'})"
     except Exception as e:
         # Optional sidecar: treat connect errors as DISABLED so golden path uses PyMuPDF
         return "disabled", f"unreachable: {e}"
@@ -90,6 +98,19 @@ def parse_pdf_via_sidecar(file_path: str) -> Dict[str, Any]:
         data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
         if not isinstance(data, dict):
             data = {"text": str(data)}
+        response_engine = str(data.get("engine") or "").strip().lower()
+        if response_engine in {"stub", "pymupdf", "pypdf", "pdfplumber", "light"}:
+            return {
+                "success": False, "text": "",
+                "error": f"sidecar returned non-OCR engine: {response_engine}",
+                "engine": "sidecar",
+            }
+        if not response_engine and data.get("ocr_pdf") is not True:
+            return {
+                "success": False, "text": "",
+                "error": "sidecar parse response lacks OCR engine provenance",
+                "engine": "sidecar",
+            }
         text = (
             data.get("text")
             or data.get("markdown")

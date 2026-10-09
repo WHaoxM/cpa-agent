@@ -1,0 +1,71 @@
+# grep搜索配置 - 混合匹配方法
+
+# 小型关键词库（只覆盖最常见变体）
+resume_keywords:
+  education:
+    - 教育
+    - 学历
+    - Education
+  experience:
+    - 工作
+    - 实习
+    - Experience
+  projects:
+    - 项目
+    - Project
+  skills:
+    - 技能
+    - Skills
+
+# LLM语义匹配配置
+semantic_matching:
+  enabled: true
+  # 语义匹配的类别定义
+  categories:
+    education:
+      description: "教育背景、学历信息"
+      semantic_variants:
+        - "教育经历"
+        - "学历背景"
+        - "学习经历"
+        - "学术背景"
+        - "毕业院校"
+        - "学校信息"
+        - "Education Background"
+        - "Academic Background"
+    experience:
+      description: "工作经历、实习经历"
+      semantic_variants:
+        - "工作经历"
+        - "实习经历"
+        - "职业经历"
+        - "工作经验"
+        - "Work Experience"
+        - "Internship"
+    projects:
+      description: "项目经历"
+      semantic_variants:
+        - "项目经历"
+        - "项目经验"
+        - "开发经验"
+        - "Project Experience"
+    skills:
+      description: "技能清单"
+      semantic_variants:
+        - "技能清单"
+        - "专业技能"
+        - "技术能力"
+        - "Skills List"
+
+# 搜索结果默认值
+defaults:
+  use_regex: false
+  case_sensitive: false
+  context_lines: 2
+  max_results: 10
+
+# 搜索结果格式
+output:
+  show_line_numbers: true
+  show_context: true
+  highlight_matches: true

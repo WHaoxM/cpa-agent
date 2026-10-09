@@ -26,35 +26,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/v1/health"):
-            return self._json(200, {"status": "ok", "engine": "stub"})
+            return self._json(503, {"status": "unavailable", "engine": "stub", "ocr_pdf": False})
         return self._json(404, {"error": "not found"})
 
     def do_POST(self):
         if not self.path.startswith("/api/cpa/parse"):
             return self._json(404, {"error": "not found"})
-        length = int(self.headers.get("Content-Length") or 0)
-        raw = self.rfile.read(length) if length else b""
-        # Stub: do not truly parse PDF; return placeholder so clients can wire contracts.
-        name = "upload.pdf"
-        if b'filename="' in raw:
-            try:
-                name = raw.split(b'filename="', 1)[1].split(b'"', 1)[0].decode("utf-8", "ignore")
-            except Exception:
-                pass
-        text = (
-            f"# Sidecar stub parse\n\n"
-            f"file: {name}\n\n"
-            f"Replace this stub with RAGFlow DeepDoc for production fidelity.\n"
-        )
-        return self._json(
-            200,
-            {
-                "text": text,
-                "markdown": text,
-                "engine": "stub",
-                "blocks": [{"type": "text", "text": text}],
-            },
-        )
+        return self._json(503, {"error": "contract stub cannot OCR PDF", "engine": "stub"})
 
 
 def main():

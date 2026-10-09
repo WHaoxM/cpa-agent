@@ -1,0 +1,81 @@
+# LLM抽取配置
+
+# 窗口大小配置
+windows:
+  full_structure: 14000
+  chunk: 7000
+  chunk_overlap: 800
+  basic: 4000
+  education: 10000
+  awards: 10000
+  experience: 10000
+  skills: 8000
+
+# 关键信息保护模式
+critical_patterns:
+  - '(?:教育|学历)(?:背景|经历)?'
+  - '(?:工作|实习)(?:经历|经验)?'
+  - '(?:项目|开发)(?:经历|经验)?'
+  - '(?:技能|能力)(?:清单|列表)?'
+  - '(?:获奖|荣誉|奖项)'
+  - '(?:证书|资格|认证)'
+
+# 搜索辅助指令模板
+search_hints:
+  education: |
+    已通过关键词和语义匹配找到以下教育相关段落：
+    {matched_segments}
+    请从这些段落中提取教育信息。
+  experience: |
+    已通过关键词和语义匹配找到以下工作/项目经历段落：
+    {matched_segments}
+    请从这些段落中提取经历信息。
+  skills: |
+    已通过关键词和语义匹配找到以下技能相关段落：
+    {matched_segments}
+    请从这些段落中提取技能信息。
+
+# 抽取策略
+strategies:
+  single_shot:
+    enabled: true
+    max_chars: 14000
+  chunk_merge:
+    enabled: true
+    chunk_size: 7000
+    overlap: 800
+    merge_strategy: "llm"
+
+# 归一化规则
+normalization:
+  # 学位归一化
+  degree_mapping:
+    '本科': 'Bachelor'
+    '学士': 'Bachelor'
+    '硕士': 'Master'
+    '研究生': 'Master'
+    '博士': 'PhD'
+    '大专': 'Associate'
+
+  # 专业归一化（可选）
+  major_mapping:
+    '计算机科学': 'Computer Science'
+    '计算机科学与技术': 'Computer Science'
+    '软件工程': 'Software Engineering'
+    '人工智能': 'Artificial Intelligence'
+
+  # 日期格式归一化
+  date_format:
+    input_patterns:
+      - 'YYYY.MM'
+      - 'YYYY/MM'
+      - 'YYYY年MM月'
+    output_format: 'YYYY/MM'
+
+  # 绩点归一化
+  gpa_format:
+    input_patterns:
+      - 'X.X/4.0'
+      - 'X.X/5.0'
+      - 'X.X'
+    output_format: 'X.X/4.0'
