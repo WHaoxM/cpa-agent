@@ -35,7 +35,13 @@ class CorsMiddleware:
             return response
 
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+        response.headers['Access-Control-Allow-Headers'] = (
+            'Content-Type, Authorization, X-Requested-With, '
+            'X-Dev-Student-Id, Idempotency-Key'
+        )
+        response.headers['Access-Control-Expose-Headers'] = (
+            'Idempotency-Replayed, Retry-After'
+        )
         response.headers['Access-Control-Max-Age'] = '3600'
 
         if request.method == 'OPTIONS':

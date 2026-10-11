@@ -6,7 +6,7 @@ Admin API - 管理员相关 API
 import json
 import uuid
 from enum import Enum
-from flask import request, jsonify
+from flask import request, jsonify, g
 from sqlalchemy import text
 
 from . import admin_bp
@@ -17,11 +17,29 @@ from ._helpers import (
     safe_bad_request,
     safe_error,
     safe_not_found,
+    ScopeError,
+    resolve_request_scope,
+    scope_error_response,
 )
 from ..services.db import get_mysql_client, get_neo4j_client
 from ..utils.logger import get_logger
 
 logger = get_logger('cpa-agent.api.admin')
+
+
+@admin_bp.before_request
+def require_server_admin_claim():
+    """Admin routes require an authenticated, server-populated privilege bit.
+
+    Client headers, body fields and a student Principal alone cannot grant
+    publication, deletion, import or graph mutation privileges.
+    """
+    try:
+        resolve_request_scope()
+    except ScopeError as e:
+        return scope_error_response(e)
+    if getattr(g, "cpa_admin", False) is not True:
+        return jsonify({"success": False, "error": "需要服务端管理员权限"}), 403
 
 
 class OovStatus(str, Enum):
@@ -154,7 +172,7 @@ def trigger_pipeline_build():
         source = data.get('source', 'dataset')
         source_id = data.get('source_id', '')
         pipeline_type = data.get('pipeline_type', 'full')
-        triggered_by = data.get('triggered_by', 'admin')
+        triggered_by = resolve_request_scope().principal_id
 
         if not source_id:
             return jsonify(safe_bad_request("source_id 必填")), 400
@@ -174,6 +192,14 @@ def trigger_pipeline_build():
             "params": json.dumps({"source": source, "source_id": source_id}),
             "triggered_by": triggered_by
         })
+        rows = mysql.fetch_all(
+            "SELECT task_id, status, triggered_by FROM pipeline_task WHERE task_id=:task_id LIMIT 1",
+            {"task_id": task_id},
+        )
+        if (not rows or rows[0].get("task_id") != task_id
+                or rows[0].get("status") != "pending"
+                or rows[0].get("triggered_by") != triggered_by):
+            raise RuntimeError("L1 管理任务写入未通过权威记录回读")
 
         # 异步任务队列接入见 issue tracker, 当前为同步占位
 

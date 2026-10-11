@@ -11,7 +11,7 @@ from flask import Flask
 
 from .config import Config
 from .utils.logger import setup_logger, get_logger
-from .middleware import LoggingMiddleware, ErrorHandler, CorsMiddleware
+from .middleware import LoggingMiddleware, ErrorHandler, CorsMiddleware, DevAuthMiddleware
 
 
 def create_app(config_class=Config):
@@ -41,6 +41,7 @@ def create_app(config_class=Config):
     LoggingMiddleware(app)
     ErrorHandler(app)
     CorsMiddleware(app, allowed_origins=config_class.CORS_ALLOWED_ORIGINS)
+    DevAuthMiddleware(app)
 
     try:
         from config.loader import init_rules_config
@@ -88,7 +89,7 @@ def create_app(config_class=Config):
         except Exception as e:
             return {'status': 'error', 'message': str(e)}
 
-    from .api import graph_bp, profile_bp, match_bp, report_bp, agent_bp, pipeline_bp, learning_bp, admin_bp, favorites_bp, career_bp, messages_bp, ability_bp, ai_bp, pipeline_ext_bp
+    from .api import graph_bp, profile_bp, match_bp, report_bp, agent_bp, pipeline_bp, learning_bp, admin_bp, favorites_bp, career_bp, messages_bp, ability_bp, ai_bp, pipeline_ext_bp, roles_bp
     app.register_blueprint(graph_bp, url_prefix='/api/graph')
     app.register_blueprint(profile_bp, url_prefix='/api/profile')
     app.register_blueprint(match_bp, url_prefix='/api/match')
@@ -103,6 +104,7 @@ def create_app(config_class=Config):
     app.register_blueprint(messages_bp, url_prefix='/api')
     app.register_blueprint(ability_bp, url_prefix='/api')
     app.register_blueprint(ai_bp, url_prefix='/api/ai')
+    app.register_blueprint(roles_bp, url_prefix='/api/roles')
 
     try:
         from .services.agent_runtime.schema_ensure import ensure_runtime_schema

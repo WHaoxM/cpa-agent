@@ -10,7 +10,10 @@ L4 报告列表与状态查询 API (2 路由):
 
 from flask import request, jsonify
 
-from ._helpers import clamp_pagination, safe_error
+from ._helpers import (
+    ScopeError, clamp_pagination, resolve_request_scope, safe_error,
+    scope_error_response,
+)
 from .pipeline_ext_common import pipeline_ext_bp, logger
 
 
@@ -22,7 +25,10 @@ def list_career_reports():
     Query:
         ?student_id=xxx&limit=10&offset=0&status=all
     """
-    student_id = request.args.get('student_id', '')
+    try:
+        student_id = resolve_request_scope().student_id
+    except ScopeError as error:
+        return scope_error_response(error)
     limit, offset = clamp_pagination(
         request.args.get('limit', type=int),
         request.args.get('offset', type=int),
@@ -34,7 +40,7 @@ def list_career_reports():
         from ..services.db import get_mysql_client
         mysql = get_mysql_client()
 
-        if student_id and status != 'all':
+        if status != 'all':
             sql = """
             SELECT report_id, student_id, job_portrait_id, title, status,
                    elapsed_seconds, created_at, updated_at
@@ -49,7 +55,7 @@ def list_career_reports():
                 "limit": limit,
                 "offset": offset
             })
-        elif student_id:
+        else:
             sql = """
             SELECT report_id, student_id, job_portrait_id, title, status,
                    elapsed_seconds, created_at, updated_at
@@ -63,19 +69,6 @@ def list_career_reports():
                 "limit": limit,
                 "offset": offset
             })
-        else:
-            sql = """
-            SELECT report_id, student_id, job_portrait_id, title, status,
-                   elapsed_seconds, created_at, updated_at
-            FROM career_report
-            ORDER BY created_at DESC
-            LIMIT :limit OFFSET :offset
-            """
-            results = mysql.fetch_all(sql, {
-                "limit": limit,
-                "offset": offset
-            })
-
         return jsonify({
             "success": True,
             "data": {
@@ -99,6 +92,7 @@ def get_report_status(report_id: str):
         report_id: 报告ID
     """
     try:
+        scope = resolve_request_scope()
         from ..services.db import get_mysql_client
         mysql = get_mysql_client()
 
@@ -108,9 +102,9 @@ def get_report_status(report_id: str):
                elapsed_seconds,
                created_at, updated_at
         FROM career_report
-        WHERE report_id = :report_id
+        WHERE report_id = :report_id AND student_id = :student_id
         """
-        row = mysql.execute_single(sql, {"report_id": report_id})
+        row = mysql.execute_single(sql, {"report_id": report_id, "student_id": scope.student_id})
 
         if not row:
             return jsonify({
@@ -132,5 +126,7 @@ def get_report_status(report_id: str):
             }
         })
 
+    except ScopeError as error:
+        return scope_error_response(error)
     except Exception as e:
         return jsonify(safe_error("查询报告状态", e, message="服务器内部错误")), 500

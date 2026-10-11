@@ -11,7 +11,10 @@ import uuid
 from flask import request, jsonify
 
 from . import career_bp
-from ._helpers import clamp_pagination, parse_json_field, safe_error
+from ._helpers import (
+    ScopeError, clamp_pagination, parse_json_field, require_student_path,
+    resolve_request_scope, safe_error, scope_error_response,
+)
 from ..services.career_role_inference import infer_roles_from_skills
 from ..services.db import get_mysql_client, get_neo4j_client, get_redis_client, get_milvus_client
 from ..utils.logger import get_logger
@@ -89,6 +92,14 @@ def _cache_set(key: str, value, ttl: int = 900):
     try:
         redis = get_redis_client()
         redis.set(key, value, ex=ttl)
+    except Exception:
+        pass
+
+
+def _cache_delete(key: str):
+    """Invalidate a user-owned projection after its authoritative row changes."""
+    try:
+        get_redis_client().delete(key)
     except Exception:
         pass
 
@@ -951,12 +962,10 @@ def submit_self_assessment():
     """提交技能自评 — 冷启动用户从自评→推荐方向→画像"""
     try:
         body = request.get_json(force=True) or {}
-        student_id = body.get('student_id')
+        student_id = resolve_request_scope().student_id
         assessed_skills = body.get('assessed_skills', [])  # [{skill, level}]
         assessed_abilities = body.get('assessed_abilities', {})
 
-        if not student_id:
-            return jsonify({"success": False, "error": "student_id 不能为空"}), 400
         if not assessed_skills:
             return jsonify({"success": False, "error": "assessed_skills 不能为空"}), 400
 
@@ -1003,7 +1012,7 @@ def submit_self_assessment():
         VALUES
             (:assessment_id, :student_id, :assessed_skills, :assessed_abilities, :weak_skills, :recommended_roles)
         """
-        mysql.execute(insert_sql, {
+        mysql.execute_write(insert_sql, {
             "assessment_id": assessment_id,
             "student_id": student_id,
             "assessed_skills": json.dumps(assessed_skills, ensure_ascii=False),
@@ -1011,6 +1020,15 @@ def submit_self_assessment():
             "weak_skills": json.dumps(weak_skills, ensure_ascii=False),
             "recommended_roles": json.dumps(recommended_roles, ensure_ascii=False),
         })
+
+        persisted = mysql.execute(
+            "SELECT assessment_id FROM student_self_assessment "
+            "WHERE assessment_id = :assessment_id AND student_id = :student_id LIMIT 1",
+            {"assessment_id": assessment_id, "student_id": student_id},
+        )
+        if not persisted or str(persisted[0].get("assessment_id")) != assessment_id:
+            return jsonify({"success": False, "error": "自评写入后未能核验归属"}), 500
+        _cache_delete(_cache_key("assessment", student_id=student_id))
 
         return jsonify({
             "success": True,
@@ -1022,6 +1040,8 @@ def submit_self_assessment():
             }
         })
 
+    except ScopeError as e:
+        return scope_error_response(e)
     except Exception as e:
         return jsonify(safe_error("提交自评", e)), 500
 
@@ -1030,6 +1050,7 @@ def submit_self_assessment():
 def get_assessment(student_id: str):
     """获取学生的最新自评结果"""
     try:
+        require_student_path(student_id, resolve_request_scope())
         cache_key = _cache_key("assessment", student_id=student_id)
         cached = _cache_get(cache_key)
         if cached:
@@ -1056,5 +1077,7 @@ def get_assessment(student_id: str):
         _cache_set(cache_key, resp, CACHE_TTL['assessment'])
         return jsonify(resp)
 
+    except ScopeError as e:
+        return scope_error_response(e)
     except Exception as e:
         return jsonify(safe_error("获取自评结果", e)), 500

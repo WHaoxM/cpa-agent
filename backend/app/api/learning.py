@@ -6,7 +6,10 @@ import uuid
 from flask import request, jsonify
 
 from . import learning_bp
-from ._helpers import clamp_pagination, parse_json_field, safe_error
+from ._helpers import (
+    ScopeError, clamp_pagination, parse_json_field, require_student_path,
+    resolve_request_scope, safe_error, scope_error_response,
+)
 from ..services.db import get_mysql_client
 from ..utils.logger import get_logger
 
@@ -103,12 +106,15 @@ def get_course(course_id: str):
 def get_learning_progress(user_id: str):
     """获取学习进度"""
     try:
+        require_student_path(user_id, resolve_request_scope())
         mysql = get_mysql_client()
         sql = "SELECT * FROM learning_progress WHERE user_id = :user_id"
         results = mysql.execute(sql, {"user_id": user_id})
 
         return jsonify({"success": True, "data": results})
 
+    except ScopeError as e:
+        return scope_error_response(e)
     except Exception as e:
         return jsonify(safe_error("获取学习进度", e)), 500
 
@@ -118,13 +124,38 @@ def update_progress():
     """更新学习进度"""
     try:
         data = request.get_json() or {}
-        user_id = data.get('user_id')
+        user_id = resolve_request_scope().student_id
         course_id = data.get('course_id')
         chapter_id = data.get('chapter_id')
         progress = data.get('progress')
-        if not user_id or not course_id or chapter_id is None or progress is None:
-            return jsonify({"success": False, "error": "user_id, course_id, chapter_id, progress 必填"}), 400
+        if not course_id or chapter_id is None or progress is None:
+            return jsonify({"success": False, "error": "course_id, chapter_id, progress 必填"}), 400
+        if isinstance(progress, bool):
+            return jsonify({"success": False, "error": "progress 必须是 0 至 100 的数值"}), 400
+        try:
+            progress = float(progress)
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "error": "progress 必须是 0 至 100 的数值"}), 400
+        if not 0 <= progress <= 100:
+            return jsonify({"success": False, "error": "progress 必须是 0 至 100 的数值"}), 400
         mysql = get_mysql_client()
+
+        # learning_progress stores chapter.id as text.  Verify the authoritative
+        # course/chapter pair before writing so the page API and Agent resource
+        # cannot create an orphan record that later masquerades as course-backed
+        # progress.  The owner still comes exclusively from RequestScope.
+        source = mysql.execute(
+            "SELECT c.course_id, ch.id AS chapter_id "
+            "FROM course c JOIN chapter ch ON ch.course_id=c.course_id "
+            "WHERE c.course_id=:course_id AND ch.id=:chapter_id LIMIT 1",
+            {"course_id": str(course_id), "chapter_id": str(chapter_id)},
+        )
+        if not source:
+            return jsonify({
+                "success": False,
+                "status": "source_not_found",
+                "error": "课程或章节不存在，或章节不属于该课程",
+            }), 404
 
         sql = """
         INSERT INTO learning_progress
@@ -135,16 +166,33 @@ def update_progress():
 
         mysql.execute_write(sql, {
             "user_id": user_id,
-            "course_id": course_id,
-            "chapter_id": chapter_id,
+            "course_id": str(course_id),
+            "chapter_id": str(chapter_id),
             "progress": progress,
             "completed": data.get('completed', False),
             "progress2": progress,
             "completed2": data.get('completed', False)
         })
 
-        return jsonify({"success": True, "data": {"message": "进度已更新"}})
+        persisted = mysql.execute(
+            "SELECT user_id, course_id, chapter_id, progress, completed "
+            "FROM learning_progress WHERE user_id = :user_id AND chapter_id = :chapter_id LIMIT 1",
+            {"user_id": user_id, "chapter_id": str(chapter_id)},
+        )
+        if (
+            not persisted
+            or str(persisted[0].get("user_id")) != str(user_id)
+            or str(persisted[0].get("chapter_id")) != str(chapter_id)
+            or str(persisted[0].get("course_id")) != str(course_id)
+            or abs(float(persisted[0].get("progress")) - float(progress)) > 0.001
+            or bool(persisted[0].get("completed")) != bool(data.get("completed", False))
+        ):
+            return jsonify({"success": False, "error": "学习进度写入后未能核验"}), 500
 
+        return jsonify({"success": True, "data": {"message": "进度已更新", "progress": persisted[0]}})
+
+    except ScopeError as e:
+        return scope_error_response(e)
     except Exception as e:
         return jsonify(safe_error("更新学习进度", e)), 500
 
@@ -153,6 +201,7 @@ def update_progress():
 def get_learning_report(user_id: str):
     """获取学习报告"""
     try:
+        require_student_path(user_id, resolve_request_scope())
         mysql = get_mysql_client()
 
         sql = """
@@ -171,6 +220,8 @@ def get_learning_report(user_id: str):
             "data": results[0] if results else {}
         })
 
+    except ScopeError as e:
+        return scope_error_response(e)
     except Exception as e:
         return jsonify(safe_error("获取学习报告", e)), 500
 
@@ -192,9 +243,10 @@ def recommend_courses():
         3. 最后根据技能分类树推荐前置课程
     """
     try:
+        scope = resolve_request_scope()
         weak_skills_str = request.args.get('weak_skills', '')
         target_role = request.args.get('target_role', '')
-        student_id = request.args.get('student_id', '')
+        student_id = scope.student_id
         limit, _ = clamp_pagination(request.args.get('limit', type=int), None, default_limit=10)
 
         mysql = get_mysql_client()
@@ -288,6 +340,8 @@ def recommend_courses():
             }
         })
 
+    except ScopeError as e:
+        return scope_error_response(e)
     except Exception as e:
         return jsonify(safe_error("课程推荐", e)), 500
 

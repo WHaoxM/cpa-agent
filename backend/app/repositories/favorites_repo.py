@@ -4,6 +4,7 @@
 """
 
 from typing import Optional, List, Dict, Any
+from sqlalchemy import text
 
 from ..services.db import get_mysql_client
 from ..utils.logger import get_logger
@@ -13,6 +14,24 @@ logger = get_logger('cpa-agent.repositories.favorites')
 
 class FavoritesRepository:
     """收藏与目标岗位数据访问"""
+
+    def get_saved_job(self, job_id: str, *, user_id: str, record_id=None):
+        if not user_id:
+            raise PermissionError("user_id required")
+        rows = get_mysql_client().execute(
+            "SELECT * FROM saved_job WHERE job_id = :job_id AND user_id = :user_id "
+            + ("AND id = :record_id " if record_id is not None else "") + "ORDER BY id DESC LIMIT 1",
+            {"job_id": job_id, "user_id": user_id, "record_id": record_id})
+        return rows[0] if rows else None
+
+    def get_target_role(self, role_name: str, *, user_id: str, record_id=None):
+        if not user_id:
+            raise PermissionError("user_id required")
+        rows = get_mysql_client().execute(
+            "SELECT * FROM target_role WHERE role_name = :role AND user_id = :user_id "
+            + ("AND id = :record_id " if record_id is not None else "") + "ORDER BY id DESC LIMIT 1",
+            {"role": role_name, "user_id": user_id, "record_id": record_id})
+        return rows[0] if rows else None
 
     # ── 收藏岗位 ──
 
@@ -28,20 +47,25 @@ class FavoritesRepository:
                  job_title: Optional[str], company: Optional[str],
                  industry: Optional[str], salary: Optional[str],
                  location: Optional[str], match_score: float = 0,
-                 required_skills: Optional[str] = None) -> None:
+                 required_skills: Optional[str] = None) -> int:
         """收藏岗位 (required_skills 应为 JSON 字符串, 由 API 层序列化)"""
+        if not user_id:
+            raise PermissionError("user_id required")
         mysql = get_mysql_client()
         sql = """
         INSERT INTO saved_job
         (job_id, user_id, job_title, company, industry, salary, location, match_score, required_skills)
         VALUES (:job_id, :user_id, :job_title, :company, :industry, :salary, :location, :match_score, :required_skills)
         """
-        mysql.execute_write(sql, {
+        params = {
             "job_id": job_id, "user_id": user_id, "job_title": job_title,
             "company": company, "industry": industry, "salary": salary,
             "location": location, "match_score": match_score,
             "required_skills": required_skills,
-        })
+        }
+        with mysql.engine.begin() as conn:
+            result = conn.execute(text(sql), params)
+            return int(result.lastrowid)
 
     def delete_saved_job(self, job_id: str, *, user_id: str) -> None:
         """取消收藏"""
@@ -64,17 +88,23 @@ class FavoritesRepository:
         return mysql.execute(sql, {"user_id": user_id})
 
     def add_target_role(self, *, user_id: Optional[str], role_name: str,
-                        priority: int = 1) -> None:
+                        priority: int = 1) -> int:
         """添加目标职业方向"""
+        if not user_id:
+            raise PermissionError("user_id required")
         mysql = get_mysql_client()
-        mysql.execute_write(
+        with mysql.engine.begin() as conn:
+            result = conn.execute(text(
             "INSERT INTO target_role (user_id, role_name, priority) "
-            "VALUES (:user_id, :role_name, :priority)",
+            "VALUES (:user_id, :role_name, :priority)"),
             {"user_id": user_id, "role_name": role_name, "priority": priority},
-        )
+            )
+            return int(result.lastrowid)
 
     def delete_target_role(self, *, role_name: str, user_id: Optional[str]) -> None:
         """移除目标职业方向"""
+        if not user_id:
+            raise PermissionError("user_id required")
         mysql = get_mysql_client()
         mysql.execute_write(
             "DELETE FROM target_role WHERE role_name = :role AND user_id = :user_id",

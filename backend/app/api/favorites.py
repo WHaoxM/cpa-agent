@@ -6,7 +6,6 @@ HTTP 层: 参数解析 + 调用 repository + 包装响应
 字段兼容: 同时接受 snake_case（权威）与 camelCase / role 别名，消除 FE field-mismatch。
 """
 
-import uuid
 import json
 from flask import request, jsonify
 
@@ -45,13 +44,15 @@ def save_job():
     try:
         scope = resolve_request_scope()
         data = request.get_json() or {}
-        job_id = _pick(data, 'job_id', 'jobId') or f"job_{uuid.uuid4().hex[:12]}"
+        job_id = _pick(data, 'job_id', 'jobId')
+        if not isinstance(job_id, str) or not job_id.strip():
+            return jsonify({"success": False, "error": "job_id 必填，不能为收藏生成虚构岗位 ID"}), 400
 
         required_skills = _pick(data, 'required_skills', 'requiredSkills', default=[])
         if isinstance(required_skills, list):
             required_skills = json.dumps(required_skills, ensure_ascii=False)
 
-        favorites_repo.save_job(
+        record_id = favorites_repo.save_job(
             job_id=job_id,
             user_id=scope.student_id,
             job_title=_pick(data, 'job_title', 'jobTitle'),
@@ -63,7 +64,11 @@ def save_job():
             required_skills=required_skills,
         )
 
-        return jsonify({"success": True, "data": {"job_id": job_id, "message": "岗位已收藏"}})
+        saved = favorites_repo.get_saved_job(job_id, user_id=scope.student_id, record_id=record_id) if record_id else None
+        if not saved or saved.get("id") != record_id:
+            return jsonify({"success": False, "status": "unverified", "error": "收藏写入未通过回读核验"}), 503
+        return jsonify({"success": True, "data": {"job_id": job_id, "saved_job_id": saved["id"],
+                        "source_verified": False, "message": "岗位已收藏（用户提供的收藏信息，不代表岗位来源已认证）"}})
     except ScopeError as e:
         return scope_error_response(e)
     except Exception as e:
@@ -75,7 +80,11 @@ def unsave_job(job_id: str):
     """取消收藏"""
     try:
         user_id = resolve_request_scope().student_id
+        if not favorites_repo.get_saved_job(job_id, user_id=user_id):
+            return jsonify({"success": False, "error": "收藏不存在"}), 404
         favorites_repo.delete_saved_job(job_id, user_id=user_id)
+        if favorites_repo.get_saved_job(job_id, user_id=user_id):
+            return jsonify({"success": False, "error": "取消收藏未通过回读核验"}), 503
         return jsonify({"success": True, "data": {"message": f"岗位 {job_id} 已取消收藏"}})
     except ScopeError as e:
         return scope_error_response(e)
@@ -106,12 +115,15 @@ def add_target_role():
         if not role_name:
             return jsonify({"success": False, "error": "role_name 必填"}), 400
 
-        favorites_repo.add_target_role(
+        record_id = favorites_repo.add_target_role(
             user_id=scope.student_id,
             role_name=role_name,
             priority=data.get('priority', 1),
         )
-        return jsonify({"success": True, "data": {"message": "目标职业已添加"}})
+        saved = favorites_repo.get_target_role(role_name, user_id=scope.student_id, record_id=record_id) if record_id else None
+        if not saved or saved.get("id") != record_id:
+            return jsonify({"success": False, "status": "unverified", "error": "目标职业写入未通过回读核验"}), 503
+        return jsonify({"success": True, "data": {"target_role_id": saved["id"], "message": "目标职业已添加"}})
     except ScopeError as e:
         return scope_error_response(e)
     except Exception as e:
@@ -123,7 +135,11 @@ def remove_target_role(role: str):
     """移除目标职业方向"""
     try:
         user_id = resolve_request_scope().student_id
+        if not favorites_repo.get_target_role(role, user_id=user_id):
+            return jsonify({"success": False, "error": "目标职业不存在"}), 404
         favorites_repo.delete_target_role(role_name=role, user_id=user_id)
+        if favorites_repo.get_target_role(role, user_id=user_id):
+            return jsonify({"success": False, "error": "移除目标职业未通过回读核验"}), 503
         return jsonify({"success": True, "data": {"message": f"目标职业 {role} 已移除"}})
     except ScopeError as e:
         return scope_error_response(e)

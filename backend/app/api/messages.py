@@ -67,8 +67,10 @@ def mark_message_read(message_id: str):
     try:
         user_id = _user_id()
         ok = messages_repo.mark_read(user_id=user_id, message_id=message_id)
-        if not ok:
+        if ok is None:
             return jsonify({"success": False, "error": f"消息不存在: {message_id}"}), 404
+        if not ok:
+            return jsonify({"success": False, "error": "消息状态未核验或已删除"}), 503
         return jsonify({"success": True, "data": {"id": message_id, "read": True}})
     except ScopeError as e:
         return scope_error_response(e)
@@ -82,8 +84,10 @@ def delete_message(message_id: str):
     try:
         user_id = _user_id()
         ok = messages_repo.soft_delete(user_id=user_id, message_id=message_id)
-        if not ok:
+        if ok is None:
             return jsonify({"success": False, "error": f"消息不存在: {message_id}"}), 404
+        if not ok:
+            return jsonify({"success": False, "error": "删除状态未核验"}), 503
         return jsonify({"success": True, "data": {"id": message_id, "deleted": True}})
     except ScopeError as e:
         return scope_error_response(e)

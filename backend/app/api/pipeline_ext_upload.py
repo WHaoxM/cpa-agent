@@ -11,12 +11,11 @@ L0 文件上传解析 API (2 路由):
 
 import os
 import tempfile
-import uuid
 from pathlib import Path
 
 from flask import request, jsonify
 
-from ._helpers import safe_error
+from ._helpers import ScopeError, resolve_request_scope, safe_error, scope_error_response
 from .pipeline_ext_common import pipeline_ext_bp, logger
 
 # 文件类型白名单
@@ -32,6 +31,11 @@ def parse_resume_file_api():
         file: PDF/DOCX/TXT/图片文件
         extract_skills: true|false (可选, 默认false)
     """
+    try:
+        scope = resolve_request_scope()
+    except ScopeError as e:
+        return scope_error_response(e)
+
     if 'file' not in request.files:
         return jsonify({"success": False, "error": "请上传文件"}), 400
 
@@ -63,7 +67,7 @@ def parse_resume_file_api():
         # Structure truth: never silently truncate raw resume text (old [:5000] dropped 教育经历).
         full_text = (l0_result.text or "").strip()
         response_data = {
-            "student_id": f"student_{uuid.uuid4().hex[:8]}",
+            "student_id": scope.student_id,
             "text": full_text,
             "raw_text": full_text,
             "text_chars": len(full_text),

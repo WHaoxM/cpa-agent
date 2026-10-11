@@ -26,7 +26,7 @@ class _FakePipelineMySQL:
             }
         elif normalized.startswith("update pipeline_task"):
             task = self.tasks[parameters["task_id"]]
-            task["status"] = "completed"
+            task["status"] = "partial"
             task["progress"] = 100
             task["result_json"] = parameters["result"]
             task["error_message"] = None
@@ -102,7 +102,7 @@ def test_pipeline_list_returns_demo_pipeline_catalog():
     ]
 
 
-def test_pipeline_trigger_completes_demo_task_without_worker(monkeypatch):
+def test_pipeline_trigger_marks_demo_preview_partial_without_worker(monkeypatch):
     app = create_app()
     client = app.test_client()
     fake_mysql = _FakePipelineMySQL()
@@ -120,7 +120,7 @@ def test_pipeline_trigger_completes_demo_task_without_worker(monkeypatch):
     body = response.get_json()
     assert response.status_code == 200
     assert body["success"] is True
-    assert body["data"]["status"] == "completed"
+    assert body["data"]["status"] == "partial"
     assert body["data"]["progress"] == 100
     assert body["data"]["result"]["source"] == "demo_fallback"
     assert "Python" in body["data"]["result"]["summary"]["detected_skills"]
@@ -128,7 +128,7 @@ def test_pipeline_trigger_completes_demo_task_without_worker(monkeypatch):
     status_response = client.get(f"/api/pipeline/status/{body['data']['task_id']}")
     status_body = status_response.get_json()
     assert status_response.status_code == 200
-    assert status_body["data"]["status"] == "completed"
+    assert status_body["data"]["status"] == "partial"
     assert status_body["data"]["progress"] == 100
 
 
@@ -209,6 +209,15 @@ def test_career_landscape_returns_demo_fallback_when_mysql_is_unavailable(monkey
 
 def test_admin_kb_smart_upload_extracts_entities_without_mysql(monkeypatch):
     app = create_app()
+    # Admin surface requires the server auth adapter to set the claim.
+    from flask import g
+    from app.api._helpers import Principal
+
+    @app.before_request
+    def _test_admin_principal():
+        g.cpa_principal = Principal("operator", "operator", source="test_auth")
+        g.cpa_admin = True
+
     client = app.test_client()
 
     def raise_mysql_error():

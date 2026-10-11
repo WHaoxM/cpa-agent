@@ -11,10 +11,14 @@ Agent 对话历史存储与统计 API (3 路由) + 数据库健康检查 (1 路�
 """
 
 import time
+import uuid
 
 from flask import request, jsonify
 
-from ._helpers import clamp_pagination, safe_error
+from ._helpers import (
+    ScopeError, clamp_pagination, require_owner, resolve_request_scope,
+    safe_error, scope_error_response,
+)
 from .pipeline_ext_common import pipeline_ext_bp, logger
 
 
@@ -37,7 +41,6 @@ def save_agent_session():
     data = request.get_json() or {}
 
     session_id = data.get('session_id', '')
-    student_id = data.get('student_id', '')
     title = data.get('title', '')
     messages = data.get('messages', [])
 
@@ -48,36 +51,56 @@ def save_agent_session():
         }), 400
 
     try:
+        scope = resolve_request_scope()
         from ..services.db import get_mysql_client
         mysql = get_mysql_client()
 
         conv_sql = """
-        INSERT INTO conversation (session_id, student_id, title, status, message_count, updated_at)
-        VALUES (:session_id, :student_id, :title, 'active', :message_count, NOW())
-        ON DUPLICATE KEY UPDATE
-            message_count = VALUES(message_count),
-            updated_at = NOW()
+        INSERT IGNORE INTO conversation (session_id, student_id, title, status, message_count, updated_at)
+        VALUES (:session_id, :student_id, :title, 'active', 0, NOW())
         """
-        mysql.execute(conv_sql, {
+        mysql.execute_write(conv_sql, {
             "session_id": session_id,
-            "student_id": student_id,
+            "student_id": scope.student_id,
             "title": title or f"对话 {session_id}",
-            "message_count": len(messages)
         })
+        owner_rows = mysql.execute(
+            "SELECT student_id FROM conversation WHERE session_id=:session_id LIMIT 1",
+            {"session_id": session_id},
+        )
+        require_owner(owner_rows[0].get("student_id") if owner_rows else None, scope, resource="会话")
 
         msg_sql = """
         INSERT INTO conversation_message (session_id, message_id, role, content, created_at)
         VALUES (:session_id, :message_id, :role, :content, FROM_UNIXTIME(:timestamp))
         """
-        for i, msg in enumerate(messages):
-            msg_id = f"{session_id}_{int(time.time() * 1000)}_{i}"
-            mysql.execute(msg_sql, {
+        message_ids = []
+        for msg in messages:
+            msg_id = f"{session_id}_{uuid.uuid4().hex}"
+            mysql.execute_write(msg_sql, {
                 "session_id": session_id,
                 "message_id": msg_id,
                 "role": msg.get('role', 'user'),
                 "content": msg.get('content', ''),
                 "timestamp": int(time.time())
             })
+            message_ids.append(msg_id)
+
+        placeholders = ", ".join(f":mid_{i}" for i in range(len(message_ids)))
+        verified = mysql.execute(
+            "SELECT COUNT(*) AS saved FROM conversation_message cm "
+            "JOIN conversation c ON c.session_id=cm.session_id "
+            f"WHERE c.session_id=:session_id AND c.student_id=:student_id AND cm.message_id IN ({placeholders})",
+            {"session_id": session_id, "student_id": scope.student_id,
+             **{f"mid_{i}": mid for i, mid in enumerate(message_ids)}},
+        )
+        if not verified or int(verified[0].get("saved") or 0) != len(message_ids):
+            return jsonify({"success": False, "error": "对话消息写入后未能核验"}), 500
+        mysql.execute_write(
+            "UPDATE conversation SET message_count=(SELECT COUNT(*) FROM conversation_message "
+            "WHERE session_id=:session_id) WHERE session_id=:session_id AND student_id=:student_id",
+            {"session_id": session_id, "student_id": scope.student_id},
+        )
 
         return jsonify({
             "success": True,
@@ -87,6 +110,8 @@ def save_agent_session():
             }
         })
 
+    except ScopeError as error:
+        return scope_error_response(error)
     except Exception as e:
         return jsonify(safe_error("保存对话历史", e, message="服务器内部错误")), 500
 
@@ -102,10 +127,18 @@ def get_agent_stats():
     session_id = request.args.get('session_id', '')
 
     try:
+        scope = resolve_request_scope()
         from ..services.db import get_mysql_client
         mysql = get_mysql_client()
 
         if session_id:
+            owner = mysql.execute(
+                "SELECT student_id FROM conversation WHERE session_id=:session_id LIMIT 1",
+                {"session_id": session_id},
+            )
+            if not owner:
+                return jsonify({"success": False, "error": "会话不存在"}), 404
+            require_owner(owner[0].get("student_id"), scope, resource="会话")
             sql = """
             SELECT role, COUNT(*) as count,
                    AVG(LENGTH(content)) as avg_content_length
@@ -117,16 +150,18 @@ def get_agent_stats():
         else:
             sql = """
             SELECT 'total_sessions' as metric, COUNT(DISTINCT session_id) as value
-            FROM conversation
+            FROM conversation WHERE student_id=:student_id
             UNION ALL
             SELECT 'total_messages' as metric, COUNT(*) as value
-            FROM conversation_message
+            FROM conversation_message cm JOIN conversation c ON c.session_id=cm.session_id
+            WHERE c.student_id=:student_id
             UNION ALL
             SELECT 'avg_messages_per_session' as metric,
-                   COUNT(*) / NULLIF(COUNT(DISTINCT session_id), 0) as value
-            FROM conversation_message
+                   COUNT(*) / NULLIF(COUNT(DISTINCT c.session_id), 0) as value
+            FROM conversation_message cm JOIN conversation c ON c.session_id=cm.session_id
+            WHERE c.student_id=:student_id
             """
-            rows = mysql.fetch_all(sql, {})
+            rows = mysql.fetch_all(sql, {"student_id": scope.student_id})
 
         return jsonify({
             "success": True,
@@ -136,6 +171,8 @@ def get_agent_stats():
             }
         })
 
+    except ScopeError as error:
+        return scope_error_response(error)
     except Exception as e:
         return jsonify(safe_error("获取Agent统计", e, message="服务器内部错误")), 500
 
@@ -155,18 +192,28 @@ def get_agent_session_messages(session_id: str):
     )
 
     try:
+        scope = resolve_request_scope()
         from ..services.db import get_mysql_client
         mysql = get_mysql_client()
+        owner = mysql.execute(
+            "SELECT student_id FROM conversation WHERE session_id=:session_id LIMIT 1",
+            {"session_id": session_id},
+        )
+        if not owner:
+            return jsonify({"success": False, "error": "会话不存在"}), 404
+        require_owner(owner[0].get("student_id"), scope, resource="会话")
 
         sql = """
-        SELECT message_id, role, content, created_at
-        FROM conversation_message
-        WHERE session_id = :session_id
-        ORDER BY created_at ASC
+        SELECT cm.message_id, cm.role, cm.content, cm.created_at
+        FROM conversation_message cm
+        JOIN conversation c ON c.session_id=cm.session_id
+        WHERE cm.session_id = :session_id AND c.student_id = :student_id
+        ORDER BY cm.created_at ASC
         LIMIT :limit OFFSET :offset
         """
         rows = mysql.fetch_all(sql, {
             "session_id": session_id,
+            "student_id": scope.student_id,
             "limit": limit,
             "offset": offset
         })
@@ -180,6 +227,8 @@ def get_agent_session_messages(session_id: str):
             }
         })
 
+    except ScopeError as error:
+        return scope_error_response(error)
     except Exception as e:
         return jsonify(safe_error("获取对话消息", e, message="服务器内部错误")), 500
 

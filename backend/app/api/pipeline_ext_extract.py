@@ -29,9 +29,19 @@ L0+L1 文本解析与技能抽取 API (20 路由):
 import uuid
 from flask import request, jsonify
 
-from ._helpers import clamp_pagination, safe_error
+from ._helpers import ScopeError, clamp_pagination, resolve_request_scope, safe_error, scope_error_response
 from .pipeline_ext_common import pipeline_ext_bp, logger, _normalize_skills
 from ..exceptions import ErrorCode
+
+
+def _draft_response_data(value):
+    """These legacy calculators do not persist a business artifact."""
+    data = dict(value) if isinstance(value, dict) else {"value": value}
+    report_id = data.pop("report_id", None)
+    if report_id:
+        data["draft_id"] = report_id
+    data.update({"status": "partial", "verified": False, "persisted": False})
+    return {"success": True, "status": "partial", "verified": False, "data": data}
 
 
 @pipeline_ext_bp.route('/extract', methods=['POST'])
@@ -136,9 +146,12 @@ def create_full_report():
         }
     """
     data = request.get_json() or {}
-    student_id = data.get('student_id', f'stu_{uuid.uuid4().hex[:8]}')
+    try:
+        student_id = resolve_request_scope().student_id
+    except ScopeError as e:
+        return scope_error_response(e)
     student_skills = _normalize_skills(data.get('student_skills', []))
-    job_id = data.get('job_id', f'job_{uuid.uuid4().hex[:8]}')
+    job_id = data.get('job_id') or ''
     job_name = data.get('job_name', '未知岗位')
     job_skills = _normalize_skills(data.get('job_skills', []))
     use_llm_summary = data.get('use_llm_summary', True)
@@ -156,10 +169,7 @@ def create_full_report():
             use_llm_summary=use_llm_summary
         )
 
-        return jsonify({
-            "success": True,
-            "data": report
-        })
+        return jsonify(_draft_response_data(report))
 
     except Exception as e:
         return jsonify(safe_error("生成完整报告", e, message="服务器内部错误")), 500
@@ -181,9 +191,12 @@ def export_report_html():
         }
     """
     data = request.get_json() or {}
-    student_id = data.get('student_id')
+    try:
+        student_id = resolve_request_scope().student_id
+    except ScopeError as e:
+        return scope_error_response(e)
     student_skills = _normalize_skills(data.get('student_skills', []))
-    job_id = data.get('job_id')
+    job_id = data.get('job_id') or ''
     job_name = data.get('job_name', '未知岗位')
     job_skills = _normalize_skills(data.get('job_skills', []))
     llm_summary = data.get('llm_summary', '')
@@ -195,12 +208,13 @@ def export_report_html():
         from ..pipeline.entity_extractor.report_generator import generate_match_report
 
         report = generate_match_report(
-            student_id or f'stu_{uuid.uuid4().hex[:8]}',
+            student_id,
             student_skills,
-            job_id or f'job_{uuid.uuid4().hex[:8]}',
+            job_id,
             job_name,
             job_skills
         )
+        report["report_id"] = "DRAFT-NOT-SAVED"
 
         report["student_skills"] = [s["name"] for s in student_skills]
         report["job_skills"] = [s["name"] for s in job_skills]
@@ -209,13 +223,7 @@ def export_report_html():
         generator = L4ReportGenerator()
         html = generator.generate_html(report, llm_summary)
 
-        return jsonify({
-            "success": True,
-            "data": {
-                "html": html,
-                "content_type": "text/html"
-            }
-        })
+        return jsonify(_draft_response_data({"html": html, "content_type": "text/html"}))
 
     except Exception as e:
         return jsonify(safe_error("生成HTML报告", e, message="服务器内部错误")), 500
@@ -369,20 +377,24 @@ def recommend_skills():
     skills = [s.strip() for s in skills_str.split(',') if s.strip()]
 
     try:
-        from ..pipeline.entity_extractor.graph_storage import GraphStorage
-        storage = GraphStorage()
-        recommendations = storage.recommend_skills(skills, limit=limit)
+        from ..services.public_skill_graph import query_public_skills
+        result = query_public_skills("recommend", {"skill_names": skills, "limit": limit})
+        if not result["success"]:
+            return jsonify({"success": False, "status": "unavailable", "data": result}), 503
 
         return jsonify({
             "success": True,
             "data": {
+                **result,
                 "input_skills": skills,
-                "recommendations": recommendations
+                "recommendations": result["rows"]
             }
         })
 
+    except ValueError:
+        return jsonify({"success": False, "status": "failed", "error": "公共技能推荐参数无效"}), 400
     except Exception as e:
-        return jsonify(safe_error("技能推荐", e, message="服务器内部错误")), 500
+        return jsonify({**safe_error("技能推荐", e, message="公共技能分区暂不可用"), "status": "unavailable"}), 503
 
 
 @pipeline_ext_bp.route('/path', methods=['GET'])
@@ -395,7 +407,12 @@ def find_learning_path():
     """
     from_skill = request.args.get('from', '')
     to_skill = request.args.get('to', '')
-    max_hops = request.args.get('max_hops', 5, type=int)
+    try:
+        max_hops = int(request.args.get('max_hops', '5'))
+        if not 1 <= max_hops <= 5:
+            raise ValueError("max_hops must be 1..5")
+    except ValueError:
+        return jsonify({"success": False, "status": "failed", "error": "max_hops 必须为 1–5 的整数"}), 400
 
     if not from_skill:
         return jsonify({"success": False, "error": "from 参数不能为空"}), 400
@@ -403,17 +420,26 @@ def find_learning_path():
         return jsonify({"success": False, "error": "to 参数不能为空"}), 400
 
     try:
-        from ..pipeline.entity_extractor.graph_storage import GraphStorage
-        storage = GraphStorage()
-        path = storage.find_learning_path(from_skill, to_skill, max_hops=max_hops)
+        from ..services.public_skill_graph import query_public_skills
+        result = query_public_skills("learning_path", {"from_skill": from_skill, "to_skill": to_skill})
+        if not result["success"]:
+            return jsonify({"success": False, "status": "unavailable", "data": result}), 503
+        rows = [row for row in result["rows"] if row["hops"] <= max_hops]
+        path = {
+            **result, "rows": rows, "status": "ready" if rows else "empty", "found": bool(rows),
+            "from_skill": from_skill, "to_skill": to_skill,
+            "steps": rows[0]["steps"] if rows else [], "hops": rows[0]["hops"] if rows else None,
+        }
 
         return jsonify({
             "success": True,
             "data": path
         })
 
+    except ValueError:
+        return jsonify({"success": False, "status": "failed", "error": "公共学习路径参数无效"}), 400
     except Exception as e:
-        return jsonify(safe_error("路径查找", e, message="服务器内部错误")), 500
+        return jsonify({**safe_error("路径查找", e, message="公共技能分区暂不可用"), "status": "unavailable"}), 503
 
 
 @pipeline_ext_bp.route('/graph', methods=['GET'])
@@ -432,17 +458,22 @@ def get_skill_graph():
     skills = [s.strip() for s in skills_str.split(',') if s.strip()]
 
     try:
-        from ..pipeline.entity_extractor.graph_storage import GraphStorage
-        storage = GraphStorage()
-        graph = storage.get_skill_graph(skills)
+        from ..services.public_skill_graph import query_public_skills
+        result = query_public_skills("subgraph", {"skill_names": skills})
+        if not result["success"]:
+            return jsonify({"success": False, "status": "unavailable", "data": result}), 503
+        names = sorted({row[key] for row in result["rows"] for key in ("source", "target")})
+        graph = {**result, "nodes": [{"name": name} for name in names], "edges": result["rows"]}
 
         return jsonify({
             "success": True,
             "data": graph
         })
 
+    except ValueError:
+        return jsonify({"success": False, "status": "failed", "error": "公共技能子图参数无效"}), 400
     except Exception as e:
-        return jsonify(safe_error("获取技能图谱", e, message="服务器内部错误")), 500
+        return jsonify({**safe_error("获取技能图谱", e, message="公共技能分区暂不可用"), "status": "unavailable"}), 503
 
 
 @pipeline_ext_bp.route('/portrait/student', methods=['POST'])
@@ -464,7 +495,10 @@ def create_student_portrait():
         }
     """
     data = request.get_json() or {}
-    student_id = data.get('student_id', f'stu_{uuid.uuid4().hex[:8]}')
+    try:
+        student_id = resolve_request_scope().student_id
+    except ScopeError as e:
+        return scope_error_response(e)
     skills = _normalize_skills(data.get('skills', []))
     student_profile = data.get('student_profile')
     if student_profile is not None and not isinstance(student_profile, dict):
@@ -485,10 +519,7 @@ def create_student_portrait():
             target_job_skills=target_job_skills,
         )
 
-        return jsonify({
-            "success": True,
-            "data": portrait
-        })
+        return jsonify(_draft_response_data(portrait))
 
     except Exception as e:
         return jsonify(safe_error("生成学生画像", e, message="服务器内部错误")), 500
@@ -541,9 +572,12 @@ def create_match_report():
         }
     """
     data = request.get_json() or {}
-    student_id = data.get('student_id', f'stu_{uuid.uuid4().hex[:8]}')
+    try:
+        student_id = resolve_request_scope().student_id
+    except ScopeError as e:
+        return scope_error_response(e)
     student_skills = _normalize_skills(data.get('student_skills', []))
-    job_id = data.get('job_id', f'job_{uuid.uuid4().hex[:8]}')
+    job_id = data.get('job_id') or ''
     job_name = data.get('job_name', '未知岗位')
     job_skills = _normalize_skills(data.get('job_skills', []))
 
@@ -559,10 +593,7 @@ def create_match_report():
             job_id, job_name, job_skills
         )
 
-        return jsonify({
-            "success": True,
-            "data": report
-        })
+        return jsonify(_draft_response_data(report))
 
     except Exception as e:
         return jsonify(safe_error("生成匹配报告", e, message="服务器内部错误")), 500
@@ -580,7 +611,10 @@ def create_career_report():
         }
     """
     data = request.get_json() or {}
-    student_id = data.get('student_id', f'stu_{uuid.uuid4().hex[:8]}')
+    try:
+        student_id = resolve_request_scope().student_id
+    except ScopeError as e:
+        return scope_error_response(e)
     skills = _normalize_skills(data.get('skills', []))
 
     if not skills:
@@ -590,10 +624,7 @@ def create_career_report():
         from ..pipeline.entity_extractor.report_generator import generate_career_report
         report = generate_career_report(student_id, skills)
 
-        return jsonify({
-            "success": True,
-            "data": report
-        })
+        return jsonify(_draft_response_data(report))
 
     except Exception as e:
         return jsonify(safe_error("生成职业报告", e, message="服务器内部错误")), 500
@@ -610,6 +641,10 @@ def parse_resume_api():
             "extract_skills": true  // 是否顺便抽取技能
         }
     """
+    try:
+        resolve_request_scope()
+    except ScopeError as e:
+        return scope_error_response(e)
     data = request.get_json() or {}
     text = data.get('text', '')
     extract_skills = data.get('extract_skills', False)
@@ -696,7 +731,7 @@ def parse_jd_api():
 @pipeline_ext_bp.route('/parse/full', methods=['POST'])
 def parse_full_api():
     """
-    L0+L1: 完整解析（简历+技能抽取+图谱存储）
+    L0+L1: 简历与 JD 的解析预览（不保存用户确认后的画像）
 
     Body:
         {
@@ -706,10 +741,14 @@ def parse_full_api():
             "job_id": "可选"
         }
     """
+    try:
+        scope = resolve_request_scope()
+    except ScopeError as e:
+        return scope_error_response(e)
     data = request.get_json() or {}
     student_text = data.get('student_text', '')
     job_text = data.get('job_text', '')
-    student_id = data.get('student_id', f'stu_{uuid.uuid4().hex[:8]}')
+    student_id = scope.student_id
     job_id = data.get('job_id', f'job_{uuid.uuid4().hex[:8]}')
 
     if not student_text and not job_text:
@@ -731,6 +770,7 @@ def parse_full_api():
                 from ..pipeline.entity_extractor.entity_pipeline import EntityPipeline
                 pipeline = EntityPipeline(use_llm=True)
                 l1_result = pipeline.run_l1_extract(student_text, student_id)
+                result["resume"]["success"] = l1_result.get("success") is True
                 result["resume"]["skills"] = l1_result.get("data", {}).get("skills", [])
 
         if job_text:
@@ -746,10 +786,15 @@ def parse_full_api():
                 from ..pipeline.entity_extractor.entity_pipeline import EntityPipeline
                 pipeline = EntityPipeline(use_llm=True)
                 l1_result = pipeline.run_l1_extract(job_text, job_id)
+                result["job"]["success"] = l1_result.get("success") is True
                 result["job"]["skills"] = l1_result.get("data", {}).get("skills", [])
 
+        all_ok = all(part.get("success") is True for part in result.values())
+        any_ok = any(part.get("success") is True for part in result.values())
         return jsonify({
-            "success": True,
+            "success": all_ok,
+            "status": "completed" if all_ok else "partial" if any_ok else "failed",
+            "completion_scope": "parse_preview",
             "data": result
         })
 
@@ -765,6 +810,10 @@ def nsle_resume_api():
     Body:
         {"text": "简历文本"}
     """
+    try:
+        resolve_request_scope()
+    except ScopeError as e:
+        return scope_error_response(e)
     data = request.get_json() or {}
     text = data.get('text', '')
 
@@ -858,6 +907,10 @@ def nsle_full_api():
             "job_text": "JD文本"
         }
     """
+    try:
+        resolve_request_scope()
+    except ScopeError as e:
+        return scope_error_response(e)
     data = request.get_json() or {}
     resume_text = data.get('resume_text', '')
     job_text = data.get('job_text', '')
@@ -901,8 +954,12 @@ def nsle_full_api():
                 "required_skills": jd_result.get("required_skills", [])
             }
 
+        all_ok = all(part.get("success") is True for part in result.values())
+        any_ok = any(part.get("success") is True for part in result.values())
         return jsonify({
-            "success": True,
+            "success": all_ok,
+            "status": "completed" if all_ok else "partial" if any_ok else "failed",
+            "completion_scope": "parse_preview",
             "data": result
         })
 

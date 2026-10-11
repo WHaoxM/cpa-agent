@@ -10,7 +10,7 @@ ensure_schema 只做 DDL，不插入任何业务文案。
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..services.db import get_mysql_client
 from ..utils.logger import get_logger
@@ -72,7 +72,7 @@ class MessagesRepository:
             {"user_id": user_id},
         )
 
-    def mark_read(self, *, user_id: str, message_id: str) -> bool:
+    def mark_read(self, *, user_id: str, message_id: str) -> Optional[bool]:
         self.ensure_schema()
         mysql = get_mysql_client()
         exists = mysql.execute(
@@ -80,18 +80,24 @@ class MessagesRepository:
             {"id": message_id},
         )
         if not exists:
-            return False
+            return None
         mysql.execute_write(
             """
             INSERT INTO inbox_message_user_state (user_id, message_id, is_read, is_deleted)
             VALUES (:user_id, :message_id, 1, 0)
-            ON DUPLICATE KEY UPDATE is_read = 1, is_deleted = 0
+            ON DUPLICATE KEY UPDATE is_read = IF(is_deleted = 0, 1, is_read)
             """,
             {"user_id": user_id, "message_id": message_id},
         )
-        return True
+        state = mysql.execute(
+            """SELECT s.is_read, s.is_deleted FROM inbox_message_user_state s
+               JOIN inbox_message m ON m.id = s.message_id
+               WHERE s.user_id = :user_id AND s.message_id = :message_id LIMIT 1""",
+            {"user_id": user_id, "message_id": message_id},
+        )
+        return bool(state and state[0]["is_read"] and not state[0]["is_deleted"])
 
-    def soft_delete(self, *, user_id: str, message_id: str) -> bool:
+    def soft_delete(self, *, user_id: str, message_id: str) -> Optional[bool]:
         self.ensure_schema()
         mysql = get_mysql_client()
         exists = mysql.execute(
@@ -99,7 +105,7 @@ class MessagesRepository:
             {"id": message_id},
         )
         if not exists:
-            return False
+            return None
         mysql.execute_write(
             """
             INSERT INTO inbox_message_user_state (user_id, message_id, is_read, is_deleted)
@@ -108,7 +114,13 @@ class MessagesRepository:
             """,
             {"user_id": user_id, "message_id": message_id},
         )
-        return True
+        state = mysql.execute(
+            """SELECT s.is_deleted FROM inbox_message_user_state s
+               JOIN inbox_message m ON m.id = s.message_id
+               WHERE s.user_id = :user_id AND s.message_id = :message_id LIMIT 1""",
+            {"user_id": user_id, "message_id": message_id},
+        )
+        return bool(state and state[0]["is_deleted"])
 
 
 messages_repo = MessagesRepository()

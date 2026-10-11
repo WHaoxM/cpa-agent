@@ -6,9 +6,11 @@
 from .logging_middleware import LoggingMiddleware
 from .error_handler import ErrorHandler
 from .cors_middleware import CorsMiddleware
+from .dev_auth import DevAuthMiddleware
 
 __all__ = [
     'LoggingMiddleware',
     'ErrorHandler',
     'CorsMiddleware',
+    'DevAuthMiddleware',
 ]

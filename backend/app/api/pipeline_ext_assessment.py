@@ -16,14 +16,17 @@ import uuid
 
 from flask import request, jsonify
 
-from ._helpers import parse_json_field, safe_error
+from ._helpers import (
+    ScopeError, parse_json_field, resolve_request_scope, safe_error,
+    scope_error_response,
+)
 from .pipeline_ext_common import pipeline_ext_bp, logger
 
 
 @pipeline_ext_bp.route('/exams', methods=['POST'])
 def submit_self_assessment():
     """
-    提交技能自评结果，生成画像和推荐
+    提交技能自评结果；只保存自评，不生成权威画像
 
     Body:
         {
@@ -39,7 +42,7 @@ def submit_self_assessment():
         1. 保存自评答案 → student_self_assessment 表
         2. 分析弱技能 → weak_skills
         3. 推荐岗位 → recommended_roles
-        4. 生成简易画像 → student_portrait_4d (冷启动模式)
+        4. 返回待画像生成状态；此接口不写 student_portrait_4d
     """
     try:
         data = request.get_json() or {}
@@ -49,14 +52,13 @@ def submit_self_assessment():
         if not answers:
             return jsonify({"success": False, "error": "answers 不能为空"}), 400
 
-        student_id = data.get('student_id') or f"guest_{uuid.uuid4().hex[:8]}"
+        student_id = resolve_request_scope().student_id
         from ..services.db import get_mysql_client
         mysql = get_mysql_client()
 
         # 分析自评结果
         assessed_skills = []
         weak_skills = []
-        total_score = 0
 
         for ans in answers:
             skill = ans.get('skill', '')
@@ -66,7 +68,6 @@ def submit_self_assessment():
                 "level": level,
                 "confidence": min(level / 5.0, 1.0)
             })
-            total_score += level
             if level < 3:  # 3分以下为弱技能
                 weak_skills.append(skill)
 
@@ -87,27 +88,24 @@ def submit_self_assessment():
             "weak_skills": json.dumps(weak_skills),
             "recommended_roles": json.dumps(recommended_roles)
         })
-
-        # 生成简易四维画像（冷启动模式，无LLM深度分析）
-        avg_level = total_score / len(answers) if answers else 0
-        portrait = {
-            "student_id": student_id,
-            "assessment_id": assessment_id,
-            "mode": "self_assessment",
-            "d1_score": min(avg_level * 20, 100),  # 基础能力
-            "d2_score": min(avg_level * 18, 90),   # 职业技能（略低）
-            "d3_score": 60,  # 冷启动默认值
-            "d4_score": 65,  # 冷启动默认值
-            "weak_skills": weak_skills[:10],
-            "recommended_roles": recommended_roles[:5]
-        }
+        persisted = mysql.execute(
+            "SELECT assessment_id FROM student_self_assessment "
+            "WHERE assessment_id = :assessment_id AND student_id = :student_id LIMIT 1",
+            {"assessment_id": assessment_id, "student_id": student_id},
+        )
+        if not persisted or str(persisted[0].get("assessment_id")) != assessment_id:
+            return jsonify({"success": False, "error": "自评结果写入后未能核验归属"}), 500
 
         return jsonify({
             "success": True,
             "data": {
                 "assessment_id": assessment_id,
                 "student_id": student_id,
-                "portrait": portrait,
+                "status": "partial",
+                "portrait": None,
+                "portrait_ready": False,
+                "portrait_verified": False,
+                "recommended_roles": recommended_roles,
                 "weak_skills_count": len(weak_skills),
                 "next_steps": [
                     "查看推荐岗位",
@@ -117,6 +115,8 @@ def submit_self_assessment():
             }
         })
 
+    except ScopeError as error:
+        return scope_error_response(error)
     except Exception as e:
         return jsonify(safe_error("技能自评", e)), 500
 
@@ -141,7 +141,7 @@ def _recommend_roles_by_skills(assessed_skills, weak_skills, target_role, mysql)
         # 否则基于技能匹配推荐
         skill_names = [s["skill"] for s in assessed_skills if s["level"] >= 3]
         if not skill_names:
-            return ["前端开发", "后端开发", "数据分析师"]  # 默认推荐
+            return []
 
         # 查询包含这些技能的岗位
         conditions = " OR ".join([f"portrait_json LIKE :skill{i}" for i in range(len(skill_names))])
@@ -156,21 +156,23 @@ def _recommend_roles_by_skills(assessed_skills, weak_skills, target_role, mysql)
 
         if results:
             return [r["position_name"] for r in results]
-        return ["前端开发", "Java开发", "Python开发"]
+        return []
 
     except Exception as e:
         logger.warning(f"推荐岗位失败: {e}")
-        return ["前端开发", "后端开发"]
+        return []
 
 
 @pipeline_ext_bp.route('/exams/<assessment_id>', methods=['GET'])
 def get_assessment_result(assessment_id: str):
     """获取自评结果详情"""
     try:
+        scope = resolve_request_scope()
         from ..services.db import get_mysql_client
         mysql = get_mysql_client()
-        sql = "SELECT * FROM student_self_assessment WHERE assessment_id = :assessment_id"
-        results = mysql.execute(sql, {"assessment_id": assessment_id})
+        sql = ("SELECT * FROM student_self_assessment "
+               "WHERE assessment_id = :assessment_id AND student_id = :student_id")
+        results = mysql.execute(sql, {"assessment_id": assessment_id, "student_id": scope.student_id})
 
         if not results:
             return jsonify({"success": False, "error": "自评记录不存在"}), 404
@@ -188,5 +190,7 @@ def get_assessment_result(assessment_id: str):
             }
         })
 
+    except ScopeError as error:
+        return scope_error_response(error)
     except Exception as e:
         return jsonify(safe_error("获取自评结果", e)), 500

@@ -5,6 +5,7 @@ test_workspace_loaders.py — D1.6 workspace seeds + branding 加载器
 - 无 seeds 目录时返回空（不报错）
 """
 import pytest
+import yaml
 from config.workspace_seeds_loader import (
     load_seeds_skills,
     load_seeds_jobs,
@@ -50,12 +51,13 @@ class TestWorkspaceBranding:
         assert has_branding() is True
 
     def test_load_branding(self, real_workspace_dir):
-        """branding 加载: 至少 brand.yaml 中的字段"""
+        """branding loader reads the current sample, not a frozen brand name."""
         b = load_branding()
         assert isinstance(b, dict)
-        assert b.get("accent_color") == "#2563EB"
-        assert b.get("font_family") == "Noto Sans SC, sans-serif"
-        assert b.get("company_name") == "CPA-Agent Demo"
+        brand_path = real_workspace_dir / "branding" / "brand.yaml"
+        expected = yaml.safe_load(brand_path.read_text(encoding="utf-8"))
+        for key in ("accent_color", "font_family", "company_name"):
+            assert b.get(key) == expected.get(key)
 
     def test_no_branding_returns_empty(self, tmp_workspace):
         """无 branding 目录时返回空 dict"""

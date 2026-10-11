@@ -5,6 +5,17 @@ from .loader import (
     get_rules_config,
     init_rules_config,
     resolve_workspace_dir,
+    get_grep_config,
+    get_extraction_config,
+    get_chunking_config,
+    reload_all_configs,
+)
+from .role_loader import (
+    RoleConfig,
+    RoleLoader,
+    get_role,
+    list_roles,
+    reload_roles,
 )
 from .prompt_loader import (
     PromptRegistry,
@@ -57,6 +68,17 @@ __all__ = [
     "get_rules_config",
     "init_rules_config",
     "resolve_workspace_dir",
+    # grep / extraction / chunking configs
+    "get_grep_config",
+    "get_extraction_config",
+    "get_chunking_config",
+    "reload_all_configs",
+    # roles
+    "RoleConfig",
+    "RoleLoader",
+    "get_role",
+    "list_roles",
+    "reload_roles",
     # prompts
     "PromptRegistry",
     "PromptRegistryError",

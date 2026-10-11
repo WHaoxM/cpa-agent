@@ -16,14 +16,22 @@ Milvus 向量存储与检索 API (7 路由 + 1 私有 helper):
 依赖: ..services.db (Milvus), ..services.embedding_service (BGE-M3)
 """
 
-import random
-import time
 from typing import List, Tuple
 
-from flask import request, jsonify
+from flask import request, jsonify, g
 
-from ._helpers import safe_error
+from ._helpers import ScopeError, resolve_request_scope, safe_error, scope_error_response
 from .pipeline_ext_common import pipeline_ext_bp, logger
+
+
+def _require_vector_admin():
+    try:
+        resolve_request_scope()
+    except ScopeError as e:
+        return scope_error_response(e)
+    if getattr(g, "cpa_admin", False) is not True:
+        return jsonify({"success": False, "error": "公共向量索引写入需要服务端管理员权限"}), 403
+    return None
 
 
 def _generate_embeddings(texts: List[str]) -> Tuple[List[List[float]], bool]:
@@ -36,9 +44,11 @@ def _generate_embeddings(texts: List[str]) -> Tuple[List[List[float]], bool]:
         from ..services.embedding_service import get_embedding_service
         service = get_embedding_service()
         return service.encode(texts), False
-    except Exception as e:
-        logger.warning(f"BGE-M3 模型加载失败，使用随机向量: {e}")
-        return [[random.random() for _ in range(1024)] for _ in texts], True
+    except Exception:
+        # A random vector is not a degraded semantic result: it poisons the
+        # index and makes arbitrary retrieval appear successful.
+        logger.exception("BGE-M3 模型不可用，拒绝生成伪向量")
+        raise
 
 
 @pipeline_ext_bp.route('/vector/store/skills', methods=['POST'])
@@ -54,6 +64,9 @@ def store_skill_vectors():
             ]
         }
     """
+    denial = _require_vector_admin()
+    if denial is not None:
+        return denial
     data = request.get_json() or {}
     skills = data.get('skills', [])
 
@@ -113,6 +126,9 @@ def store_jd_vectors():
             "text_chunks": ["负责后端开发...", "熟练掌握Python..."]
         }
     """
+    denial = _require_vector_admin()
+    if denial is not None:
+        return denial
     data = request.get_json() or {}
     job_id = data.get('job_id', '')
     position_name = data.get('position_name', '')
@@ -167,46 +183,18 @@ def store_resume_vectors():
             "text_chunks": ["XX大学计算机专业...", "项目经验..."]
         }
     """
-    data = request.get_json() or {}
-    student_id = data.get('student_id', '')
-    section_type = data.get('section_type', '')
-    text_chunks = data.get('text_chunks', [])
-
-    if not text_chunks:
-        return jsonify({"success": False, "error": "text_chunks 不能为空"}), 400
-
     try:
-        from ..services.db import get_milvus_client
-        milvus = get_milvus_client()
-
-        if not milvus.connect():
-            return jsonify({"success": False, "error": "Milvus 连接失败"}), 500
-
-        metadata_list = [{
-            "student_id": student_id,
-            "section_type": section_type,
-        } for _ in text_chunks]
-
-        vectors, _ = _generate_embeddings(text_chunks)
-
-        ids = milvus.insert(
-            collection_name="resume_vectors",
-            texts=text_chunks,
-            vectors=vectors,
-            metadata=metadata_list
-        )
-
-        return jsonify({
-            "success": True,
-            "data": {
-                "collection": "resume_vectors",
-                "count": len(ids),
-                "ids": ids[:10] if len(ids) > 10 else ids
-            }
-        })
-
-    except Exception as e:
-        return jsonify(safe_error("存储简历向量", e, message="服务器内部错误")), 500
+        scope = resolve_request_scope()
+    except ScopeError as e:
+        return scope_error_response(e)
+    data = request.get_json() or {}
+    if data.get('student_id') and str(data['student_id']) != scope.student_id:
+        return jsonify({"success": False, "error": "student_id 与当前 Principal 不匹配"}), 403
+    # The current Milvus schema stores owner only in JSON metadata, which
+    # cannot enforce a scalar owner filter at ANN query time. Do not add more
+    # private data to this unpartitioned legacy collection.
+    return jsonify({"success": False, "status": "unavailable",
+                    "error": "简历向量写入暂停：等待可验证的 owner 分区和迁移"}), 501
 
 
 @pipeline_ext_bp.route('/vector/search', methods=['POST'])
@@ -228,6 +216,8 @@ def search_vectors():
 
     if not query:
         return jsonify({"success": False, "error": "query 不能为空"}), 400
+    if collection not in {"skill", "jd", "all"}:
+        return jsonify({"success": False, "error": "此端点仅检索公共技能与岗位向量；个人向量检索尚未提供 owner 安全过滤"}), 403
 
     try:
         from ..services.db import get_milvus_client
@@ -241,14 +231,12 @@ def search_vectors():
         collection_map = {
             "skill": "skill_vectors",
             "jd": "jd_vectors",
-            "resume": "resume_vectors",
-            "conversation": "conversation_vectors",
         }
 
         if collection == "all":
             target_collections = list(collection_map.values())
         else:
-            target_collections = [collection_map.get(collection, collection)]
+            target_collections = [collection_map[collection]]
 
         all_results = {}
         for coll in target_collections:
@@ -285,6 +273,9 @@ def init_vector_collections():
             "collections": ["skill_vectors", "jd_vectors", "resume_vectors", "conversation_vectors"]
         }
     """
+    denial = _require_vector_admin()
+    if denial is not None:
+        return denial
     data = request.get_json() or {}
     collections = data.get('collections', ["skill_vectors", "jd_vectors", "resume_vectors", "conversation_vectors"])
 
@@ -332,57 +323,26 @@ def store_conversation_vectors():
             ]
         }
     """
+    try:
+        scope = resolve_request_scope()
+    except ScopeError as e:
+        return scope_error_response(e)
     data = request.get_json() or {}
     session_id = data.get('session_id', '')
-    student_id = data.get('student_id', '')
+    if data.get('student_id') and str(data['student_id']) != scope.student_id:
+        return jsonify({"success": False, "error": "student_id 与当前 Principal 不匹配"}), 403
+    student_id = scope.student_id
     messages = data.get('messages', [])
 
     if not messages:
         return jsonify({"success": False, "error": "messages 不能为空"}), 400
 
-    try:
-        from ..services.db import get_milvus_client
-        milvus = get_milvus_client()
-
-        if not milvus.connect():
-            return jsonify({"success": False, "error": "Milvus 连接失败"}), 500
-
-        texts = []
-        metadata_list = []
-        for msg in messages:
-            content = msg.get('content', '')
-            if content:
-                texts.append(content)
-                metadata_list.append({
-                    "session_id": session_id,
-                    "student_id": student_id,
-                    "role": msg.get('role', 'unknown'),
-                    "timestamp": int(time.time())
-                })
-
-        if not texts:
-            return jsonify({"success": False, "error": "消息内容为空"}), 400
-
-        vectors, _ = _generate_embeddings(texts)
-
-        ids = milvus.insert(
-            collection_name="conversation_vectors",
-            texts=texts,
-            vectors=vectors,
-            metadata=metadata_list
-        )
-
-        return jsonify({
-            "success": True,
-            "data": {
-                "collection": "conversation_vectors",
-                "count": len(ids),
-                "ids": ids[:10] if len(ids) > 10 else ids
-            }
-        })
-
-    except Exception as e:
-        return jsonify(safe_error("存储对话向量", e, message="服务器内部错误")), 500
+    from ..services.session_manager import get_session_manager
+    session = get_session_manager().get_session(session_id) if session_id else None
+    if session is None or str(getattr(session, 'student_id', '')) != student_id:
+        return jsonify({"success": False, "error": "会话不存在"}), 404
+    return jsonify({"success": False, "status": "unavailable",
+                    "error": "会话向量写入暂停：等待可验证的 owner 分区和迁移"}), 501
 
 
 @pipeline_ext_bp.route('/vector/rebuild', methods=['POST'])
@@ -395,6 +355,9 @@ def rebuild_vector_index():
             "collection_name": "skill_vectors"  // 可选，默认 "skill_vectors"
         }
     """
+    denial = _require_vector_admin()
+    if denial is not None:
+        return denial
     data = request.get_json() or {}
     collection_name = data.get('collection_name', 'skill_vectors')
 

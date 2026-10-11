@@ -125,6 +125,22 @@ class Config:
 
     # Redis 配置
     REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+    # Session turn admission: Redis provides cross-worker serialization when
+    # selected.  Development may deliberately remain local-only; production
+    # compose sets redis_required so an outage fails closed instead of claiming
+    # a guarantee an in-process mutex cannot provide.
+    SESSION_TURN_LOCK_MODE = os.environ.get('CPA_SESSION_TURN_LOCK_MODE', 'redis_preferred')
+    SESSION_TURN_LOCK_LEASE_SECONDS = float(os.environ.get('CPA_SESSION_TURN_LOCK_LEASE_SECONDS', '180'))
+    SESSION_TURN_LOCK_WAIT_SECONDS = float(os.environ.get('CPA_SESSION_TURN_LOCK_WAIT_SECONDS', '30'))
+    # Explicit Idempotency-Key requests use a durable MySQL admission ledger.
+    # Stale executions become unknown and are never automatically replayed;
+    # completed response bodies are retained for a bounded replay window.
+    AGENT_TURN_IDEMPOTENCY_STALE_SECONDS = int(
+        os.environ.get('CPA_AGENT_TURN_IDEMPOTENCY_STALE_SECONDS', '7200')
+    )
+    AGENT_TURN_IDEMPOTENCY_RETENTION_DAYS = int(
+        os.environ.get('CPA_AGENT_TURN_IDEMPOTENCY_RETENTION_DAYS', '7')
+    )
 
     # Milvus：用 CPA_MILVUS_URI；勿把本地 .db 写进环境变量 MILVUS_URI（与 pymilvus 冲突）
     MILVUS_URI = _resolve_milvus_uri()

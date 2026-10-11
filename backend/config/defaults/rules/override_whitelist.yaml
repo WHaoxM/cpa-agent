@@ -1,6 +1,7 @@
 # workspace/overrides/rules.yaml 允许覆盖的点路径（叶子键必须落在此树下）
 
 allowed:
+  # 现有白名单
   - matching.dimension_weights
   - matching.match_gates
   - matching.skill_coverage_formula
@@ -9,3 +10,19 @@ allowed:
   - thresholds.portrait.competitiveness_levels
   - thresholds.match
   - thresholds.oov_frequency
+
+  # 新增白名单（grep配置）
+  - grep.defaults.use_regex
+  - grep.defaults.case_sensitive
+  - grep.defaults.context_lines
+  - grep.defaults.max_results
+
+  # 新增白名单（LLM抽取配置）
+  - llm_extraction.strategies.single_shot.enabled
+  - llm_extraction.strategies.chunk_merge.chunk_size
+  - llm_extraction.normalization.date_format.output_format
+
+  # 新增白名单（分块配置）
+  - chunking.defaults.chunk_size
+  - chunking.defaults.max_chunks
+  - chunking.defaults.overlap

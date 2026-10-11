@@ -44,5 +44,7 @@ from . import pipeline_ext_match  # noqa: E402, F401 - P1 阶段9 拆出
 from . import pipeline_ext_extract  # noqa: E402, F401 - P1 阶段10 拆出
 from . import pipeline_ext_agent  # noqa: E402, F401 - P1 阶段11 拆出 (Agent + /db/health)
 from . import admin_kb   # noqa: E402, F401
+from . import roles   # noqa: E402, F401
+from .roles import roles_bp  # noqa: E402, F401
 
 from .pipeline import pipeline_bp
