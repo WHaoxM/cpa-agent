@@ -15,6 +15,10 @@ from .types import MAX_MOUNTED_FILES
 
 logger = get_logger("cpa-agent.agent_runtime.media.resources")
 
+
+class AttachmentNotFoundError(LookupError):
+    """A requested attachment cannot be resolved; never mount its metadata."""
+
 _mem_mounts: Dict[str, List[Dict[str, Any]]] = {}
 _lock = threading.Lock()
 
@@ -66,17 +70,15 @@ def mount_resources(
             continue
         meta = files.get(file_id)
         if not meta:
-            raise ValueError(f"file not found: {file_id}")
+            raise AttachmentNotFoundError("附件不存在或无访问权限")
+        if not meta.get("student_id") or meta["student_id"] != student_id:
+            raise PermissionError("附件不存在或无访问权限")
         if meta.get("status") == "failed":
             raise ValueError(
                 f"file ingest failed: {file_id} — {meta.get('error') or '无法提取文本'}"
             )
         if meta.get("status") != "ready":
             raise ValueError(f"file not ready: {file_id} ({meta.get('status')})")
-        if not meta.get("student_id"):
-            raise PermissionError("file missing student_id owner")
-        if meta["student_id"] != student_id:
-            raise PermissionError("file student_id mismatch")
         path = _normalize_path(file_id, raw.get("mount_path") or raw.get("path"))
         prev = by_file.get(file_id)
         rec = {

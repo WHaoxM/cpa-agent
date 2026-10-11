@@ -79,12 +79,9 @@ def upload_resume():
     save_path = os.path.join(upload_dir, f"resume_{uuid.uuid4().hex[:8]}{os.path.splitext(filename)[1] or '.pdf'}")
     file.save(save_path)
 
-    task_id = f"task_{uuid.uuid4().hex[:12]}"
-
     logger.info(f"简历上传: student_id={student_id}, filename={filename}, saved={save_path}")
 
     # ── D-06: 创建 pipeline_task 记录 + 触发 L0 管线 ──
-    parse_result = None
     try:
         # 同步触发 L0 解析 (PipelineRunner 内部会创建 pipeline_task 记录)
         from ..services.pipeline import PipelineRunner, PipelineLevel
@@ -95,8 +92,9 @@ def upload_resume():
         )
     except Exception as e:
         logger.error(f"L0 管线触发失败: {e}")
-        # 非阻断: 文件已保存, 返回 pending 状态让前端可轮询
-        parse_result = {"status": "pending", "error": "解析任务已提交，请稍后查询结果"}
+        # No durable task id is available to this route after an exception;
+        # do not invent a pending task that clients can never poll.
+        return jsonify({"success": False, "error": "简历已保存，但解析未完成，请重试"}), 500
 
     # ── D-02: 回写 student_id 到 session ──
     if session_id:
@@ -110,27 +108,161 @@ def upload_resume():
             logger.warning(f"Session student_id 回写失败: {e}")
 
     response_data = {
-        "task_id": task_id,
+        "task_id": parse_result["task_id"],
         "student_id": student_id,
         "filename": filename,
-        "file_path": save_path,
     }
 
-    if parse_result and isinstance(parse_result, dict):
-        response_data["status"] = parse_result.get("status", "completed")
-        if "profile_json" in parse_result:
-            response_data["block_count"] = parse_result.get("block_count", 0)
-            response_data["message"] = "简历已上传并解析完成"
-        else:
-            response_data["message"] = "简历已上传，L0解析任务已创建"
-    else:
-        response_data["status"] = "pending"
-        response_data["message"] = "简历已上传，L0解析任务已创建"
+    response_data["status"] = parse_result.get("status", "unverified")
+    response_data["block_count"] = parse_result.get("block_count", 0)
+    response_data["message"] = parse_result.get("summary", "简历已上传，处理结果待核验")
+    for key in ("candidate_profile", "structure_validation", "source_evidence", "profile_ready", "next_action"):
+        response_data[key] = parse_result.get(key)
 
     return jsonify({
         "success": True,
         "data": response_data
     })
+
+
+@profile_bp.route('/student/candidate/<task_id>', methods=['GET'])
+def get_student_resume_candidate(task_id: str):
+    """Replay an owned L0 candidate or its *current* confirmed workflow.
+
+    A completed L0 task is readable only while it is the source of the current
+    confirmed profile.  The linked L2 state comes from a persisted task whose
+    result names that exact L0 confirmation, never from a page-local guess.
+    """
+    try:
+        scope = resolve_request_scope()
+        mysql = get_mysql_client()
+        rows = mysql.fetch_all(
+            "SELECT task_id, student_id, pipeline, status, result_json FROM pipeline_task WHERE task_id=:task_id LIMIT 1",
+            {"task_id": task_id})
+        if not rows or rows[0].get("student_id") != scope.student_id:
+            return jsonify({"success": False, "error": "简历候选不存在"}), 404
+        row = rows[0]
+        if row.get("pipeline") != "L0_parse_resume" or row.get("status") not in {"needs_input", "partial", "completed"}:
+            return jsonify({"success": False, "error": "任务不是待确认简历候选"}), 409
+        result = parse_json_field(row.get("result_json"))
+        result = result if isinstance(result, dict) else {}
+        if result.get("task_id") not in (None, task_id) or result.get("student_id") not in (None, scope.student_id):
+            return jsonify({"success": False, "error": "简历任务结果与权威记录不一致"}), 409
+        public = {key: result.get(key) for key in (
+            "candidate_profile", "structure_validation", "source_evidence", "profile_ready",
+            "next_action", "block_count", "summary")}
+        public["portrait_task"] = None
+        public["confirmed"] = False
+        if row["status"] == "completed":
+            if result.get("confirmed") is not True or result.get("status") != "completed":
+                return jsonify({"success": False, "error": "简历确认状态未通过校验"}), 409
+            from ..services.pipeline import require_confirmed_profile
+            try:
+                profile = require_confirmed_profile(mysql, scope.student_id)
+            except ValueError:
+                return jsonify({"success": False, "error": "当前确认档案与简历任务不一致"}), 409
+            if profile.get("_resume_confirmation", {}).get("task_id") != task_id:
+                return jsonify({"success": False, "error": "此简历候选已被后续确认替代"}), 409
+            public["confirmed"] = True
+            public["profile_ready"] = True
+            linked = mysql.fetch_all(
+                "SELECT task_id, student_id, pipeline, status, result_json FROM pipeline_task "
+                "WHERE student_id=:student_id AND pipeline='L2_generate_portrait' "
+                "AND JSON_UNQUOTE(JSON_EXTRACT(result_json, '$.source_confirmation_task_id'))=:task_id "
+                "ORDER BY id DESC LIMIT 1",
+                {"student_id": scope.student_id, "task_id": task_id})
+            if linked:
+                portrait_row = linked[0]
+                portrait = parse_json_field(portrait_row.get("result_json"))
+                portrait = portrait if isinstance(portrait, dict) else {}
+                if (portrait_row.get("student_id") == scope.student_id
+                        and portrait_row.get("pipeline") == "L2_generate_portrait"
+                        and portrait.get("source_confirmation_task_id") == task_id
+                        and portrait.get("status") == portrait_row.get("status")):
+                    if portrait_row["status"] == "completed":
+                        from ..services.agent_runtime.pipeline_reference import resolve_pipeline_task_ref
+                        try:
+                            resolve_pipeline_task_ref(mysql, student_id=scope.student_id,
+                                                      task_id=portrait_row["task_id"])
+                        except (LookupError, ValueError):
+                            return jsonify({"success": False, "error": "画像成果未通过权威记录校验"}), 409
+                    public["portrait_task"] = {"task_id": portrait_row["task_id"],
+                        "status": portrait_row["status"],
+                        **{key: portrait.get(key) for key in (
+                            "next_action", "summary", "missing_fields", "portrait_candidate",
+                            "portrait_id", "portrait", "resource_type", "resource_id",
+                            "action_available", "resume_state")}}
+                    if portrait_row["status"] == "partial":
+                        # Historical L2 rows predate these explicit capability
+                        # fields; the semantic-fact writer is still unavailable.
+                        public["portrait_task"]["action_available"] = False
+                        public["portrait_task"]["resume_state"] = "not_available"
+        public.update({"task_id": task_id, "student_id": scope.student_id,
+                       "status": row["status"], "filename": "简历候选"})
+        return jsonify({"success": True, "data": public})
+    except ScopeError as e:
+        return scope_error_response(e)
+    except Exception as e:
+        return jsonify(safe_error("读取简历候选", e)), 500
+
+
+@profile_bp.route('/student/confirm', methods=['POST'])
+def confirm_student_resume():
+    """User confirmation boundary; Agent params cannot synthesize this consent."""
+    try:
+        scope = resolve_request_scope()
+        data = request.get_json(silent=True) or {}
+        if data.get("confirmed") is not True or not isinstance(data.get("task_id"), str):
+            return jsonify({"success": False, "error": "需要 task_id 和明确 confirmed=true"}), 400
+        from ..services.agent_runtime.resume_confirmation import run_confirmation
+        result = run_confirmation(student_id=scope.student_id,
+            task_id=data["task_id"], confirmed=True,
+            acknowledge_partial=data.get("acknowledge_partial") is True)
+        return jsonify({"success": True, "data": result})
+    except ScopeError as e:
+        return scope_error_response(e)
+    except LookupError as e:
+        return jsonify({"success": False, "error": str(e)}), 404
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 409
+    except Exception as e:
+        return jsonify(safe_error("确认简历", e)), 500
+
+
+@profile_bp.route('/student/pipeline', methods=['POST'])
+def run_confirmed_student_pipeline():
+    """Page adapter to the same PipelineRunner used by the main Agent."""
+    try:
+        scope = resolve_request_scope()
+        data = request.get_json(silent=True) or {}
+        level = data.get("pipeline")
+        if level not in {"L2_generate_portrait", "L3_run_match", "L4_generate_report"}:
+            return jsonify({"success": False, "error": "不支持的管线"}), 400
+        # No caller-written profile, scores, skills or confirmation flags.
+        params = {k: data[k] for k in ("job_id", "job_portrait_id", "title") if data.get(k)}
+        params["student_id"] = scope.student_id
+        from ..services.pipeline import PipelineRunner
+        runner = PipelineRunner()
+        result = runner.run(level, params)
+        tasks = runner.mysql.fetch_all(
+            "SELECT student_id, status FROM pipeline_task WHERE task_id=:task_id LIMIT 1",
+            {"task_id": result["task_id"]})
+        if not tasks or tasks[0].get("student_id") != scope.student_id or tasks[0].get("status") != result.get("status"):
+            raise RuntimeError("管线状态未通过权威记录回读验证")
+        # A persisted partial is a successful request with an incomplete
+        # business outcome, not an unsupported server operation. The page
+        # must branch on data.status rather than treating it as a transport
+        # failure or painting an invented completed artifact.
+        if result.get("status") in {"completed", "partial", "needs_input"}:
+            return jsonify({"success": True, "status": result["status"], "data": result})
+        return jsonify({"success": False, "status": result.get("status"), "data": result,
+                        "error": "管线未产生可展示的业务状态"}), 409
+    except ScopeError as e:
+        return scope_error_response(e)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 409
+    except Exception as e:
+        return jsonify(safe_error("执行已确认简历管线", e)), 500
 
 
 @profile_bp.route('/student/<student_id>', methods=['GET'])
@@ -189,26 +321,28 @@ def get_student_4d(student_id: str):
         if target_job_id:
             sql = """
             SELECT
-                student_id, target_job_id,
-                d1_score, d2_score, d3_score, d4_score,
-                competitiveness, competitiveness_lvl, completeness,
-                skill_coverage, skill_count, d3_confidence,
-                portrait_json, created_at
-            FROM student_portrait_4d
-            WHERE student_id = :student_id AND target_job_id = :target_job_id
+                sp.student_id, sp.target_job_id,
+                sp.d1_score, sp.d2_score, sp.d3_score, sp.d4_score,
+                sp.competitiveness, sp.competitiveness_lvl, sp.completeness,
+                sp.skill_coverage, sp.skill_count, sp.d3_confidence,
+                sp.portrait_json, sp.created_at
+            FROM student_portrait_4d sp
+            JOIN student_profile p ON p.student_id = sp.student_id
+            WHERE sp.student_id = :student_id AND sp.target_job_id = :target_job_id
             """
             results = mysql.execute(sql, {"student_id": student_id, "target_job_id": target_job_id})
         else:
             sql = """
             SELECT
-                student_id, target_job_id,
-                d1_score, d2_score, d3_score, d4_score,
-                competitiveness, competitiveness_lvl, completeness,
-                skill_coverage, skill_count, d3_confidence,
-                portrait_json, created_at
-            FROM student_portrait_4d
-            WHERE student_id = :student_id
-            ORDER BY competitiveness DESC
+                sp.student_id, sp.target_job_id,
+                sp.d1_score, sp.d2_score, sp.d3_score, sp.d4_score,
+                sp.competitiveness, sp.competitiveness_lvl, sp.completeness,
+                sp.skill_coverage, sp.skill_count, sp.d3_confidence,
+                sp.portrait_json, sp.created_at
+            FROM student_portrait_4d sp
+            JOIN student_profile p ON p.student_id = sp.student_id
+            WHERE sp.student_id = :student_id
+            ORDER BY sp.competitiveness DESC
             LIMIT 1
             """
             results = mysql.execute(sql, {"student_id": student_id})

@@ -8,6 +8,7 @@ from app.services.agent_runtime.media.document_access import (
     document_catalog,
     find_windows,
     format_window_for_model,
+    materialize_for_ask,
     pack_for_prompt,
     read_section,
     read_window,
@@ -138,6 +139,147 @@ def test_excerpt_fallback_never_complete(tmp_path, monkeypatch):
     assert report["all_complete"] is False
     assert "complete=true" not in pack
     assert "excerpt" in pack.lower() or "勿当全文" in pack
+
+
+def test_legacy_truncated_full_text_is_repaired_after_async_worker(tmp_path, monkeypatch):
+    svc = _svc(tmp_path, monkeypatch)
+    queued = []
+    monkeypatch.setattr(
+        "app.services.agent_runtime.media.jobs.enqueue_media_job",
+        lambda kind, file_id, task_id: queued.append((kind, file_id)),
+    )
+    text = "教育背景\n项目经验\n" + ("正文" * 500)
+    meta = svc.upload(
+        file_storage=_MemFile("legacy.txt", text.encode("utf-8")),
+        student_id="stu_doc",
+    )
+    svc._persist_artifacts(
+        meta["file_id"],
+        [
+            {"kind": "excerpt", "ordinal": 0, "body_text": text[:200], "meta": {}},
+            {
+                "kind": "full_text", "ordinal": 0, "body_text": text,
+                "meta": {"chars": len(text), "truncated": True},
+            },
+        ],
+    )
+    win = read_window(meta["file_id"], offset=0, max_chars=len(text))
+    assert win.complete is False
+    pack, report = pack_for_prompt([meta["file_id"]])
+    assert report["all_complete"] is False
+    assert "complete=true" not in pack
+    materialized, materialized_report = materialize_for_ask([meta["file_id"]])
+    assert materialized_report["all_complete"] is False
+    assert queued == [("upgrade", meta["file_id"])]
+    assert "complete=true" not in materialized
+
+    svc.complete_upgrade(meta["file_id"])
+    materialized, materialized_report = materialize_for_ask([meta["file_id"]])
+    assert materialized_report["all_complete"] is True
+    assert "complete=true" in materialized
+    assert text in materialized
+
+
+def test_legacy_missing_layout_blocks_are_reparsed_after_async_worker(tmp_path, monkeypatch):
+    from app.services.agent_runtime.media.ingest import build_artifacts
+
+    svc = _svc(tmp_path, monkeypatch)
+    queued = []
+    monkeypatch.setattr(
+        "app.services.agent_runtime.media.jobs.enqueue_media_job",
+        lambda kind, file_id, task_id: queued.append((kind, file_id)),
+    )
+    meta = svc.upload(
+        file_storage=_MemFile("resume.txt", "教育经历\n项目经历".encode("utf-8")),
+        student_id="stu_doc",
+    )
+    record = svc._load_file(meta["file_id"])
+    record["ingest_meta"] = {
+        "engine": "mineru",
+        "block_count": 68,
+        "blocks": [{"block_id": str(i), "page": 0} for i in range(40)],
+    }
+    svc._persist_file(record)
+
+    materialized, report = materialize_for_ask([meta["file_id"]])
+    assert report["all_complete"] is False
+    assert queued == [("upgrade", meta["file_id"])]
+    assert "complete=true" not in materialized
+    assert svc._load_file(meta["file_id"])["ingest_meta"]["block_count"] == 68
+
+    repaired_meta = {
+        "engine": "mineru",
+        "block_count": 68,
+        "blocks": [
+            {"block_id": str(i), "block_type": "text", "page": i // 40, "text": str(i)}
+            for i in range(68)
+        ],
+    }
+    monkeypatch.setattr(
+        "app.services.agent_runtime.media.file_store.ingest_file",
+        lambda *_a, **_k: (
+            build_artifacts("教育经历\n项目经历", repaired_meta), repaired_meta, True,
+        ),
+    )
+    svc.complete_upgrade(meta["file_id"])
+    materialized, report = materialize_for_ask([meta["file_id"]])
+    assert report["all_complete"] is True
+    assert "项目经历" in materialized
+    assert len(svc._load_file(meta["file_id"])["ingest_meta"]["blocks"]) == 68
+
+
+def test_sha_reuse_skips_legacy_missing_layout_blocks(tmp_path, monkeypatch):
+    svc = _svc(tmp_path, monkeypatch)
+    body = "教育经历\n项目经历".encode("utf-8")
+    old = svc.upload(file_storage=_MemFile("old.txt", body), student_id="stu_doc")
+    record = svc._load_file(old["file_id"])
+    record["ingest_meta"] = {"engine": "mineru", "block_count": 68, "blocks": [{}] * 40}
+    svc._persist_file(record)
+
+    fresh = svc.upload(file_storage=_MemFile("new.txt", body), student_id="stu_doc")
+    assert fresh["status"] == "ready"
+    assert svc._load_file(fresh["file_id"])["ingest_meta"].get("reused_from") is None
+
+
+def test_legacy_scanned_pdf_is_preserved_without_ocr_engine(tmp_path, monkeypatch):
+    from app.pipeline.entity_extractor.pdf_engines import EngineStatus
+
+    svc = _svc(tmp_path, monkeypatch)
+    meta = svc.upload(
+        file_storage=_MemFile("resume.txt", "教育经历\n项目经历".encode("utf-8")),
+        student_id="stu_doc",
+    )
+    record = svc._load_file(meta["file_id"])
+    record["filename"] = "resume.pdf"
+    record["ingest_meta"] = {"engine": "mineru", "block_count": 68, "blocks": [{}] * 40}
+    svc._persist_file(record)
+    monkeypatch.setattr(
+        "app.pipeline.entity_extractor.pdf_engines.get_mineru_state",
+        lambda **_kwargs: SimpleNamespace(status=EngineStatus.DISABLED),
+    )
+    monkeypatch.setattr(
+        "app.pipeline.entity_extractor.pdf_engines.get_sidecar_state",
+        lambda **_kwargs: SimpleNamespace(status=EngineStatus.DISABLED),
+    )
+    monkeypatch.setattr(
+        "app.services.agent_runtime.media.file_store.ingest_file",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not reparse")),
+    )
+
+    result = svc.upgrade_thin_ingest(meta["file_id"])
+    assert result["status"] == "ready"
+    assert result["layout_incomplete"] is True
+    assert svc.get_artifact(meta["file_id"], "full_text") == "教育经历\n项目经历"
+
+
+def test_out_of_range_window_does_not_claim_full_read(tmp_path, monkeypatch):
+    svc = _svc(tmp_path, monkeypatch)
+    meta = svc.upload(
+        file_storage=_MemFile("small.txt", "正文内容".encode("utf-8")),
+        student_id="stu_doc",
+    )
+    win = read_window(meta["file_id"], offset=10_000)
+    assert win.complete is False
 
 
 def test_attachment_read_egress_preserves_page(monkeypatch):

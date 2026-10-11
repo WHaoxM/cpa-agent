@@ -3,6 +3,7 @@
 Modes:
   catalog — section TOC with offsets
   find    — query-aware jump (coverage=partial, never complete)
+  grep    — keyword/regex search with context (coverage=partial, never complete)
   section — read one section by id/title (never complete)
   read    — sequential offset pages until complete=true (exhaustive fallback)
 """
@@ -23,6 +24,7 @@ class AttachmentReadInput(BaseModel):
         "read",
         description=(
             "catalog=章节目录；find=按 query 跳读相关段；"
+            "grep=关键词/正则搜索（支持语义匹配）；"
             "section=按 section_id/title 读一章；read=按 offset 顺序分页"
         ),
     )
@@ -31,10 +33,15 @@ class AttachmentReadInput(BaseModel):
         CHARS_READ_PAGE,
         description=f"本窗口最大字符数（上限 {CHARS_READ_PAGE_MAX}）",
     )
-    query: str = Field("", description="find 模式：用户问题或关键词")
+    query: str = Field("", description="find/grep 模式：用户问题或关键词")
     section_id: str = Field("", description="section 模式：目录中的 id，如 s2")
     title: str = Field("", description="section 模式：章节标题模糊匹配（可选）")
     top_k: int = Field(3, description="find 模式：返回最多几段相关窗口")
+    category: str = Field(
+        "education",
+        description="grep 模式：类别（education/experience/projects/skills），用于语义匹配",
+    )
+    use_regex: bool = Field(False, description="grep 模式：是否使用正则表达式")
 
 
 def create_attachment_read_tool(
@@ -50,14 +57,18 @@ def create_attachment_read_tool(
         section_id: str = "",
         title: str = "",
         top_k: int = 3,
+        category: str = "education",
+        use_regex: bool = False,
     ) -> str:
         if not file_id:
             return "[attachment_read] 缺少 file_id"
         from ..agent_runtime.media.document_access import (
             document_catalog,
             find_windows,
+            grep_document_hybrid,
             format_catalog_for_model,
             format_find_for_model,
+            format_grep_results,
             format_window_for_model,
             read_section,
             read_window,
@@ -105,6 +116,35 @@ def create_attachment_read_tool(
                 h["text"] = redact_text(h.get("text") or "", max_len=CHARS_READ_PAGE_MAX)
             return format_find_for_model(hits, query=q)
 
+        if m == "grep":
+            # 新增grep模式：混合匹配（关键词 + LLM语义匹配）
+            q = (query or "").strip()
+            if not q:
+                return "[attachment_read] grep 模式需要 query=关键词或类别"
+
+            # 从配置加载默认值
+            from config.loader import get_grep_config
+            grep_config = get_grep_config()
+            defaults = grep_config.get('defaults', {})
+
+            # 获取LLM客户端（如果可用）
+            llm_client = _get_llm_client_if_available()
+
+            # 执行混合grep搜索
+            hits = grep_document_hybrid(
+                file_id,
+                query=q,
+                category=category,
+                use_regex=use_regex or defaults.get('use_regex', False),
+                case_sensitive=defaults.get('case_sensitive', False),
+                context_lines=defaults.get('context_lines', 2),
+                max_results=defaults.get('max_results', 10),
+                llm_client=llm_client,
+            )
+
+            # 格式化结果
+            return format_grep_results(hits, query=q)
+
         if m == "section":
             from dataclasses import replace
 
@@ -132,14 +172,23 @@ def create_attachment_read_tool(
         safe_text = redact_text(win.text or "", max_len=CHARS_READ_PAGE_MAX)
         return format_window_for_model(replace(win, text=safe_text))
 
+    def _get_llm_client_if_available():
+        """尝试获取LLM客户端（如果可用）"""
+        try:
+            from app.utils.llm_client import get_llm_client
+            return get_llm_client()
+        except Exception:
+            return None
+
     return StructuredTool.from_function(
         func=_run,
         name="attachment_read",
         description=(
             "读取已挂载附件（Document Access）。"
             "mode=catalog 看章节目录；mode=find(query) 按问题跳读相关段；"
+            "mode=grep(query,category) 关键词/正则搜索（支持语义匹配）；"
             "mode=section(section_id|title) 读一章；mode=read(offset) 顺序分页。"
-            "find/section 均为 coverage=partial 且 complete=false；"
+            "find/grep/section 均为 coverage=partial 且 complete=false；"
             "未 complete=true 前禁止把窗口当成全文下结论。仅使用挂载卡上的 file_id。"
         ),
         args_schema=AttachmentReadInput,

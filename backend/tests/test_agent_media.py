@@ -351,12 +351,12 @@ def test_pdf_upload_returns_before_heavy_work(tmp_path, monkeypatch):
     )
     enq = []
 
-    def _enq(session_id, kind, payload=None):
-        enq.append((kind, payload))
-        return kind
+    def _enq(kind, file_id, task_id):
+        enq.append((kind, file_id, task_id))
+        return task_id
 
     monkeypatch.setattr(
-        "app.services.agent_runtime.fork_jobs.enqueue",
+        "app.services.agent_runtime.media.jobs.enqueue_media_job",
         _enq,
     )
 
@@ -367,7 +367,7 @@ def test_pdf_upload_returns_before_heavy_work(tmp_path, monkeypatch):
         purpose="chat_attachment",
     )
     assert meta["status"] == "ingesting"
-    assert enq and enq[0][0] == "media_ingest"
+    assert enq and enq[0][0] == "ingest"
     set_inline_for_tests(True)
 
 
@@ -424,6 +424,7 @@ def test_upload_mount_card_no_full_body(tmp_path, monkeypatch):
     card = build_attachment_mount_card(
         "sess_media_unique",
         turn_file_ids=[meta["file_id"]],
+        student_id="stu_media",
     )
     assert meta["file_id"] in card
     assert "attachment_read" in card
@@ -492,7 +493,7 @@ def test_voice_turn_lifecycle():
     assert mid["status"] == "transcribing"
     ready = vt.update(turn["turn_id"], transcript="我想做数据分析", is_final=True)
     assert ready["status"] == "ready"
-    part = vt.as_content_part(turn["turn_id"])
+    part = vt.as_content_part(turn["turn_id"], student_id="stu_v", session_id="sess_v")
     assert part and part["type"] == "voice_transcript"
     assert "数据分析" in part["text"]
 

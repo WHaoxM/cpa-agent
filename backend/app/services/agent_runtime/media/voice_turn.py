@@ -126,9 +126,17 @@ class VoiceTurnService:
         rec = self._load(turn_id)
         return self.public(rec) if rec else None
 
-    def as_content_part(self, turn_id: str) -> Optional[Dict[str, Any]]:
+    def as_content_part(
+        self, turn_id: str, *, student_id: Optional[str], session_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
         rec = self._load(turn_id)
-        if not rec or rec.get("status") != VoiceStatus.READY.value:
+        if (
+            not rec or not student_id or not session_id
+            or rec.get("student_id") != student_id
+            or rec.get("session_id") != session_id
+        ):
+            raise LookupError("语音回合不存在或无访问权限")
+        if rec.get("status") != VoiceStatus.READY.value:
             return None
         return {
             "type": "voice_transcript",

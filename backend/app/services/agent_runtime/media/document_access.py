@@ -4,6 +4,7 @@ Document Access Layer — Claude/Qoder Files style.
 Architecture contract:
 - Artifacts hold the canonical full text (and chunks).
 - The model never receives a silent head-slice that pretends to be the whole file.
+- complete=true describes coverage of the available extracted text, not OCR fidelity.
 - Access modes (layered):
   1) complete pack — when total_chars ≤ budget, deliver full text + complete=true
   2) catalog + section TOC — progressive disclosure index with offsets
@@ -38,6 +39,8 @@ __all__ = [
     "read_window",
     "read_section",
     "find_windows",
+    "grep_full_text",
+    "grep_document_hybrid",
     "pack_for_prompt",
     "materialize_for_ask",
     "assert_document_access",
@@ -45,6 +48,7 @@ __all__ = [
     "format_window_for_model",
     "format_find_for_model",
     "format_catalog_for_model",
+    "format_grep_results",
 ]
 
 
@@ -65,9 +69,18 @@ class DocWindow:
 def _full_text(file_id: str) -> Tuple[str, Dict[str, Any]]:
     svc = get_agent_file_service()
     meta = dict(svc.get(file_id) or {})
-    full = svc.get_artifact(file_id, "full_text") or ""
+    full_artifact = next(
+        (a for a in svc.list_artifacts(file_id) if a.get("kind") == "full_text"),
+        {},
+    )
+    full = full_artifact.get("body_text") or ""
     if full:
         meta["_text_source"] = "full_text"
+        meta["_source_truncated"] = bool((full_artifact.get("meta") or {}).get("truncated"))
+        meta["_layout_incomplete"] = bool(meta.get("layout_incomplete"))
+        meta["_repair_pending"] = meta.get("upgrade_status") in (
+            "queued", "running", "unavailable", "failed",
+        )
         return full, meta
     # Excerpt fallback is never a complete document — callers must not mark complete=true
     excerpt = svc.get_artifact(file_id, "excerpt") or ""
@@ -145,7 +158,7 @@ def document_catalog(file_id: str) -> Dict[str, Any]:
     """Index card: size + section TOC — never a truncated body standing in for the file."""
     svc = get_agent_file_service()
     meta = svc.get(file_id) or {}
-    full, _ = _full_text(file_id)
+    full, text_meta = _full_text(file_id)
     try:
         arts = svc.list_artifacts(file_id)
     except Exception:
@@ -158,6 +171,8 @@ def document_catalog(file_id: str) -> Dict[str, Any]:
         "file_id": file_id,
         "filename": meta.get("filename") or file_id,
         "status": meta.get("status"),
+        "upgrade_status": meta.get("upgrade_status"),
+        "upgrade_error": meta.get("upgrade_error"),
         "total_chars": len(full),
         "chunk_count": len(chunks),
         "block_count": len(blocks),
@@ -165,6 +180,12 @@ def document_catalog(file_id: str) -> Dict[str, Any]:
         "outline": outline[:16],
         "complete_inline_budget": CHARS_INLINE_COMPLETE,
         "fits_inline": len(full) <= CHARS_INLINE_COMPLETE,
+        "source_complete": (
+            text_meta.get("_text_source") == "full_text"
+            and not text_meta.get("_source_truncated")
+            and not text_meta.get("_layout_incomplete")
+            and not text_meta.get("_repair_pending")
+        ),
     }
 
 
@@ -173,7 +194,8 @@ def format_catalog_for_model(cat: Dict[str, Any]) -> str:
     toc = format_sections_for_catalog(list(sections))
     return (
         f"文件 {cat.get('filename')} (file_id={cat.get('file_id')})\n"
-        f"status={cat.get('status')} total_chars={cat.get('total_chars')} "
+        f"status={cat.get('status')} upgrade_status={cat.get('upgrade_status')} "
+        f"total_chars={cat.get('total_chars')} "
         f"chunks={cat.get('chunk_count')} sections={len(sections)} "
         f"fits_inline={cat.get('fits_inline')}\n"
         f"章节目录（含 offset，可 mode=section / mode=find / mode=read）：\n{toc}\n"
@@ -200,7 +222,12 @@ def read_window(
     off = max(0, int(offset or 0))
     limit = CHARS_READ_PAGE_MAX if hard_cap is None else max(int(hard_cap), 400)
     cap = min(max(int(max_chars or CHARS_READ_PAGE), 400), limit)
-    excerpt_only = meta.get("_text_source") == "excerpt_fallback"
+    source_incomplete = (
+        meta.get("_text_source") == "excerpt_fallback"
+        or bool(meta.get("_source_truncated"))
+        or bool(meta.get("_layout_incomplete"))
+        or bool(meta.get("_repair_pending"))
+    )
     if off >= total:
         return DocWindow(
             file_id=file_id,
@@ -210,13 +237,13 @@ def read_window(
             text="",
             next_offset=None,
             has_more=False,
-            complete=(total == 0 and not excerpt_only),
-            coverage="full" if (total == 0 and not excerpt_only) else "partial",
+            complete=False,
+            coverage="partial",
         )
     end = min(total, off + cap)
     text = full[off:end]
     has_more = end < total
-    complete = False if excerpt_only else (off == 0 and not has_more)
+    complete = not source_incomplete and off == 0 and not has_more
     return DocWindow(
         file_id=file_id,
         filename=name,
@@ -373,12 +400,11 @@ def materialize_for_ask(
     session_id: Optional[str] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """
-    Ask-path entry: upgrade thin extracts, then pack.
-
-    Does not rely on the model to page or ask the user to re-upload when
-    full_text can be recovered server-side within budget.
+    Ask-path entry: schedule a needed repair without blocking, then pack the
+    currently available artifact.  The caller can retry after ingest finishes.
     """
     svc = get_agent_file_service()
+    upgrade_states: Dict[str, str] = {}
     for fid in file_ids or []:
         if not fid:
             continue
@@ -390,48 +416,19 @@ def materialize_for_ask(
                 require_mount=True,
             )
         try:
-            svc.upgrade_thin_ingest(str(fid))
+            result = svc.schedule_upgrade(str(fid))
+            if isinstance(result, dict) and result.get("upgrade_status"):
+                upgrade_states[str(fid)] = str(result["upgrade_status"])
         except Exception:
-            pass
+            upgrade_states[str(fid)] = "unavailable"
     pack, report = pack_for_prompt(
         list(file_ids or []),
         inline_budget=inline_budget,
         student_id=student_id,
         session_id=session_id,
     )
-    # If still incomplete but under budget after upgrade, force-stitch full_text
-    if not report.get("all_complete"):
-        forced_parts: List[str] = []
-        all_ok = True
-        for fid in file_ids or []:
-            if not fid:
-                continue
-            full, meta = _full_text(fid)
-            if meta.get("_text_source") == "excerpt_fallback" or not full:
-                all_ok = False
-                continue
-            if len(full) > inline_budget:
-                all_ok = False
-                # Query-aware supplement on top of existing pack
-                hits = find_windows(fid, query=query or "教育经历 项目经验 实习", top_k=4)
-                if hits:
-                    forced_parts.append(format_find_for_model(hits, query=query or "关键段落"))
-                continue
-            win = read_window(
-                fid, offset=0, max_chars=len(full), hard_cap=inline_budget,
-            )
-            forced_parts.append(format_window_for_model(win))
-        if forced_parts and all_ok:
-            return "\n\n==========\n\n".join(forced_parts), {
-                **report,
-                "all_complete": True,
-                "materialized": True,
-            }
-        if forced_parts:
-            return (
-                pack + "\n\n==========\n\n" + "\n\n==========\n\n".join(forced_parts)
-            ), {**report, "materialized_partial": True}
-    report["materialized"] = True
+    report["upgrade_states"] = upgrade_states
+    report["materialized"] = bool(report.get("all_complete"))
     return pack, report
 
 
@@ -445,13 +442,38 @@ def pack_for_prompt(
     """
     Build prompt material for Ask/Agent turns with attachments.
 
-    - Each file that fits budget → full text + complete=true
-    - Oversized → section TOC + first window + has_more (model should find/section/read)
+    - The inline budget is shared by *all* files in this turn, not reset per file.
+    - Each file that fits its share → full text + complete=true.
+    - Oversized → section TOC + first window + has_more (model should find/section/read).
     Never returns a head-slice labeled as if it were the whole resume.
     """
     parts: List[str] = []
-    report: Dict[str, Any] = {"files": [], "all_complete": True}
-    for fid in file_ids:
+    ids = [str(fid) for fid in file_ids if fid]
+    # Leave room in every share for the file identity and completeness metadata.
+    # This is deliberately conservative: a body just below 48k may be paged
+    # instead of risking a provider context overflow or a silent head-slice.
+    separator_chars = len("\n\n==========\n\n") * max(0, len(ids) - 1)
+    if ids and int(inline_budget) < separator_chars + 200 * len(ids):
+        raise ValueError("inline_budget too small to identify every attachment")
+    share = max(200, (int(inline_budget) - separator_chars) // max(1, len(ids)))
+    body_share = max(400, share - 700)
+
+    def bounded_partial(part: str) -> str:
+        if len(part) <= share:
+            return part
+        marker = (
+            "\n【提示词预算截断：仅当前提示词窗口被裁剪；原始文档仍可用 "
+            "attachment_read 按 offset 续读。complete=false】"
+        )
+        return part[: max(0, share - len(marker))] + marker
+
+    report: Dict[str, Any] = {
+        "files": [], "all_complete": True,
+        "inline_budget_chars": int(inline_budget),
+        "per_file_budget_chars": share,
+        "budget_unit": "chars_estimate",
+    }
+    for fid in ids:
         if not fid:
             continue
         if student_id is not None or session_id is not None:
@@ -462,45 +484,339 @@ def pack_for_prompt(
                 require_mount=True,
             )
         cat = document_catalog(fid)
+        cat["prompt_complete"] = False
         report["files"].append(cat)
         total = int(cat.get("total_chars") or 0)
         if total <= 0:
             report["all_complete"] = False
-            parts.append(
-                f"【附件：{cat.get('filename')}】状态={cat.get('status')} 无文本产物"
-            )
+            parts.append(bounded_partial(
+                f"【附件：{cat.get('filename')} file_id={fid}】状态={cat.get('status')} "
+                f"重解析状态={cat.get('upgrade_status')}；暂无文本产物，"
+                "不能基于此附件下结论；请等待异步解析完成并重试。"
+            ))
             continue
         # Excerpt-only artifacts must not take the "complete pack" path
         _, meta = _full_text(fid)
         if meta.get("_text_source") == "excerpt_fallback":
             report["all_complete"] = False
             win = read_window(fid, offset=0, max_chars=CHARS_READ_PAGE)
-            parts.append(
-                f"【附件警告：{cat.get('filename')}】仅有 excerpt，无 full_text 产物；"
-                f"勿当全文。请等待 ingest 完成或重新上传。\n"
+            parts.append(bounded_partial(
+                f"【附件警告：{cat.get('filename')} file_id={fid}】仅有 excerpt，无 full_text 产物；"
+                f"勿当全文。重解析状态={cat.get('upgrade_status')}；"
+                f"请等待异步解析完成并重试。\n"
                 f"{format_window_for_model(win)}"
-            )
+            ))
             continue
-        if total <= inline_budget:
+        if meta.get("_source_truncated"):
+            report["all_complete"] = False
+            win = read_window(fid, offset=0, max_chars=CHARS_READ_PAGE)
+            parts.append(bounded_partial(
+                f"【附件警告：{cat.get('filename')} file_id={fid}】已保存文本在入库时截断，"
+                f"不能代表原文件全文；重解析状态={cat.get('upgrade_status')}。"
+                f"旧文本仅供参考，等待后台解析后再确认。\n"
+                f"{format_window_for_model(win)}"
+            ))
+            continue
+        if meta.get("_layout_incomplete"):
+            report["all_complete"] = False
+            win = read_window(fid, offset=0, max_chars=CHARS_READ_PAGE)
+            parts.append(bounded_partial(
+                f"【附件警告：{cat.get('filename')} file_id={fid}】旧解析产物只保存了部分版面块，"
+                f"章节/页码覆盖不完整；重解析状态={cat.get('upgrade_status')}。"
+                f"已提取文本可供参考，但不能确认已覆盖原文件。\n"
+                f"{format_window_for_model(win)}"
+            ))
+            continue
+        if meta.get("_repair_pending"):
+            report["all_complete"] = False
+            win = read_window(fid, offset=0, max_chars=CHARS_READ_PAGE)
+            parts.append(bounded_partial(
+                f"【附件警告：{cat.get('filename')} file_id={fid}】"
+                f"原提取结果需要补全，重解析状态={cat.get('upgrade_status')}；"
+                "现有文本仅供参考，不能据此断言原文件已完整读取。\n"
+                f"{format_window_for_model(win)}"
+            ))
+            continue
+        if total <= body_share:
             # Bypass page max so DeepSeek-style complete pack is actually whole-doc
             win = read_window(
                 fid,
                 offset=0,
-                max_chars=total or inline_budget,
-                hard_cap=inline_budget,
+                max_chars=total or body_share,
+                hard_cap=body_share,
             )
-            parts.append(format_window_for_model(win))
+            rendered = format_window_for_model(win)
+            if win.complete and len(rendered) <= share:
+                parts.append(rendered)
+                cat["prompt_complete"] = True
+            else:
+                # Even a short body can exceed its share through metadata; the
+                # prompt must not advertise completeness after a budget cut.
+                report["all_complete"] = False
+                partial = read_window(
+                    fid, offset=0,
+                    max_chars=min(CHARS_READ_PAGE, max(400, body_share // 2)),
+                )
+                parts.append(bounded_partial(
+                    f"【附件预算：{cat.get('filename')} file_id={fid}】当前提示词仅含窗口；"
+                    "请用 attachment_read 按 offset 续读。complete=false\n"
+                    f"file_id={fid} total_chars={total} offset=0 "
+                    f"returned={len(partial.text)} coverage=partial\n---\n{partial.text}"
+                ))
         else:
             report["all_complete"] = False
             toc = format_sections_for_catalog(list(cat.get("sections") or []))
-            win = read_window(fid, offset=0, max_chars=CHARS_READ_PAGE)
-            parts.append(
-                f"【附件目录：{cat.get('filename')}】total_chars={total}\n"
+            toc_budget = max(100, body_share // 4)
+            if len(toc) > toc_budget:
+                toc = toc[:toc_budget] + "\n【目录省略：用 attachment_read mode=catalog 获取完整目录】"
+            win = read_window(
+                fid, offset=0,
+                max_chars=min(CHARS_READ_PAGE, max(400, body_share // 2)),
+            )
+            part = (
+                f"【附件目录：{cat.get('filename')} file_id={fid}】total_chars={total}\n"
                 f"章节：\n{toc}\n"
-                f"正文超过单次注入预算，已附首页窗口；"
+                f"正文超过本轮按附件分配的注入预算（每件约 {share} 字符），已附首页窗口；"
                 f"请用 attachment_read mode=find 或 mode=section 跳读，"
                 f"需要完整结论再 mode=read 分页至 complete=true。\n"
                 f"{format_window_for_model(win)}"
             )
+            parts.append(bounded_partial(part))
     body = "\n\n==========\n\n".join(parts)
+    report["pack_chars"] = len(body)
     return body, report
+
+
+# ---------------------------------------------------------------------------
+# grep 搜索功能 — 混合匹配：关键词快速定位 + LLM语义归一化
+# ---------------------------------------------------------------------------
+
+def grep_full_text(
+    full_text: str,
+    pattern: str,
+    *,
+    use_regex: bool = False,
+    case_sensitive: bool = False,
+    context_lines: int = 2,
+    max_results: int = 10,
+) -> List[Dict[str, Any]]:
+    """
+    全文grep搜索，返回匹配位置和上下文
+
+    Args:
+        full_text: 完整文本
+        pattern: 搜索模式（关键词或正则表达式）
+        use_regex: 是否使用正则表达式
+        case_sensitive: 是否大小写敏感
+        context_lines: 上下文行数（前后各N行）
+        max_results: 最大结果数
+
+    Returns:
+        匹配结果列表 [{
+            "line_number": int,
+            "line": str,
+            "context": str,
+            "start_line": int,
+            "end_line": int,
+        }, ...]
+    """
+    import re as _re
+
+    if not full_text or not pattern:
+        return []
+
+    lines = full_text.split('\n')
+    results: List[Dict[str, Any]] = []
+
+    # 构建正则表达式
+    if use_regex:
+        try:
+            regex = _re.compile(pattern, 0 if case_sensitive else _re.IGNORECASE)
+        except _re.error:
+            # 正则语法错误，回退到简单文本匹配
+            regex = _re.compile(_re.escape(pattern), 0 if case_sensitive else _re.IGNORECASE)
+    else:
+        # 简单文本匹配（转义特殊字符）
+        flags = 0 if case_sensitive else _re.IGNORECASE
+        regex = _re.compile(_re.escape(pattern), flags)
+
+    for i, line in enumerate(lines):
+        if regex.search(line):
+            # 获取上下文
+            start = max(0, i - context_lines)
+            end = min(len(lines), i + context_lines + 1)
+            context = '\n'.join(lines[start:end])
+
+            results.append({
+                "line_number": i + 1,  # 1-indexed
+                "line": line,
+                "context": context,
+                "start_line": start + 1,
+                "end_line": end,
+            })
+
+            if len(results) >= max_results:
+                break
+
+    return results
+
+
+def grep_document_hybrid(
+    file_id: str,
+    query: str,
+    *,
+    category: str = "education",
+    use_regex: bool = False,
+    case_sensitive: bool = False,
+    context_lines: int = 2,
+    max_results: int = 10,
+    llm_client: Any = None,
+) -> List[Dict[str, Any]]:
+    """
+    混合grep搜索：关键词匹配 + LLM语义匹配
+
+    Args:
+        file_id: 文件ID
+        query: 用户查询（如"教育背景"）
+        category: 类别（education/experience/projects/skills）
+        use_regex: 是否使用正则表达式
+        case_sensitive: 是否大小写敏感
+        context_lines: 上下文行数
+        max_results: 最大结果数
+        llm_client: LLM客户端（可选，用于语义匹配）
+
+    Returns:
+        混合匹配结果列表
+    """
+    from config.loader import get_grep_config
+
+    # 1. 获取文件完整文本
+    full, meta = _full_text(file_id)
+    if not full:
+        return []
+
+    # 2. 加载配置
+    grep_config = get_grep_config()
+    keywords = grep_config.get('resume_keywords', {}).get(category, [])
+
+    # 3. 关键词快速匹配
+    keyword_results: List[Dict[str, Any]] = []
+    if keywords:
+        pattern = '|'.join(keywords)
+        keyword_results = grep_full_text(
+            full, pattern,
+            use_regex=True,  # 关键词组合使用正则
+            case_sensitive=case_sensitive,
+            context_lines=context_lines,
+            max_results=max_results,
+        )
+
+    # 4. 如果没有LLM客户端，只返回关键词结果
+    if not llm_client:
+        return keyword_results
+
+    # 5. LLM语义匹配
+    try:
+        from app.utils.semantic_matcher import SemanticMatcher
+
+        matcher = SemanticMatcher(llm_client)
+        candidate_texts = [r.get('line', '') for r in keyword_results]
+
+        semantic_results = matcher.find_semantically_similar(
+            query=query,
+            candidate_texts=candidate_texts,
+            full_text=full,
+            category=category,
+        )
+
+        # 6. 合并结果（去重）
+        return _merge_grep_results(keyword_results, semantic_results)
+
+    except Exception:
+        # 语义匹配失败，只返回关键词结果
+        return keyword_results
+
+
+def _merge_grep_results(
+    keyword_results: List[Dict[str, Any]],
+    semantic_results: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """合并关键词和语义匹配结果"""
+    # 将语义匹配结果转换为统一格式
+    merged = list(keyword_results)
+
+    for segment in semantic_results.get('matched_segments', []):
+        text = segment.get('text', '')
+        if not text:
+            continue
+
+        # 检查是否已存在（简单文本包含检查）
+        exists = False
+        for r in merged:
+            if text in r.get('line', '') or r.get('line', '') in text:
+                exists = True
+                break
+
+        if not exists:
+            merged.append({
+                "line_number": 0,  # 语义匹配的行号不精确
+                "line": text[:500],  # 限制长度
+                "context": text[:500],
+                "start_line": 0,
+                "end_line": 0,
+                "source": "semantic_match",
+                "relevance_score": segment.get('relevance_score', 0.0),
+                "semantic_reason": segment.get('semantic_reason', ''),
+            })
+
+    return merged
+
+
+def format_grep_results(
+    hits: List[Dict[str, Any]],
+    *,
+    query: str,
+    max_chars_per_hit: int = 200,
+) -> str:
+    """
+    格式化grep搜索结果供模型使用
+
+    Args:
+        hits: grep搜索结果
+        query: 原始查询
+        max_chars_per_hit: 每个结果最大字符数
+
+    Returns:
+        格式化后的字符串
+    """
+    if not hits:
+        return (
+            f"【grep】query={query!r} 无匹配结果。"
+            "请尝试其他关键词或使用 mode=catalog 查看目录。"
+        )
+
+    parts = [
+        f"【grep】query={query!r} hits={len(hits)} coverage=partial complete=false",
+        "以下为匹配结果，禁止据此声称已读完全文；画像级结论须 mode=read 至 complete=true。",
+    ]
+
+    for i, h in enumerate(hits, 1):
+        source = h.get('source', 'keyword_match')
+        score_info = ""
+        if source == 'semantic_match':
+            score = h.get('relevance_score', 0)
+            reason = h.get('semantic_reason', '')
+            score_info = f" relevance={score:.2f} reason={reason}"
+
+        line_num = h.get('line_number', 0)
+        line_info = f"L{line_num}" if line_num > 0 else "?"
+
+        text = h.get('line', '')[:max_chars_per_hit]
+        if len(h.get('line', '')) > max_chars_per_hit:
+            text += "..."
+
+        parts.append(
+            f"--- hit#{i} [{source}] {line_info}{score_info} ---\n{text}"
+        )
+
+    return "\n".join(parts)

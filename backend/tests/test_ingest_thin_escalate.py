@@ -1,32 +1,77 @@
-"""Thin light PDF extract must escalate — education often sits at the end."""
+"""Media coverage is structural, never inferred from resume headings or length."""
 
-from app.services.agent_runtime.media.ingest import light_extract_too_thin
+from types import SimpleNamespace
 
-
-def test_head_only_skills_is_thin():
-    text = (
-        "钟梓珉\n2006/11\n13330772777\nhosheil@outlook.com\n"
-        "https://neutronm.store\nhttps://github.com/whaoxm\n"
-        "专业技能\n· 熟悉 RAG/GraphRAG 与 Agent 开发\n· Prompt/Context\n"
-    )
-    assert light_extract_too_thin(text, ext="pdf") is True
+from app.services.agent_runtime.media.ingest import extract_text_from_path
 
 
-def test_full_resume_with_education_not_thin():
-    text = (
-        "钟梓珉\n专业技能\nRAG Agent\n"
-        + ("项目细节。" * 80)
-        + "\n教育经历\n四川轻化工大学\n计算机科学与技术\n"
-        + ("奖项。" * 20)
-    )
-    assert "教育经历" in text
-    assert light_extract_too_thin(text, ext="pdf") is False
+def test_pdf_always_verifies_with_l0_regardless_of_apparent_content(tmp_path, monkeypatch):
+    pdf = tmp_path / "resume.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fixture")
+    light = "Education\nSkills\n" + "full-looking body " * 300
+    monkeypatch.setattr("app.services.agent_runtime.media.ingest._fallback_pdf",
+                        lambda *_: (light, "pypdf"))
+    called = []
+
+    class Parser:
+        def parse_file(self, path):
+            called.append(path)
+            return SimpleNamespace(success=True, text="layout verified", blocks=[],
+                                   engine="mineru", error=None)
+
+    monkeypatch.setattr("app.pipeline.entity_extractor.l0_full_parser.L0FullParser", Parser)
+    text, meta = extract_text_from_path(str(pdf), pdf.name, prefer_light=True, allow_heavy=True)
+    assert text == "layout verified"
+    assert called == [str(pdf)]
+    assert meta["escalated_heavy"] is True
+    assert meta["engine"] == "mineru"
 
 
-def test_short_pdf_always_thin():
-    assert light_extract_too_thin("hello skills github.com", ext="pdf") is True
+def test_pdf_light_fallback_never_claims_complete_source(tmp_path, monkeypatch):
+    pdf = tmp_path / "resume.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fixture")
+    monkeypatch.setattr("app.services.agent_runtime.media.ingest._fallback_pdf",
+                        lambda *_: ("Education\nSkills\n" + "body " * 100, "pypdf"))
+
+    class Parser:
+        def parse_file(self, _path):
+            return SimpleNamespace(success=False, text="", blocks=[], engine="mineru", error="offline")
+
+    monkeypatch.setattr("app.pipeline.entity_extractor.l0_full_parser.L0FullParser", Parser)
+    text, meta = extract_text_from_path(str(pdf), pdf.name, prefer_light=True, allow_heavy=True)
+    assert text
+    assert meta["source_coverage"] == "unverified"
+    assert meta["coverage_reason"] == "heavy_parse_failed_light_fallback"
 
 
-def test_docx_short_not_forced_thin():
-    # Non-PDF short text is not subject to the PDF thin heuristic
-    assert light_extract_too_thin("短文本", ext="docx") is False
+def test_short_docx_without_complex_shapes_is_not_length_classified(tmp_path):
+    from docx import Document
+
+    path = tmp_path / "short.docx"
+    doc = Document()
+    doc.add_paragraph("短文本")
+    doc.save(path)
+    text, meta = extract_text_from_path(str(path), path.name, prefer_light=True, allow_heavy=True)
+    assert text == "短文本"
+    assert meta.get("source_coverage") != "unverified"
+
+
+def test_docx_with_embedded_image_marks_source_unverified(tmp_path, monkeypatch):
+    from docx import Document
+    from PIL import Image
+    from app.services.agent_runtime.media.file_store import _layout_blocks_incomplete
+    monkeypatch.setattr("app.utils.docx_text._ocr_embedded_image", lambda *_: {
+        "success": False, "error": "OCR unavailable"})
+
+    image = tmp_path / "embedded.png"
+    Image.new("RGB", (8, 8), "white").save(image)
+    path = tmp_path / "image-text.docx"
+    doc = Document()
+    doc.add_paragraph("可见正文")
+    doc.add_picture(str(image))
+    doc.save(path)
+    text, meta = extract_text_from_path(str(path), path.name, prefer_light=True, allow_heavy=True)
+    assert "可见正文" in text
+    assert meta["source_coverage"] == "unverified"
+    assert meta["coverage_reason"] == "docx_parts_unprocessed"
+    assert _layout_blocks_incomplete({"ingest_meta": meta}) is True

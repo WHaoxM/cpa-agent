@@ -39,6 +39,14 @@ def normalize_content_parts(
                     "turn_id": str(p.get("turn_id") or ""),
                     "file_id": str(p.get("file_id") or ""),
                 })
+            elif t == "artifact_ref" and p.get("task_id"):
+                # The id is resolved by prepare_user_turn; discard all browser
+                # supplied title/status/summary/owner fields.
+                parts.append({"type": "artifact_ref", "task_id": str(p["task_id"])})
+            elif t == "resource_ref" and p.get("uri"):
+                # URI is only a selector.  prepare_user_turn resolves it under
+                # the server Principal before the message is persisted.
+                parts.append({"type": "resource_ref", "uri": str(p["uri"])})
     for fid in attachment_ids or []:
         if fid and not any(p.get("file_id") == fid for p in parts):
             parts.append({"type": "document", "file_id": str(fid)})
@@ -60,6 +68,10 @@ def user_visible_text(parts: List[ContentPart]) -> str:
         elif p.get("file_id"):
             title = p.get("title") or p["file_id"]
             texts.append(f"[附件:{title}]")
+        elif p.get("type") == "artifact_ref" and p.get("task_id"):
+            texts.append(f"[任务引用:{p['task_id']}]")
+        elif p.get("type") == "resource_ref" and p.get("uri"):
+            texts.append(f"[业务资料引用:{p['uri']}]")
     return "\n".join(texts).strip() or "[空消息]"
 
 
@@ -115,8 +127,12 @@ def build_attachment_mount_card(
     for fid in ordered_ids[:MAX_MOUNTED_FILES]:
         if fid in seen:
             continue
-        seen.add(fid)
         meta = files.get(fid) or {}
+        if not student_id or meta.get("student_id") != student_id:
+            # The caller may hand us an untrusted file id; never put another
+            # owner's filename/status into model context even if mount failed.
+            continue
+        seen.add(fid)
         r = mounted.get(fid) or {}
         name = r.get("filename") or meta.get("filename") or fid
         path = r.get("mount_path") or f"/data/{fid}"

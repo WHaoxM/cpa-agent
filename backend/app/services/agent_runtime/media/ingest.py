@@ -11,6 +11,7 @@ pipeline/resume parse, or explicit CPA_CHAT_INGEST_HEAVY=1 as async upgrade.
 from __future__ import annotations
 
 import os
+from zipfile import ZipFile
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -45,7 +46,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
 def purpose_allows_heavy(purpose: str) -> bool:
     """
     Whether worker may invoke L0/MinerU after light extract fails.
-    HTTP thread never runs heavy — only the media_ingest fork worker.
+    HTTP thread never runs heavy — only the Celery media worker.
     Chat default: escalate (many CN resumes are image-PDF). Opt-out: CPA_CHAT_INGEST_HEAVY=0.
     """
     p = (purpose or "").strip().lower()
@@ -107,46 +108,17 @@ def _fallback_pdf(path: str) -> Tuple[str, str]:
     return "", "pdf_fallback_failed"
 
 
-# CN campus resumes often put 教育经历 at the END (~3k+). Light engines that
-# only return the visual header must escalate — otherwise Ask "only sees skills".
-_LIGHT_PDF_MIN_CHARS = 2200
-_HEAD_SIGNALS = ("专业技能", "个人技能", "技能", "Skills", "github.com", "电话", "邮箱")
-_TAIL_SIGNALS = ("教育经历", "教育背景", "Education", "学历")
-
-
-def light_extract_too_thin(
-    text: str,
-    *,
-    path: str = "",
-    ext: str = "",
-) -> bool:
-    """True when non-empty light extract is likely a head-only / broken PDF pull."""
-    body = (text or "").strip()
-    if not body:
-        return True
-    e = (ext or _ext(path) or "").lower()
-    if e not in ("pdf", "png", "jpg", "jpeg", "webp", "bmp", "tiff"):
-        return False
-    n = len(body)
-    has_head = any(s in body for s in _HEAD_SIGNALS)
-    has_tail = any(s in body for s in _TAIL_SIGNALS)
-    # Classic failure: skills/contact present, education block absent
-    # (real CN resumes often put 教育经历 after the project wall of text)
-    if has_head and not has_tail:
-        return True
-    # Very short AND no education markers → incomplete; short but structured OK
-    if n < 800 and not has_tail:
-        return True
+def _docx_has_unreadable_shapes(path: str) -> bool:
+    """Structural risk only: raster text and grouped shapes need separate OCR."""
     try:
-        size = os.path.getsize(path) if path and os.path.isfile(path) else 0
+        with ZipFile(path) as package:
+            if any(name.startswith("word/media/") for name in package.namelist()):
+                return True
+            body = package.read("word/document.xml")
+            return b"<v:group" in body or b"<w:txbxContent" in body
     except Exception:
-        size = 0
-    # Large scanned/layout PDF with little text and no education → incomplete
-    if size >= 80_000 and n < _LIGHT_PDF_MIN_CHARS and not has_tail:
+        # A damaged package must not be certified complete by a text fallback.
         return True
-    if n < _LIGHT_PDF_MIN_CHARS and not has_tail:
-        return True
-    return False
 
 
 def extract_text_from_path(
@@ -186,6 +158,18 @@ def extract_text_from_path(
             return "", {**meta, "engine": "utf8_failed", "error": str(e)}
 
     if ext in DOC_EXTS:
+        if ext == "docx":
+            # Both Agent attachments and L0 use the same real media adapter.
+            # This runs in the ingest worker, never on the upload HTTP thread.
+            try:
+                from ....utils.docx_text import extract_docx_with_media
+
+                text, coverage = extract_docx_with_media(path, allow_ocr=allow_heavy)
+                return text, {**meta, **coverage, "attempts": [coverage["engine"]]}
+            except Exception as exc:
+                return "", {**meta, "engine": "extract_failed", "error": str(exc),
+                            "source_coverage": "unverified", "retryable": True}
+
         def _try_light() -> Tuple[str, str]:
             if ext == "docx":
                 return _fallback_docx(path)
@@ -226,41 +210,41 @@ def extract_text_from_path(
         if prefer_light or not allow_heavy:
             text, eng = _try_light()
             meta["attempts"].append(eng)
-            thin = bool(text.strip()) and light_extract_too_thin(
-                text, path=path, ext=ext,
-            )
-            if text.strip() and not thin:
+            complex_docx = ext == "docx" and _docx_has_unreadable_shapes(path)
+            if complex_docx:
+                meta["source_coverage"] = "unverified"
+                meta["coverage_reason"] = "docx_embedded_media_or_shape"
+            # PDF body headings, keywords and character count cannot prove that
+            # the light parser read every page. When heavy parsing is enabled,
+            # verify every PDF regardless of its apparent semantic content.
+            needs_heavy = allow_heavy and (ext == "pdf" or not text.strip())
+            if text.strip() and not needs_heavy:
+                if ext == "pdf":
+                    meta["source_coverage"] = "unverified"
+                    meta["coverage_reason"] = "heavy_parse_disabled"
                 return text, {
                     **meta,
                     "engine": eng if eng in ("pypdf", "pdfplumber", "mammoth+python-docx") else "light",
                 }
-            if allow_heavy and (not text.strip() or thin):
+            if needs_heavy:
                 logger.info(
-                    "light extract %s for %s (chars=%s) — escalating to L0 in ingest worker",
-                    "thin" if thin else "empty",
+                    "light extract for %s (chars=%s) — verifying with L0 in ingest worker",
                     filename,
                     len((text or "").strip()),
                 )
                 meta["escalated_heavy"] = True
-                meta["light_thin"] = thin
-                if thin and text.strip():
-                    meta["light_preview_chars"] = len(text.strip())
                 heavy_text, extra = _try_l0()
                 if heavy_text.strip():
                     return heavy_text, {**meta, **extra}
-                # Keep thin light text rather than empty if L0 also failed
+                # Keep the useful light text, but never certify its source as
+                # complete after the authoritative layout/OCR pass failed.
                 if text.strip():
                     return text, {
                         **meta,
                         "engine": eng if eng in ("pypdf", "pdfplumber", "mammoth+python-docx") else "light",
-                        "warning": "heavy_escalation_failed_kept_thin_light",
+                        "source_coverage": "unverified",
+                        "coverage_reason": "heavy_parse_failed_light_fallback",
                     }
-            elif text.strip():
-                return text, {
-                    **meta,
-                    "engine": eng if eng in ("pypdf", "pdfplumber", "mammoth+python-docx") else "light",
-                    "warning": "thin_light_heavy_disabled",
-                }
             return "", {
                 **meta,
                 "engine": "extract_failed",
@@ -278,6 +262,9 @@ def extract_text_from_path(
         # Heavy-first (pipeline purposes)
         text, extra = _try_l0()
         if text.strip():
+            if ext == "docx" and _docx_has_unreadable_shapes(path):
+                meta["source_coverage"] = "unverified"
+                meta["coverage_reason"] = "docx_embedded_media_or_shape"
             return text, {**meta, **extra}
         text, eng = _try_light()
         meta["attempts"].append(eng)
@@ -285,6 +272,8 @@ def extract_text_from_path(
             return text, {
                 **meta,
                 "engine": eng if eng in ("pypdf", "pdfplumber", "mammoth+python-docx") else "light",
+                "source_coverage": "unverified",
+                "coverage_reason": "heavy_parse_failed_light_fallback",
             }
 
         return "", {

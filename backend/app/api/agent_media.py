@@ -83,6 +83,59 @@ def agent_get_file(file_id: str):
     return meta
 
 
+@agent_bp.route("/files/<file_id>/events", methods=["GET"])
+@api_handler("重放文件解析事件")
+def agent_get_file_events(file_id: str):
+    """Replay authoritative media state transitions after an integer cursor."""
+    from ..services.agent_runtime.media.file_store import get_agent_file_service
+
+    try:
+        scope = resolve_request_scope()
+    except ScopeError as e:
+        return scope_error_response(e)
+    try:
+        after = int(request.args.get("after", "0"))
+        limit = int(request.args.get("limit", "100"))
+    except (TypeError, ValueError):
+        return jsonify(safe_bad_request("after/limit 必须是整数")), 400
+    if after < 0 or limit < 1 or limit > 200:
+        return jsonify(safe_bad_request("after 必须 >= 0，limit 必须在 1..200")), 400
+
+    svc = get_agent_file_service()
+    meta = svc.get(file_id)
+    if not meta:
+        return jsonify(safe_not_found("文件不存在")), 404
+    try:
+        require_owner(meta.get("student_id"), scope, resource="文件")
+    except ScopeError as e:
+        return scope_error_response(e)
+    replay = svc.list_events(file_id, after=after, limit=limit)
+    if replay is None:
+        return jsonify(safe_not_found("文件不存在")), 404
+    return replay
+
+
+@agent_bp.route("/files/<file_id>/retry", methods=["POST"])
+@api_handler("重试会话文件解析")
+def agent_retry_file(file_id: str):
+    """Explicit retry after OCR capability is installed; never parses in HTTP."""
+    from ..services.agent_runtime.media.file_store import get_agent_file_service
+
+    try:
+        scope = resolve_request_scope()
+    except ScopeError as e:
+        return scope_error_response(e)
+    svc = get_agent_file_service()
+    meta = svc.get(file_id)
+    if not meta:
+        return jsonify(safe_not_found("文件不存在")), 404
+    try:
+        require_owner(meta.get("student_id"), scope, resource="文件")
+    except ScopeError as e:
+        return scope_error_response(e)
+    return svc.schedule_upgrade(file_id, force=True)
+
+
 @agent_bp.route("/session/<session_id>/resources", methods=["GET"])
 @api_handler("列出会话挂载资源")
 def agent_list_resources(session_id: str):
@@ -132,6 +185,8 @@ def agent_mount_resources(session_id: str):
         return scope_error_response(e)
     except PermissionError as e:
         return jsonify(safe_bad_request(str(e))), 403
+    except LookupError as e:
+        return jsonify(safe_not_found(str(e))), 404
     except ValueError as e:
         return jsonify(safe_bad_request(str(e))), 400
     return {"resources": out}
@@ -145,18 +200,19 @@ def agent_voice_turn_start():
     from ..services.session_manager import get_session_manager
 
     session_id = data.get("session_id")
+    if not session_id:
+        return jsonify(safe_bad_request("语音回合需要 session_id")), 400
     try:
         scope = resolve_request_scope(session_id=session_id)
     except ScopeError as e:
         return scope_error_response(e)
-    if session_id:
-        session = get_session_manager().get_session(session_id)
-        if not session:
-            return jsonify(safe_not_found("会话不存在")), 404
-        try:
-            require_owner(session.student_id, scope, resource="会话")
-        except ScopeError as e:
-            return scope_error_response(e)
+    session = get_session_manager().get_session(session_id)
+    if not session:
+        return jsonify(safe_not_found("会话不存在")), 404
+    try:
+        require_owner(session.student_id, scope, resource="会话")
+    except ScopeError as e:
+        return scope_error_response(e)
 
     return get_voice_turn_service().start(
         session_id=session_id,

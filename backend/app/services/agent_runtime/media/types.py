@@ -28,11 +28,13 @@ class VoiceStatus(str, Enum):
 
 
 class ContentPart(TypedDict, total=False):
-    type: str  # text | document | image | voice_transcript
+    type: str  # text | document | image | voice_transcript | artifact_ref | resource_ref
     text: str
     file_id: str
     turn_id: str
     title: str
+    task_id: str
+    uri: str
 
 
 CHARS_MOUNT_CARD = 1200
