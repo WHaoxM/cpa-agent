@@ -117,15 +117,17 @@ class PortraitGenerateTool(BaseTool):
         "required": ["entity_type", "skills"]
     }
 
-    def execute(self, entity_type: str, skills: list, name: str = None) -> Dict[str, Any]:
+    def execute(self, entity_type: str, skills: list, name: str = None, student_id: str = None) -> Dict[str, Any]:
         from ...pipeline.entity_extractor.portrait_generator import (
             generate_student_portrait,
             generate_job_portrait
         )
 
         if entity_type == "student":
+            if not student_id:
+                return {"success": False, "status": "failed", "summary": "缺少服务端 Principal"}
             portrait = generate_student_portrait(
-                student_id=name or "unknown",
+                student_id=student_id,
                 skills=skills
             )
         else:
@@ -135,7 +137,10 @@ class PortraitGenerateTool(BaseTool):
                 skills=skills
             )
 
-        return portrait
+        # This helper calculates a draft but does not persist student_portrait_4d.
+        # Never advertise it as an openable, completed profile artifact.
+        return {"success": True, "status": "partial", "verified": False,
+                "summary": "画像草稿已计算，尚未持久化", "portrait": portrait}
 
 
 class ReportGenerateTool(BaseTool):
@@ -163,11 +168,14 @@ class ReportGenerateTool(BaseTool):
         "required": ["student_skills", "job_skills"]
     }
 
-    def execute(self, student_skills: list, job_skills: list, job_name: str = "未知岗位") -> Dict[str, Any]:
+    def execute(self, student_skills: list, job_skills: list, job_name: str = "未知岗位", student_id: str = None) -> Dict[str, Any]:
         from ...pipeline.entity_extractor.l4_report_generator import generate_full_report
 
+        if not student_id:
+            return {"success": False, "status": "failed", "summary": "缺少服务端 Principal"}
+
         result = generate_full_report(
-            student_id="agent_user",
+            student_id=student_id,
             student_skills=student_skills,
             job_id="agent_job",
             job_name=job_name,
@@ -176,8 +184,11 @@ class ReportGenerateTool(BaseTool):
         )
 
         return {
-            "report_id": result.get("report_id"),
-            "summary": result.get("summary", {}),
+            "success": True,
+            "status": "partial",
+            "verified": False,
+            "summary": "报告草稿已计算，尚未持久化",
+            "report_summary": result.get("summary", {}),
             "llm_summary": result.get("llm_summary", ""),
             "conclusion": result.get("summary", {}).get("conclusion", ""),
             "recommendations_count": len(result.get("recommendations", []))
@@ -208,16 +219,15 @@ class SkillRecommendTool(BaseTool):
     }
 
     def execute(self, skills: list, limit: int = 5) -> Dict[str, Any]:
-        from ...pipeline.entity_extractor.graph_storage import GraphStorage
+        from ..public_skill_graph import query_public_skills
 
-        storage = GraphStorage()
-        recommendations = storage.recommend_skills(skills, limit=limit)
-
-        return {
-            "input_skills": skills,
-            "recommendations": recommendations,
-            "count": len(recommendations)
-        }
+        try:
+            result = query_public_skills("recommend", {"skill_names": skills, "limit": limit})
+        except ValueError:
+            return {"success": False, "status": "failed", "message": "公共技能推荐参数无效"}
+        except Exception:
+            return {"success": False, "status": "unavailable", "message": "公共技能分区暂不可用"}
+        return {**result, "input_skills": skills, "recommendations": result["rows"], "count": len(result["rows"])}
 
 
 class LearningPathTool(BaseTool):
@@ -242,9 +252,14 @@ class LearningPathTool(BaseTool):
     }
 
     def execute(self, from_skill: str, to_skill: str) -> Dict[str, Any]:
-        from ...pipeline.entity_extractor.graph_storage import GraphStorage
+        from ..public_skill_graph import query_public_skills
 
-        storage = GraphStorage()
-        path = storage.find_learning_path(from_skill, to_skill)
-
-        return path
+        try:
+            result = query_public_skills("learning_path", {"from_skill": from_skill, "to_skill": to_skill})
+        except ValueError:
+            return {"success": False, "status": "failed", "message": "公共学习路径参数无效"}
+        except Exception:
+            return {"success": False, "status": "unavailable", "message": "公共技能分区暂不可用"}
+        rows = result["rows"]
+        return {**result, "found": bool(rows), "from_skill": from_skill, "to_skill": to_skill,
+                "steps": rows[0]["steps"] if rows else [], "hops": rows[0]["hops"] if rows else None}

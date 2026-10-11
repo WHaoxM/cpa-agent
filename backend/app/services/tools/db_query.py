@@ -19,6 +19,10 @@ _BIND_RE = re.compile(r":([a-zA-Z_][a-zA-Z0-9_]*)")
 class DbQueryTool(BaseTool):
     """MySQL 业务数据查询工具"""
 
+    @staticmethod
+    def _failure(message, status="unavailable"):
+        return json.dumps({"success": False, "status": status, "message": message}, ensure_ascii=False)
+
     ALLOWED_TABLES = frozenset({
         "student_profile",
         "student_portrait_4d",
@@ -36,10 +40,10 @@ class DbQueryTool(BaseTool):
     QUERY_TEMPLATES = {
         "student_profile": {
             "get_by_id": "SELECT * FROM student_profile WHERE student_id = :student_id",
-            "list": "SELECT * FROM student_profile LIMIT :limit",
+            "list": "SELECT * FROM student_profile WHERE student_id = :student_id LIMIT :limit",
         },
         "student_portrait_4d": {
-            "list": "SELECT * FROM student_portrait_4d ORDER BY created_at DESC LIMIT :limit",
+            "list": "SELECT * FROM student_portrait_4d WHERE student_id = :student_id ORDER BY created_at DESC LIMIT :limit",
             "get_by_id": "SELECT * FROM student_portrait_4d WHERE student_id = :student_id",
         },
         "job_posting": {
@@ -66,11 +70,11 @@ class DbQueryTool(BaseTool):
             "get_by_student_job": "SELECT * FROM career_path WHERE student_id = :student_id AND job_portrait_id = :job_portrait_id",
         },
         "career_report": {
-            "get_by_id": "SELECT * FROM career_report WHERE report_id = :report_id",
+            "get_by_id": "SELECT * FROM career_report WHERE report_id = :report_id AND student_id = :student_id",
             "list_by_student": "SELECT * FROM career_report WHERE student_id = :student_id ORDER BY created_at DESC LIMIT :limit",
         },
         "conversation_message": {
-            "list_by_session": "SELECT * FROM conversation_message WHERE session_id = :session_id ORDER BY created_at ASC",
+            "list_by_session": "SELECT m.* FROM conversation_message m JOIN conversation c ON c.session_id = m.session_id WHERE m.session_id = :session_id AND c.student_id = :student_id ORDER BY m.created_at ASC LIMIT :limit",
         },
     }
 
@@ -167,11 +171,11 @@ class DbQueryTool(BaseTool):
 
         templates = self.QUERY_TEMPLATES.get(table)
         if not templates:
-            return f"SELECT * FROM {table} LIMIT :limit", {"limit": 10}
+            raise ValueError("No owner-scoped query template")
 
         template = templates.get(query_type)
         if not template:
-            return f"SELECT * FROM {table} LIMIT :limit", {"limit": 10}
+            raise ValueError("Unknown owner-scoped query template")
 
         return template, params
 
@@ -199,7 +203,7 @@ class DbQueryTool(BaseTool):
         table_hint = kwargs.get("table_hint", "")
 
         if not query:
-            return "[db_query] 错误: query 参数不能为空"
+            return self._failure("[db_query] 错误: query 参数不能为空", "failed")
 
         logger.info(f"db_query 执行: query={query}, table_hint={table_hint}")
 
@@ -207,15 +211,31 @@ class DbQueryTool(BaseTool):
             guessed = self._guess_table(query, table_hint)
 
             if not guessed:
-                return f"[db_query] 无法确定查询目标表。可用表: {', '.join(sorted(self.ALLOWED_TABLES))}"
+                return self._failure(f"[db_query] 无法确定查询目标表。可用表: {', '.join(sorted(self.ALLOWED_TABLES))}", "needs_input")
 
             table, query_type = guessed
+
+            # Both tables can be populated from runtime JD input. A table name or
+            # a read-only SQL template is not public-source provenance.
+            if table in {"job_posting", "job_portrait_4d"}:
+                return self._failure("[db_query] 不可用: 岗位表缺少可验证的公共来源/归属标记，请使用已隔离的公共图谱。")
+
+            from flask import has_request_context
+            from ...api._helpers import resolve_request_scope, ScopeError
+
+            if not has_request_context():
+                return self._failure("[db_query] 权限拒绝: 缺少可信服务端 Principal；不会使用工具参数 student_id 代替认证。", "denied")
+            try:
+                scope = resolve_request_scope()
+            except ScopeError:
+                return self._failure("[db_query] 权限拒绝: 缺少可信服务端 Principal。", "denied")
 
             params = {}
             for key in ["student_id", "job_portrait_id", "portrait_id", "report_id", "session_id", "job_id"]:
                 if key in kwargs and kwargs[key] not in (None, ""):
                     params[key] = kwargs[key]
             params.setdefault("limit", 5)
+            params["student_id"] = scope.student_id
 
             sql, sql_params = self._build_query(table, query_type, params)
             needed = set(_BIND_RE.findall(sql))
@@ -228,7 +248,7 @@ class DbQueryTool(BaseTool):
                     table,
                     query_type,
                 )
-                return (
+                return self._failure(
                     f"[db_query] 缺少必要参数: {', '.join(sorted(missing))}。"
                     f"请提供正确的 student_id / 业务 id 后再查询，不会返回无关列表。"
                 )
@@ -241,7 +261,7 @@ class DbQueryTool(BaseTool):
 
         except ValueError as e:
             logger.error(f"db_query 安全校验失败: {e}")
-            return f"[db_query] 安全校验失败"
+            return self._failure("[db_query] 安全校验失败", "denied")
         except Exception as e:
             logger.error(f"db_query 执行失败: {e}")
-            return f"[db_query] 执行失败，请稍后重试"
+            return self._failure("[db_query] 执行失败，请稍后重试", "failed")
