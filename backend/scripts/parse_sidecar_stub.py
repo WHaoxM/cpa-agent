@@ -26,7 +26,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/v1/health"):
-            return self._json(503, {"status": "unavailable", "engine": "stub", "ocr_pdf": False})
+            return self._json(503, {
+                "status": "unavailable",
+                "engine": "stub",
+                "ocr_pdf": False,
+                "durable_tasks": False,
+                "reason": "contract-only stub; no OCR engine is installed",
+            })
         return self._json(404, {"error": "not found"})
 
     def do_POST(self):

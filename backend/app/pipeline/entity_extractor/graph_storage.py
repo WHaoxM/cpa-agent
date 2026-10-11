@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime
 from typing import List, Dict, Optional
 from app.services.db.neo4j_client import get_neo4j_client
+from app.services.public_skill_graph import SOURCE_ID
 from app.utils.logger import get_logger
 
 logger = get_logger('cpa-agent.graph_storage')
@@ -245,10 +246,14 @@ class GraphStorage:
         return "加分"
 
     def get_skill_neighbors(self, skill_name: str, limit: int = 10) -> List[Dict]:
-        """获取技能的邻居"""
+        """Public seed neighbors only; never traverse the legacy mixed graph."""
         with self.neo4j.session() as session:
             cypher = """
-            MATCH (s:Skill {name: $skill_name})-[r]-(neighbor)
+            MATCH (s:PublicSkill {name: $skill_name})-[r:PREREQUISITE]-(neighbor:PublicSkill)
+            WHERE labels(s) = ['PublicSkill'] AND labels(neighbor) = ['PublicSkill']
+              AND s.source_id = $source_id AND neighbor.source_id = $source_id
+              AND s.visibility = 'public' AND neighbor.visibility = 'public'
+              AND r.source_id = $source_id
             RETURN neighbor.name as name,
                    neighbor.category as category,
                    type(r) as relation,
@@ -258,7 +263,8 @@ class GraphStorage:
 
             result = session.run(cypher, {
                 "skill_name": skill_name,
-                "limit": limit
+                "limit": max(1, min(int(limit), 50)),
+                "source_id": SOURCE_ID,
             })
 
             return [dict(record) for record in result]
@@ -306,9 +312,13 @@ class GraphStorage:
         # 只匹配库中真实存在的 Skill↔Skill 边，避免 Neo4j UNRECOGNIZED 警告拖垮工具链。
         with self.neo4j.session() as session:
             cypher = """
-            MATCH (s:Skill)-[r]-(other:Skill)
+            MATCH (s:PublicSkill)-[r:PREREQUISITE]-(other:PublicSkill)
             WHERE s.name IN $skill_names
               AND NOT other.name IN $skill_names
+              AND labels(s) = ['PublicSkill'] AND labels(other) = ['PublicSkill']
+              AND s.source_id = $source_id AND other.source_id = $source_id
+              AND s.visibility = 'public' AND other.visibility = 'public'
+              AND r.source_id = $source_id
             WITH other, count(r) AS weight, collect(DISTINCT type(r)) AS rel_types
             RETURN other.name AS name,
                    other.category AS category,
@@ -320,7 +330,8 @@ class GraphStorage:
 
             result = session.run(cypher, {
                 "skill_names": skill_names,
-                "limit": limit
+                "limit": max(1, min(int(limit), 50)),
+                "source_id": SOURCE_ID,
             })
 
             recommendations = []
@@ -365,10 +376,14 @@ class GraphStorage:
         Returns:
             学习路径
         """
+        max_hops = max(1, min(int(max_hops), 5))
         with self.neo4j.session() as session:
             cypher = f"""
-            MATCH path = (start:Skill)-[r:PREREQUISITE*1..{max_hops}]->(end:Skill)
+            MATCH path = (start:PublicSkill)<-[r:PREREQUISITE*1..{max_hops}]-(end:PublicSkill)
             WHERE start.name = $from_skill AND end.name = $to_skill
+              AND all(n IN nodes(path) WHERE labels(n) = ['PublicSkill']
+                  AND n.visibility = 'public' AND n.source_id = $source_id)
+              AND all(edge IN relationships(path) WHERE edge.source_id = $source_id)
             RETURN path,
                    length(path) as hops
             ORDER BY hops ASC
@@ -377,7 +392,8 @@ class GraphStorage:
 
             result = session.run(cypher, {
                 "from_skill": from_skill,
-                "to_skill": to_skill
+                "to_skill": to_skill,
+                "source_id": SOURCE_ID,
             })
 
             records = list(result)
@@ -424,15 +440,19 @@ class GraphStorage:
         """获取技能子图"""
         with self.neo4j.session() as session:
             cypher = """
-            MATCH (s1:Skill)-[r]-(s2:Skill)
+            MATCH (s1:PublicSkill)-[r:PREREQUISITE]-(s2:PublicSkill)
             WHERE s1.name IN $skill_names AND s2.name IN $skill_names
+              AND labels(s1) = ['PublicSkill'] AND labels(s2) = ['PublicSkill']
+              AND s1.source_id = $source_id AND s2.source_id = $source_id
+              AND s1.visibility = 'public' AND s2.visibility = 'public'
+              AND r.source_id = $source_id
             RETURN s1.name as source,
                    s2.name as target,
                    type(r) as relation,
                    r.confidence as confidence
             """
 
-            result = session.run(cypher, {"skill_names": skill_names})
+            result = session.run(cypher, {"skill_names": skill_names, "source_id": SOURCE_ID})
 
             nodes = set()
             edges = []

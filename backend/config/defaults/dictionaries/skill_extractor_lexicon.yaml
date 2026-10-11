@@ -374,10 +374,13 @@ aliases:
   JS: JavaScript
   TS: TypeScript
   Py: Python
+  python: Python
   VUE: Vue.js
+  vue: Vue.js
   K8S: Kubernetes
   ML: 机器学习
   DL: 深度学习
+  dl: 深度学习
   NLP: 自然语言处理
   CV: 计算机视觉
   FE: 前端
@@ -385,8 +388,10 @@ aliases:
   FS: 全栈
   DBA: 数据库工程师
   RD: 研发工程师
+  rd: 研发工程师
   QA: 测试工程师
   OP: 运维工程师
+  op: 运维工程师
   SRE: SRE
   DevOps: DevOps
   SSH: 远程连接
@@ -406,10 +411,12 @@ aliases:
   重构: 重构
   设计模式: 设计模式
   架构: 架构设计
+  架构设计: 架构设计
   分布式: 分布式
   高并发: 高并发
   负载均衡: 负载均衡
-  缓存: 缓存
+  缓存: 缓存技术
+  Redis: Redis
   消息队列: 消息队列
   异步: 异步
   并行: 并行
@@ -417,6 +424,106 @@ aliases:
   协程: 协程
   容器化: Docker
   虚拟化: 虚拟化
+  Docker: Docker
+  Kubernetes: Kubernetes
+  Linux: Linux
+  Git: Git
+  GitHub: GitHub
+  GitLab: GitLab
+  React: React
+  react: React
+  Angular: Angular
+  Vue3: Vue.js
+  Vue2: Vue.js
+  Next.js: Next.js
+  Nuxt.js: Nuxt.js
+  Django: Django
+  Flask: Flask
+  FastAPI: FastAPI
+  Spring: Spring
+  SpringBoot: Spring Boot
+  SpringCloud: Spring Cloud
+  MySQL: MySQL
+  PostgreSQL: PostgreSQL
+  MongoDB: MongoDB
+  Redis: Redis
+  Elasticsearch: Elasticsearch
+  TensorFlow: TensorFlow
+  PyTorch: PyTorch
+  Keras: Keras
+  Scikit-learn: Scikit-learn
+  Pandas: Pandas
+  NumPy: NumPy
+  Matplotlib: Matplotlib
+  OpenCV: OpenCV
+  LangChain: LangChain
+  LangGraph: LangGraph
+  LLM: 大语言模型
+  AIGC: AIGC
+  GPT: GPT
+  BERT: BERT
+  Transformer: Transformer
+  RAG: RAG
+  向量数据库: 向量数据库
+  Milvus: Milvus
+  Pinecone: Pinecone
+  Weaviate: Weaviate
+  Node.js: Node.js
+  Express.js: Express.js
+  NestJS: NestJS
+  GraphQL: GraphQL
+  RESTful API: RESTful API
+  WebSocket: WebSocket
+  HTTP: HTTP
+  HTTPS: HTTPS
+  TCP: TCP
+  UDP: UDP
+  网络: 网络
+  网络协议: 网络协议
+  安全: 安全
+  网络安全: 网络安全
+  加密: 加密
+  认证: 认证
+  授权: 授权
+  OAuth: OAuth
+  JWT: JWT
+  SSL: SSL
+  TLS: TLS
+  防火墙: 防火墙
+  VPN: VPN
+  测试: 测试
+  单元测试: 单元测试
+  集成测试: 集成测试
+  自动化测试: 自动化测试
+  测试驱动开发: TDD
+  TDD: TDD
+  BDD: BDD
+  持续集成: CI
+  CI: CI
+  持续部署: CD
+  CD: CD
+  DevOps: DevOps
+  运维: 运维
+  监控: 监控
+  日志: 日志
+  告警: 告警
+  性能优化: 性能优化
+  调试: 调试
+  问题排查: 问题排查
+  文档: 文档
+  技术文档: 技术文档
+  API文档: API文档
+  沟通能力: 沟通能力
+  团队协作: 团队协作
+  项目管理: 项目管理
+  领导力: 领导力
+  问题解决: 问题解决
+  学习能力: 学习能力
+  分析能力: 分析能力
+  创新能力: 创新能力
+  抗压能力: 抗压能力
+  时间管理: 时间管理
+  自我驱动: 自我驱动
   K8s: Kubernetes
   Vue.js: Vue.js
   "Vue 3": Vue.js

@@ -26,7 +26,7 @@ class MatchResult:
     matched_skills: List[str]
     missing_skills: List[str]
     level_gap: Dict
-    # ── 冻结 Schema 字段 ──
+    # 匹配判定与证据字段
     match_result: bool = False
     d1_pass: bool = True
     degree_match: bool = False
@@ -167,34 +167,16 @@ class SkillMatcher:
         d1_fail_reason = d1_result.get("fail_reason")
 
         # ── D2 技能覆盖 (含语义匹配) ──
-        if not job_skills:
+        if not job_skills or not student_skills:
             return MatchResult(
                 student_id=(student_profile or {}).get("student_id", ""),
                 job_id=(job_profile or {}).get("job_id", ""),
-                total_score=0, d1_score=round(d1_score, 1), d2_score=0,
-                d3_score=round(self._calc_d3_score(student_profile), 1),
-                d4_score=round(self._calc_d4_score(student_skills or []), 1),
+                total_score=None, d1_score=d1_score, d2_score=None,
+                d3_score=self._calc_d3_score(student_profile), d4_score=None,
                 skill_coverage=0, matched_skills=[], missing_skills=[], level_gap={},
                 match_result=False, d1_pass=d1_pass, degree_match=degree_match,
                 major_match=major_match, cert_match_rate=cert_match_rate,
-                d1_fail_reason=d1_fail_reason, dimension_weights=self.DIMENSION_WEIGHTS,
-            )
-
-        if not student_skills:
-            return MatchResult(
-                student_id=(student_profile or {}).get("student_id", ""),
-                job_id=(job_profile or {}).get("job_id", ""),
-                total_score=round(d1_score * self.weights["D1"] +
-                                  self._calc_d3_score(student_profile) * self.weights["D3"] +
-                                  self._calc_d4_score([]) * self.weights["D4"], 1),
-                d1_score=round(d1_score, 1), d2_score=0,
-                d3_score=round(self._calc_d3_score(student_profile), 1),
-                d4_score=round(self._calc_d4_score([]), 1),
-                skill_coverage=0, matched_skills=[], level_gap={},
-                missing_skills=[j["name"] for j in job_skills],
-                match_result=False, d1_pass=d1_pass, degree_match=degree_match,
-                major_match=major_match, cert_match_rate=cert_match_rate,
-                d1_fail_reason=d1_fail_reason, dimension_weights=self.DIMENSION_WEIGHTS,
+                d1_fail_reason="missing_skill_evidence", dimension_weights=self.DIMENSION_WEIGHTS,
             )
 
         # ── 别名展开 ──
@@ -289,14 +271,14 @@ class SkillMatcher:
             d2_adjusted * self.DIMENSION_WEIGHTS["D2"] +
             d3_score * self.DIMENSION_WEIGHTS["D3"] +
             d4_score * self.DIMENSION_WEIGHTS["D4"]
-        )
+        ) if d3_score is not None else None
 
         # ── 匹配判定 (R-08) ──
         # D1硬约束不通过 → match_result=false
         # D1通过 AND skill_coverage≥min_skill_coverage AND total_score≥min_total_score → match_result=true
         min_cov = self._match_gates["min_skill_coverage"]
         min_score = self._match_gates["min_total_score"]
-        if not d1_pass:
+        if not d1_pass or total_score is None:
             match_result_bool = False
         elif skill_coverage >= min_cov and total_score >= min_score:
             match_result_bool = True
@@ -310,10 +292,10 @@ class SkillMatcher:
         return MatchResult(
             student_id=(student_profile or {}).get("student_id", student_skills[0].get("student_id", "")) if student_skills else "",
             job_id=(job_profile or {}).get("job_id", job_skills[0].get("job_id", "")) if job_skills else "",
-            total_score=round(total_score, 1),
+            total_score=round(total_score, 1) if total_score is not None else None,
             d1_score=round(d1_score, 1),
             d2_score=round(d2_adjusted, 1),
-            d3_score=round(d3_score, 1),
+            d3_score=round(d3_score, 1) if d3_score is not None else None,
             d4_score=round(d4_score, 1),
             skill_coverage=round(skill_coverage, 2),
             matched_skills=list(seen_matched),
@@ -370,7 +352,7 @@ class SkillMatcher:
             major_match = True
         elif student_major:
             for rm in required_majors:
-                if rm in student_major or student_major in rm:
+                if rm == student_major:
                     major_match = True
                     break
             if not major_match and not major_strict:
@@ -414,219 +396,28 @@ class SkillMatcher:
             "fail_reason": fail_reason,
         }
 
-    # ── D3 软技能映射 (SOFT_SKILL 实体 → 冻结 Schema D3 维度) ──
-    D3_SOFT_SKILL_MAP = {
-        "communication": ["沟通能力", "表达能力", "演讲能力", "汇报能力", "谈判", "说服力"],
-        "teamwork": ["团队协作", "合作精神", "配合能力", "团队意识", "集体荣誉感"],
-        "stress_tolerance": ["抗压能力", "心理韧性", "情绪管理", "压力管理", "适应性"],
-        "responsibility": ["责任心", "担当精神", "主动性", "自我驱动", "敬业精神"],
-    }
-
     def _calc_d3_detailed(self, student_profile: Optional[Dict]) -> Dict:
-        """D3 职业素养 — 冻结 Schema 子维度评分"""
-        if not student_profile:
-            return {"score": 50.0, "details": {
-                "communication": 0.5, "teamwork": 0.5,
-                "stress_tolerance": 0.5, "responsibility": 0.5,
-            }}
-
-        # ── D-13: 优先使用 LLM 抽取的 SOFT_SKILL 实体 + DEMONSTRATES 关系 ──
-        soft_skills = student_profile.get("skills", {}).get("soft_skills", [])
-        demonstrates_relations = student_profile.get("relations", [])
-        demonstrates = [r for r in demonstrates_relations
-                        if isinstance(r, dict) and r.get("type") == "DEMONSTRATES"
-                        and r.get("matching_dimension") == "D3"]
-
-        llm_scores = {}
-        if soft_skills or demonstrates:
-            for dim, keywords in self.D3_SOFT_SKILL_MAP.items():
-                dim_score = 0.0
-                dim_evidence = []
-
-                # 从 SOFT_SKILL 实体匹配
-                for ss in soft_skills:
-                    ss_name = ss if isinstance(ss, str) else ss.get("name", "")
-                    ss_level = ss.get("level", "中") if isinstance(ss, dict) else "中"
-                    for kw in keywords:
-                        if kw in ss_name or ss_name in kw:
-                            level_map = self._d3_params.get("level_map", {})
-                            level_default = self._d3_params.get("level_default", 0.5)
-                            dim_score = max(dim_score, level_map.get(ss_level, level_default))
-                            dim_evidence.append(ss_name)
-                            break
-
-                # 从 DEMONSTRATES 关系匹配
-                for rel in demonstrates:
-                    tail = rel.get("tail", "")
-                    confidence = rel.get("confidence", 0.5)
-                    for kw in keywords:
-                        if kw in tail or tail in kw:
-                            dim_score = max(dim_score, min(confidence, 1.0))
-                            dim_evidence.append(f"DEMONSTRATES→{tail}")
-                            break
-
-                if dim_score > 0:
-                    llm_scores[dim] = dim_score
-
-        # 从 profile 中提取 D3 证据
-        experience = student_profile.get("experience", [])
-        projects = student_profile.get("projects", [])
-        campus = student_profile.get("campus_experience", [])
-        all_text = " ".join([
-            e.get("description", "") for e in experience if isinstance(e, dict)
-        ] + [
-            p.get("description", "") for p in projects if isinstance(p, dict)
-        ])
-
-        # ── 关键词计数 (降级 fallback) — 关键词和魔数走 thresholds.yaml ──
-        d3_kw = self._d3_params.get("keywords", {})
-        d3_factor = self._d3_params.get("keyword_score_factor", 0.15)
-        d3_min = self._d3_params.get("keyword_score_min", 0.3)
-        d3_cap = self._d3_params.get("keyword_score_cap", 1.0)
-
-        def _keyword_score(keywords, text):
-            score = min(sum(1 for kw in keywords if kw in text) * d3_factor, d3_cap)
-            return max(score, d3_min)
-
-        # 沟通能力: LLM抽取优先, 关键词降级
-        comm_score = llm_scores.get("communication",
-                                     _keyword_score(d3_kw.get("communication", []), all_text))
-        team_score = llm_scores.get("teamwork",
-                                    _keyword_score(d3_kw.get("teamwork", []), all_text))
-        stress_score = llm_scores.get("stress_tolerance",
-                                      _keyword_score(d3_kw.get("stress_tolerance", []), all_text))
-        resp_score = llm_scores.get("responsibility",
-                                    _keyword_score(d3_kw.get("responsibility", []), all_text))
-
-        # 规则加分 (冻结 Schema) — 加分值和关键词走 thresholds.yaml
-        d3_bonus = self._d3_params.get("rule_bonus", {})
-        leader_kws = self._d3_params.get("leader_keywords", ["负责", "主导"])
-        officer_kws = self._d3_params.get("officer_keywords", ["主席", "部长", "会长"])
-
-        rule_bonus = 0
-        if experience:
-            rule_bonus += d3_bonus.get("internship", 5)
-        if projects:
-            rule_bonus += d3_bonus.get("team_project", 5)
-        for e in experience:
-            if isinstance(e, dict) and any(kw in e.get("description", "") for kw in leader_kws):
-                rule_bonus += d3_bonus.get("leader", 8)
-                break
-        for c in campus:
-            if isinstance(c, dict) and any(kw in c.get("role", "") for kw in officer_kws):
-                rule_bonus += d3_bonus.get("student_officer", 3)
-                break
-
-        # D3 总分 = (四维度平均×detail_weight) + rule_bonus + base_score, 上限 score_cap
+        from .resume_structure import confirmed_semantic_fact
+        profile = student_profile or {}
+        dimensions = ("communication", "teamwork", "stress_tolerance", "responsibility")
+        levels = self._d3_params.get("level_map", {})
+        details = {key: levels.get(confirmed_semantic_fact(profile, key)) for key in dimensions}
+        missing = [key for key, value in details.items() if value is None]
+        if missing:
+            return {"score": None, "details": details, "status": "partial", "missing_fields": missing}
+        bonuses = self._d3_params.get("rule_bonus", {})
+        bonus = sum(bonuses.get(key, 0) for key in ("internship", "team_project", "leader", "student_officer")
+                    if confirmed_semantic_fact(profile, key) is True)
         formula = self._d3_params.get("score_formula", {})
-        detail_weight = formula.get("detail_weight", 70)
-        base_score = formula.get("base_score", 20)
-        score_cap = formula.get("score_cap", 100)
-
-        avg_detail = (comm_score + team_score + stress_score + resp_score) / 4
-        d3_score = min(avg_detail * detail_weight + rule_bonus + base_score, score_cap)
-
-        return {
-            "score": round(d3_score, 1),
-            "details": {
-                "communication": round(comm_score, 2),
-                "teamwork": round(team_score, 2),
-                "stress_tolerance": round(stress_score, 2),
-                "responsibility": round(resp_score, 2),
-            }
-        }
+        score = min(sum(details.values()) / 4 * formula.get("detail_weight", 70)
+                    + bonus + formula.get("base_score", 20), formula.get("score_cap", 100))
+        return {"score": round(score, 1), "details": details, "status": "completed"}
 
     def _calc_d4_detailed(self, student_skills: List[Dict], student_profile: Optional[Dict] = None) -> Dict:
-        """D4 发展潜力 — 冻结 Schema 子维度评分"""
-        # 竞赛 sub_competition (0-25)
-        # 数据已由 ProfileNormalizer 在 L0 阶段归一化, 这里消费已归一化数据
-        # 未归一化时走 _normalize_entity 兜底 (EntityNormalizer语义+LLM → 规则降级)
-        sub_competition = 0
-        awards = (student_profile or {}).get("awards", [])
-        for a in awards:
-            if isinstance(a, dict):
-                level = a.get("level", "")
-                # 如果 L0 已归一化 (有 level_original 字段), level 已经是规范级别
-                # 如果未归一化, 走 _normalize_entity 兜底
-                if "level_original" not in a:
-                    level = self._normalize_entity(level, "award")
-                if level == "国家级":
-                    sub_competition = max(sub_competition, 25)
-                elif level == "省级" and "一等" in (a.get("level", "") + a.get("rank", "")):
-                    sub_competition = max(sub_competition, 18)
-                elif level == "省级":
-                    sub_competition = max(sub_competition, 12)
-                elif level == "校级":
-                    sub_competition = max(sub_competition, 5)
-
-        # 科研 sub_research (0-25)
-        sub_research = 0
-        research = (student_profile or {}).get("research_experience", [])
-        publications = (student_profile or {}).get("publications", [])
-        if research or publications:
-            for p in publications:
-                if isinstance(p, dict):
-                    venue = p.get("venue", "")
-                    if "CCF-A" in venue:
-                        sub_research = max(sub_research, 25)
-                    elif "CCF-B" in venue:
-                        sub_research = max(sub_research, 18)
-                    elif "EI" in venue:
-                        sub_research = max(sub_research, 10)
-            if sub_research == 0 and research:
-                sub_research = 8  # 有科研经历但无发表
-
-        # 学术 sub_academic (0-25)
-        sub_academic = 0
-        gpa = (student_profile or {}).get("gpa")
-        if gpa:
-            try:
-                gpa_val = float(gpa)
-                if gpa_val >= 3.8:
-                    sub_academic = 25
-                elif gpa_val >= 3.5:
-                    sub_academic = 18
-                elif gpa_val >= 3.0:
-                    sub_academic = 12
-            except (ValueError, TypeError):
-                pass
-        rank = (student_profile or {}).get("rank", "")
-        if "前5%" in rank or "5%" in rank:
-            sub_academic = max(sub_academic, 25)
-        elif "前10%" in rank or "10%" in rank:
-            sub_academic = max(sub_academic, 18)
-
-        # 领导力 sub_leadership (0-25)
-        sub_leadership = 0
-        campus = (student_profile or {}).get("campus_experience", [])
-        for c in campus:
-            if isinstance(c, dict):
-                role = c.get("role", "")
-                if "主席" in role:
-                    sub_leadership = max(sub_leadership, 20)
-                elif "部长" in role:
-                    sub_leadership = max(sub_leadership, 12)
-                elif "班长" in role or "干部" in role:
-                    sub_leadership = max(sub_leadership, 8)
-        for p in (student_profile or {}).get("projects", []):
-            if isinstance(p, dict):
-                role = p.get("role", "")
-                if "负责" in role or "主导" in role:
-                    sub_leadership = max(sub_leadership, 10)
-                    break
-
-        # D4 总分 = 四子维度之和 (0-100)
-        d4_score = min(sub_competition + sub_research + sub_academic + sub_leadership, 100)
-
-        return {
-            "score": round(d4_score, 1),
-            "details": {
-                "competition": sub_competition,
-                "research": sub_research,
-                "academic": sub_academic,
-                "leadership": sub_leadership,
-            }
-        }
+        # Reuse the canonical portrait policy instead of keyword classification.
+        from .portrait_generator import PortraitGenerator
+        value = PortraitGenerator()._calc_d4_potential(student_skills, student_profile)
+        return {"score": value["dimension_score"], "details": value}
 
     def _calc_d1_score(self, student_profile: Optional[Dict], job_profile: Optional[Dict]) -> float:
         if not student_profile:
@@ -720,6 +511,7 @@ def calculate_match_score(
     result = matcher.calculate_match(student_skills, job_skills, student_profile, job_profile)
 
     return {
+        "status": "partial" if result.total_score is None else "completed",
         "total_score": result.total_score,
         "d1_score": result.d1_score,
         "d2_score": result.d2_score,
@@ -733,7 +525,7 @@ def calculate_match_score(
             result.level_gap
         ),
         "match_level": _get_match_level(result.total_score),
-        # ── 冻结 Schema 字段 ──
+        # 匹配判定与证据字段
         "match_result": result.match_result,
         "d1_pass": result.d1_pass,
         "degree_match": result.degree_match,
@@ -753,6 +545,8 @@ def calculate_match_score(
 
 def _get_match_level(score: float) -> str:
     """match_level 阈值走 thresholds.yaml (统一权威源)"""
+    if score is None:
+        return "unknown"
     thresholds = get_rules_config().match_level_thresholds
     if score >= thresholds.get("excellent", 85):
         return "极佳"

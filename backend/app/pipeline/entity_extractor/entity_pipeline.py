@@ -4,8 +4,8 @@
 """
 
 import uuid
+import re
 from typing import Dict, List, Optional
-from .skill_extractor import extract_skills as dict_extract
 from .llm_skill_extractor import extract_skills_with_relations, LLMSkillExtractor
 from .graph_storage import save_skills_to_graph, GraphStorage
 from app.utils.logger import get_logger

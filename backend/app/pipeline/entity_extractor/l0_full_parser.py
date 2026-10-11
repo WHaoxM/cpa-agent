@@ -193,6 +193,15 @@ class L0FullParser:
                 ))
         if not blocks:
             blocks = self._text_to_blocks(text, "resume")
+        if not text.strip() or not blocks:
+            return L0Result(
+                success=False,
+                text="",
+                blocks=[],
+                metadata={**(payload.get("metadata") or {}), "source_complete": False},
+                engine="sidecar",
+                error="OCR Sidecar 未返回可用的 PDF 文本块",
+            )
         return L0Result(
             success=True,
             text=text,
@@ -258,6 +267,13 @@ class L0FullParser:
             logger.info(f"MinerU 提取到 {len(blocks)} 个文本块")
             full_text = "\n".join([b.text for b in blocks])
 
+            if not full_text.strip() or not blocks:
+                return L0Result(
+                    success=False, text="", blocks=[],
+                    metadata={"file": file_path, "engine": "mineru", "source_complete": False},
+                    engine="mineru", error="MinerU 未提取到可用的 PDF 文本块",
+                )
+
             return L0Result(
                 success=True,
                 text=full_text,
@@ -291,18 +307,27 @@ class L0FullParser:
             doc = pymupdf.open(file_path)
             num_pages = len(doc)
             all_text_parts = []
+            blocks = []
 
             for page_num in range(num_pages):
                 page = doc[page_num]
                 text = page.get_text("text")
                 if text.strip():
-                    blocks = self._extract_blocks_from_text(text, "resume", page_num)
+                    page_blocks = self._extract_blocks_from_text(text, "resume", page_num)
+                    for block in page_blocks:
+                        block.block_id = f"p{page_num + 1}_{block.block_id}"
+                    blocks.extend(page_blocks)
                     all_text_parts.append(text)
 
             full_text = "\n".join(all_text_parts)
             doc.close()
 
-            blocks = self._text_to_blocks(full_text, "resume")
+            if not full_text.strip() or not blocks:
+                return L0Result(
+                    success=False, text="", blocks=[],
+                    metadata={"file": file_path, "pages": num_pages, "engine": "pymupdf", "source_complete": False},
+                    engine="pymupdf", error="PDF 无可提取文本；扫描件需要可用的 OCR Sidecar",
+                )
 
             return L0Result(
                 success=True,
@@ -396,9 +421,9 @@ class L0FullParser:
     def _parse_docx(self, file_path: str) -> L0Result:
         """解析 DOCX 文件"""
         try:
-            from app.utils.docx_text import extract_docx_text
+            from app.utils.docx_text import extract_docx_with_media
 
-            full_text = extract_docx_text(file_path)
+            full_text, coverage = extract_docx_with_media(file_path, allow_ocr=True)
             if not full_text.strip():
                 return L0Result(
                     success=False, text="", blocks=[], metadata={"file": file_path},
@@ -410,8 +435,8 @@ class L0FullParser:
                 success=True,
                 text=full_text,
                 blocks=blocks,
-                metadata={"file": file_path, "engine": "mammoth+python-docx"},
-                engine="mammoth+python-docx"
+                metadata={"file": file_path, **coverage},
+                engine=coverage["engine"]
             )
 
         except ImportError:

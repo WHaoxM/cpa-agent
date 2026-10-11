@@ -63,21 +63,47 @@ def get_resume_prompt(
 
 
 def _build_user_prompt(task_type: str, indexed_text: str, pre: Dict) -> str:
-    """根据任务类型组装 user content（base + tone 通过 load_prompt 完成）"""
+    """根据任务类型组装 user content（从配置加载搜索辅助指令）"""
+    # 从配置加载搜索辅助指令
+    from config.loader import get_extraction_config, get_grep_config
+
+    config = get_extraction_config()
+    search_hints = config.get('search_hints', {})
+    keywords_config = get_grep_config().get('resume_keywords', {})
+
+    # 构建搜索辅助指令
+    search_instruction = ""
+    if task_type in search_hints and task_type in keywords_config:
+        keywords = keywords_config[task_type]
+        search_instruction = search_hints[task_type].format(
+            matched_segments=f"[关键词：{', '.join(keywords[:5])}]"
+        )
+
+    # 根据任务类型组装用户提示
     user_id = _USER_PROMPT_IDS[task_type]
+
     if task_type == "basic_info":
         return load_prompt(user_id, indexed_text=indexed_text)
 
     if task_type == "education":
         confirmed = _format_confirmed_education(pre)
+        # 添加搜索辅助指令到confirmed
+        if search_instruction:
+            confirmed = f"{confirmed}\n\n{search_instruction}"
         return load_prompt(user_id, indexed_text=indexed_text, confirmed=confirmed)
 
     if task_type == "experience":
         confirmed = _format_confirmed_experience(pre)
+        # 添加搜索辅助指令到confirmed
+        if search_instruction:
+            confirmed = f"{confirmed}\n\n{search_instruction}"
         return load_prompt(user_id, indexed_text=indexed_text, confirmed=confirmed)
 
     if task_type == "skills":
         constraint = _format_skills_constraint(pre)
+        # 添加搜索辅助指令到constraint
+        if search_instruction:
+            constraint = f"{constraint}\n\n{search_instruction}"
         return load_prompt(user_id, indexed_text=indexed_text, constraint=constraint)
 
     raise ValueError(f"未实现的任务类型: {task_type}")

@@ -1,0 +1,111 @@
+# 职业信息别名映射 - 由CareerNormalizerAgent自动扩展
+# 格式：aliases: {original_name: canonical_name}
+
+aliases:
+  # ── 学历映射 ──
+  本科: 本科
+  学士: 本科
+  Bachelor: 本科
+  Bachelor's Degree: 本科
+  本科及以上: 本科
+
+  硕士: 硕士
+  研究生: 硕士
+  Master: 硕士
+  Master's Degree: 硕士
+  硕士研究生: 硕士
+
+  博士: 博士
+  PhD: 博士
+  Doctor: 博士
+  Doctorate: 博士
+  博士研究生: 博士
+
+  大专: 大专
+  专科: 大专
+  Associate: 大专
+  Associate Degree: 大专
+
+  # ── 专业映射 ──
+  计算机: 计算机科学与技术
+  计算机科学: 计算机科学与技术
+  计算机科学与技术: 计算机科学与技术
+  Computer Science: 计算机科学与技术
+  CS: 计算机科学与技术
+
+  软件工程: 软件工程
+  Software Engineering: 软件工程
+  SE: 软件工程
+
+  人工智能: 人工智能
+  AI: 人工智能
+  Artificial Intelligence: 人工智能
+
+  数据科学: 数据科学
+  Data Science: 数据科学
+  DS: 数据科学
+
+  电子信息: 电子信息工程
+  电子信息工程: 电子信息工程
+  Electronic Information: 电子信息工程
+
+  通信工程: 通信工程
+  Communication Engineering: 通信工程
+
+  自动化: 自动化
+  Automation: 自动化
+
+  数学: 数学与应用数学
+  数学与应用数学: 数学与应用数学
+  Mathematics: 数学与应用数学
+
+  物理: 物理学
+  Physics: 物理学
+
+  经济学: 经济学
+  Economics: 经济学
+
+  金融: 金融学
+  金融学: 金融学
+  Finance: 金融学
+
+  工商管理: 工商管理
+  Business Administration: 工商管理
+
+  # ── 证书映射 ──
+  英语四级: CET-4
+  CET-4: CET-4
+  大学英语四级: CET-4
+
+  英语六级: CET-6
+  CET-6: CET-6
+  大学英语六级: CET-6
+
+  计算机二级: 全国计算机等级考试二级
+  计算机三级: 全国计算机等级考试三级
+  计算机四级: 全国计算机等级考试四级
+
+  普通话: 普通话等级证书
+  普通话证书: 普通话等级证书
+
+  教师资格证: 教师资格证
+  教师资格: 教师资格证
+
+  # ── 奖项映射 ──
+  国家奖学金: 国家奖学金
+  国家励志奖学金: 国家励志奖学金
+  校级奖学金: 校级奖学金
+  一等奖学金: 校级一等奖学金
+  二等奖学金: 校级二等奖学金
+  三等奖学金: 校级三等奖学金
+
+  ACM: ACM竞赛
+  ACM竞赛: ACM竞赛
+  ACM-ICPC: ACM竞赛
+
+  数学建模: 数学建模竞赛
+  数学建模竞赛: 数学建模竞赛
+
+  挑战杯: 挑战杯
+  互联网+: 互联网+创新创业大赛
+  互联网+创新创业大赛: 互联网+创新创业大赛

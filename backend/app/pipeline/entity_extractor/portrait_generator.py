@@ -1,18 +1,19 @@
 """
-L2 画像生成模块 (Portrait Generation) — v2.0 冻结 Schema 对齐
-生成学生四维画像 (2A) 和岗位四维画像 (2B)
+四维画像生成模块
+生成学生画像和岗位画像
 
-冻结规则:
+计算规则:
 - 评分公式: competitiveness_score = D1×0.25 + D2×0.35 + D3×0.20 + D4×0.20
 - D2.skill_coverage = (exact_count + semantic_count×0.8) / required_count
 - 语义匹配阈值: BGE-M3 cosine > 0.85
 - 竞争力级别: ≥85极强 / ≥70强 / ≥55中等 / ≥40偏弱 / <40弱
 
-评分表走 YAML (config/defaults/rules/scoring_tables.yaml 的 portrait_generator 节)
-通过 config.loader.get_rules_config() 加载
+评分参数由 config.loader.get_rules_config() 加载。
 """
 
 import math
+import hashlib
+import json
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -31,12 +32,144 @@ class PortraitDimensions:
 
 
 class PortraitGenerator:
-    """画像生成器 — v2.0 冻结 Schema"""
+    """生成学生画像和岗位画像。"""
 
     def __init__(self):
         self._rules = get_rules_config()
         self.weights = self._rules.dimension_weights
         self._scoring = self._rules.scoring_tables
+
+    @staticmethod
+    def _assessment_digest(value):
+        return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
+                                        separators=(",", ":")).encode("utf-8")).hexdigest()
+
+    def _assessment_evidence_bank(self, source_text, sources):
+        """Freeze IDs against this source snapshot; never infer content with keywords."""
+        if not source_text.strip() or not sources:
+            raise ValueError("assessment_sources_required")
+        bank, seen = {}, set()
+        source_digest = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
+        for source in sources:
+            if (not isinstance(source, dict) or not isinstance(source.get("source_id"), str)
+                    or not source["source_id"] or not isinstance(source.get("block_id"), str)
+                    or not source["block_id"] or not isinstance(source.get("text"), str)
+                    or not source["text"].strip() or source.get("source_kind") not in ("resume", "official_school")):
+                raise ValueError("invalid_assessment_source")
+            page = source.get("page")
+            if (source["source_kind"] == "resume" and (type(page) is not int or page < 1)) or (
+                    source["source_kind"] == "official_school" and page is not None):
+                raise ValueError("invalid_assessment_source_page")
+            key = (source["source_id"], page, source["block_id"])
+            if key in seen:
+                raise ValueError("duplicate_assessment_source_block")
+            seen.add(key)
+            if source["source_kind"] == "resume" and source["text"] not in source_text:
+                raise ValueError("assessment_block_not_in_resume_source")
+            evidence_id = "ev_" + self._assessment_digest({"resume_sha256": source_digest, "block": source})[:24]
+            bank[evidence_id] = {"evidence_id": evidence_id, "source_id": source["source_id"],
+                "source_kind": source["source_kind"], "page": page, "block_id": source["block_id"],
+                "quote": source["text"], "quote_sha256": hashlib.sha256(source["text"].encode("utf-8")).hexdigest()}
+        return bank
+
+    def propose_behavior_assessment(self, client, *, source_text: str, sources: List[Dict]) -> Dict:
+        """Read-only structured proposal. Sources are owner-checked page/official snapshots.
+
+        No confirmation or profile mutation occurs here. The caller must supply complete
+        source snapshots; LLMClient's dispatch budget rejects over-window input rather
+        than truncating pages. External snapshots must be fetched/verified by the caller.
+        """
+        from .portrait_assessment_schema import PortraitAssessmentProposal, PortraitAssessmentSelection
+        rubric = self._scoring["portrait_assessment"]
+        try:
+            bank = self._assessment_evidence_bank(source_text, sources)
+            response = client.chat_with_metadata(
+                messages=[{"role": "system", "content": rubric["instructions"]},
+                          {"role": "user", "content": json.dumps({"evidence_blocks": list(bank.values())}, ensure_ascii=False)}],
+                temperature=0.1, max_tokens=5000,
+                response_format={"type": "json_schema", "json_schema": {
+                    "name": "portrait_behavior_assessment", "strict": True,
+                    "schema": PortraitAssessmentSelection.model_json_schema()}},
+            )
+            if response.finish_reason != "stop":
+                raise ValueError("incomplete_assessment_response")
+            proposal = PortraitAssessmentSelection.model_validate_json(response.text)
+            data = proposal.model_dump()
+
+            def hydrate(node, field):
+                if isinstance(node, dict):
+                    if "evidence_id" in node:
+                        evidence = bank.get(node["evidence_id"])
+                        if not evidence:
+                            raise ValueError("assessment_evidence_id_not_in_snapshot")
+                        if field != "school_type" and evidence["source_kind"] != "resume":
+                            raise ValueError("behavior_evidence_must_belong_to_resume")
+                        return {key: value for key, value in evidence.items() if key != "source_kind"}
+                    return {key: hydrate(value, field) for key, value in node.items()}
+                if isinstance(node, list):
+                    return [hydrate(value, field) for value in node]
+                return node
+
+            data = {field: hydrate(value, field) for field, value in data.items()}
+            data = PortraitAssessmentProposal.model_validate(data).model_dump()
+            stress = data["stress_tolerance"]
+            if stress["level"] is not None and not all(stress[k] for k in ("situation", "action", "outcome")):
+                raise ValueError("stress_assessment_requires_situation_action_outcome")
+            if stress["level"] is not None:
+                selected = {item["evidence_id"] for item in stress["evidence"]}
+                if any(stress[key]["evidence_id"] not in selected for key in ("situation", "action", "outcome")):
+                    raise ValueError("stress_context_must_be_selected_evidence")
+            payload = {"status": "candidate", "assessment": data, "provenance": {
+                "kind": "model_assessment", "provider": response.provider, "model": response.model,
+                "rubric_version": rubric["rubric_version"],
+                "source_sha256": hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
+                "sources_sha256": self._assessment_digest(sources),
+            }}
+            return {**payload, "candidate_sha256": self._assessment_digest(payload)}
+        except Exception as exc:
+            # Do not leak provider messages or private source fragments in public diagnostics.
+            public_reasons = {"assessment_sources_required", "invalid_assessment_source",
+                              "invalid_assessment_source_page", "duplicate_assessment_source_block",
+                              "assessment_block_not_in_resume_source", "assessment_evidence_id_not_in_snapshot",
+                              "behavior_evidence_must_belong_to_resume", "incomplete_assessment_response",
+                              "stress_context_must_be_selected_evidence",
+                              "stress_assessment_requires_situation_action_outcome"}
+            reason = str(exc) if str(exc) in public_reasons else "invalid_schema_or_provider_failure"
+            return {"status": "partial", "error": "assessment_candidate_rejected",
+                    "error_type": type(exc).__name__, "reason": reason,
+                    "next_action": "retry_or_review_assessment_sources"}
+
+    def _assessment_state(self, profile):
+        """Validate candidate identity; approval must come from a trusted server snapshot.
+
+        Like _resume_confirmation, this is not an API authentication boundary. Never
+        accept _portrait_assessment_confirmation from an arbitrary client profile.
+        """
+        from .portrait_assessment_schema import PortraitAssessmentCandidate
+        from pydantic import ValidationError
+        raw = profile.get("portrait_assessment")
+        if not raw:
+            return None, False
+        try:
+            candidate = PortraitAssessmentCandidate.model_validate(raw).model_dump()
+        except (ValidationError, TypeError):
+            return None, False
+        digest = candidate.pop("candidate_sha256")
+        provenance = candidate["provenance"]
+        if (digest != self._assessment_digest(candidate)
+                or provenance["source_sha256"] != profile.get("source_sha256")
+                or provenance["rubric_version"] != self._scoring["portrait_assessment"]["rubric_version"]):
+            return None, False
+        candidate["candidate_sha256"] = digest
+        approval = profile.get("_portrait_assessment_confirmation") or {}
+        source_confirmation = profile.get("_resume_confirmation") or {}
+        if not isinstance(approval, dict) or not isinstance(source_confirmation, dict):
+            return candidate, False
+        source_task = source_confirmation.get("task_id")
+        approved = bool(source_task and approval.get("source_task_id") == source_task
+                        and approval.get("candidate_sha256") == digest
+                        and approval.get("confirmed_by") and approval.get("confirmed_at"))
+        return candidate, approved
 
     def generate_student_portrait(
         self,
@@ -51,15 +184,18 @@ class PortraitGenerator:
         d3 = self._calc_d3_quality(skills, student_profile)
         d4 = self._calc_d4_potential(skills, student_profile)
 
+        known = all(d["dimension_score"] is not None for d in (d1, d2, d3, d4))
         comp_score = (
             d1["dimension_score"] * self.weights["D1"] +
             d2["dimension_score"] * self.weights["D2"] +
             d3["dimension_score"] * self.weights["D3"] +
             d4["dimension_score"] * self.weights["D4"]
-        )
+        ) if known else None
         completeness = self._calc_completeness(d1, d2, d3, d4)
 
         return {
+            "status": "completed" if known else "partial",
+            "missing_fields": d1.get("missing_fields", []) + d3.get("missing_fields", []),
             "student_id": student_id,
             "name": (student_profile or {}).get("name", ""),
             "D1_basic": d1,
@@ -68,8 +204,8 @@ class PortraitGenerator:
             "D4_potential": d4,
             "summary": {
                 "dimension_weights": self.weights,
-                "competitiveness_score": round(comp_score, 1),
-                "competitiveness_level": competitiveness_level(comp_score, self._rules),
+                "competitiveness_score": round(comp_score, 1) if known else None,
+                "competitiveness_level": competitiveness_level(comp_score, self._rules) if known else "unknown",
                 "completeness_score": round(completeness, 1),
             },
             "generated_at": datetime.now().isoformat(),
@@ -113,12 +249,20 @@ class PortraitGenerator:
         languages = profile.get("languages", [])
 
         sub_degree = self._scoring["degree_score"].get(degree, 0)
-        sub_school = self._score_school(school)
-        sub_major = self._score_major(major)
+        # Categories are supplied as source-backed confirmed facts, never guessed
+        # from a school/major name or from its apparent subject family.
+        from .resume_structure import confirmed_semantic_fact
+        school_tier = confirmed_semantic_fact(profile, "school_tier")
+        assessment, assessed = self._assessment_state(profile)
+        school_type = assessment["assessment"]["school_type"] if assessment else None
+        major_category = confirmed_semantic_fact(profile, "major_category")
+        sub_school = self._score_school(school_tier)
+        sub_major = self._score_major(major_category)
+        missing = [k for k, v in (("school_tier", sub_school), ("major_category", sub_major)) if v is None]
         sub_cert = min(len(certs) * 7.5, self._scoring["d1_sub_max"]["sub_cert"]) if certs else 0
         sub_language = min(len(languages) * 7.5, self._scoring["d1_sub_max"]["sub_language"]) if languages else 0
 
-        dimension_score = min(sub_degree + sub_school + sub_major + sub_cert + sub_language, 100)
+        dimension_score = min(sub_degree + sub_school + sub_major + sub_cert + sub_language, 100) if not missing else None
 
         evidence = []
         if degree: evidence.append(f"学历: {degree}")
@@ -129,58 +273,31 @@ class PortraitGenerator:
 
         return {
             "degree": degree,
-            "school_tier": self._classify_school(school),
-            "major_category": major,
+            "status": "partial" if missing else "completed",
+            "missing_fields": missing,
+            "school_tier": school_tier,
+            "school_type": school_type,
+            "school_type_provenance": assessment["provenance"] if school_type else None,
+            "school_type_status": ("reviewed_observation" if assessed else "candidate") if school_type else "unknown",
+            "school_score_basis": "confirmed_school_tier" if sub_school is not None else "no_tier_mapping",
+            "major_category": major_category,
             "sub_degree": sub_degree,
             "sub_school": sub_school,
             "sub_major": sub_major,
             "sub_cert": sub_cert,
             "sub_language": sub_language,
-            "dimension_score": round(dimension_score, 1),
+            "dimension_score": round(dimension_score, 1) if dimension_score is not None else None,
             "evidence": evidence,
         }
 
-    def _score_school(self, school: str) -> int:
-        if not school: return 0
-        school_lower = school.lower()
-        tier_table = self._scoring["school_tier_score"]
-        top_985 = [
-            "清华", "清华大学", "北大", "北京大学", "复旦", "复旦大学",
-            "上交", "上海交通大学", "浙大", "浙江大学", "中科大",
-            "中国科学技术大学", "南大", "南京大学", "哈工大",
-            "哈尔滨工业大学", "西交大", "西安交通大学", "北航",
-            "北京航空航天大学", "华科", "华中科技大学",
-        ]
-        known_211 = [
-            "北京邮电大学", "北邮", "北京交通大学", "北京科技大学",
-            "南京理工大学", "华东理工大学", "西安电子科技大学",
-        ]
-        if "985" in school_lower or any(kw in school for kw in top_985):
-            return tier_table["985"]
-        if "211" in school_lower or any(kw in school for kw in known_211): return tier_table["211"]
-        if "双一流" in school_lower: return tier_table["双一流"]
-        return tier_table.get("一本", 8)
+    def _score_school(self, category):
+        return self._scoring["school_tier_score"].get(category) if category else None
 
-    def _classify_school(self, school: str) -> str:
-        if not school: return ""
-        school_lower = school.lower()
-        top_985 = ["清华", "清华大学", "北大", "北京大学", "复旦", "上交", "上海交通大学", "浙大", "浙江大学"]
-        known_211 = ["北京邮电大学", "北邮"]
-        if "985" in school_lower or any(kw in school for kw in top_985):
-            return "985"
-        if "211" in school_lower or any(kw in school for kw in known_211): return "211"
-        if "双一流" in school_lower: return "双一流"
-        return "其他"
+    def _classify_school(self, category):
+        return category if category and category in self._scoring["school_tier_score"] else None
 
-    def _score_major(self, major: str) -> int:
-        if not major: return 0
-        major_table = self._scoring["major_category_score"]
-        liberal_keywords = ["汉语言", "文学", "历史", "哲学", "新闻", "传播", "法学", "社会学", "外语", "英语"]
-        if any(kw in major for kw in liberal_keywords):
-            return major_table.get("文科", 5)
-        for key, score in major_table.items():
-            if key and key not in ("其他理工", "文科") and key in major: return score
-        return major_table.get("其他理工", 10)
+    def _score_major(self, category):
+        return self._scoring["major_category_score"].get(category) if category else None
 
     # ═══ D2 职业技能 (冻结: sub_skill 0-35, sub_project 0-35, sub_internship 0-30, skill_coverage) ═══
 
@@ -265,80 +382,43 @@ class PortraitGenerator:
     # ═══ D3 职业素养 (冻结: 4项各0-25, rule_bonus, confidence) ═══
 
     def _calc_d3_quality(self, skills: List[Dict], profile: Optional[Dict] = None) -> Dict:
+        from .resume_structure import confirmed_semantic_fact
         profile = profile or {}
-        soft_skills = profile.get("soft_skills", {})
-        experiences = profile.get("experience", [])
-        projects = profile.get("projects", [])
+        dimensions = ("communication", "teamwork", "stress_tolerance", "responsibility")
+        values = {key: self._score_quality_item(key, confirmed_semantic_fact(profile, key), [])
+                  for key in dimensions}
+        candidate, approved = self._assessment_state(profile)
+        for key in dimensions:
+            values[key]["provenance"] = {"kind": "confirmed_self_description"} if values[key]["score"] is not None else None
+            if candidate:
+                assessment = candidate["assessment"][key]
+                values[key]["assessment_candidate"] = assessment
+                values[key]["assessment_status"] = "reviewed" if approved else "awaiting_confirmation"
+                if approved and values[key]["score"] is None:
+                    has_stress_context = key != "stress_tolerance" or all(
+                        assessment[k] for k in ("situation", "action", "outcome"))
+                    if assessment["level"] is not None and has_stress_context:
+                        values[key].update(self._score_quality_item(key, assessment["level"], []))
+                        values[key]["evidence"] = assessment["evidence"]
+                        values[key]["confidence"] = assessment["confidence"]
+                        values[key]["provenance"] = {**candidate["provenance"],
+                                                    "candidate_sha256": candidate["candidate_sha256"]}
+        missing = [key for key, value in values.items() if value["score"] is None]
+        # Existing deterministic bonus policy, driven by explicit confirmed facts.
+        bonus = 0
+        for key, amount in (("internship", 5), ("team_project", 5), ("leader", 8), ("student_officer", 3)):
+            if confirmed_semantic_fact(profile, key) is True:
+                bonus += amount
+        return {**values, "rule_bonus": bonus,
+                "dimension_score": min(sum(v["score"] for v in values.values()) + bonus, 100) if not missing else None,
+                "status": "partial" if missing else "completed", "missing_fields": missing,
+                "confidence": None}
 
-        communication = self._score_quality_item("communication", soft_skills.get("communication"), experiences)
-        teamwork = self._score_quality_item("teamwork", soft_skills.get("teamwork"), projects)
-        stress_tolerance = self._score_quality_item("stress_tolerance", soft_skills.get("stress_tolerance"), experiences)
-        responsibility = self._score_quality_item("responsibility", soft_skills.get("responsibility"), projects)
-
-        # rule_bonus (冻结: 实习+5, 团队项目+5, leader+8, 学生干部+3)
-        rule_bonus = 0
-        if profile.get("internship_months", 0) > 0: rule_bonus += 5
-        team_projects = [p for p in projects if isinstance(p, dict) and p.get("is_team")]
-        if team_projects: rule_bonus += 5
-        leader_roles = [p for p in projects if isinstance(p, dict) and p.get("role", "").lower() in ("leader", "负责人", "组长")]
-        if leader_roles: rule_bonus += 8
-        if profile.get("student_cadre"): rule_bonus += 3
-
-        dimension_score = min(
-            communication["score"] + teamwork["score"] + stress_tolerance["score"] + responsibility["score"] + rule_bonus,
-            100
-        )
-
-        # confidence: Shannon Entropy 映射, <0.6 标记 low_confidence
-        scores = [communication["score"], teamwork["score"], stress_tolerance["score"], responsibility["score"]]
-        confidence = self._shannon_confidence(scores)
-
-        return {
-            "communication": communication,
-            "teamwork": teamwork,
-            "stress_tolerance": stress_tolerance,
-            "responsibility": responsibility,
-            "rule_bonus": rule_bonus,
-            "dimension_score": round(dimension_score, 1),
-            "confidence": round(confidence, 3),
-        }
-
-    def _score_quality_item(self, item_name: str, explicit_value, related_data: list) -> Dict:
-        """评分单素养项: 有显式值用显式值, 否则从数据推断"""
-        if explicit_value is not None:
-            if isinstance(explicit_value, dict):
-                level = explicit_value.get("level", "中")
-                score = min(explicit_value.get("score", 12), 25)
-                evidence = explicit_value.get("evidence", "")
-            elif isinstance(explicit_value, str):
-                level_map = self._scoring.get("d3_quality_level_score", {})
-                score = level_map.get(explicit_value, 12)
-                level = explicit_value
-                evidence = f"自评: {explicit_value}"
-            elif isinstance(explicit_value, (int, float)):
-                numeric_score = max(0.0, min(float(explicit_value), 5.0))
-                score = int(round(numeric_score / 5.0 * 25))
-                if score >= 20:
-                    level = "强"
-                elif score >= 12:
-                    level = "中"
-                else:
-                    level = "弱"
-                evidence = f"自评: {explicit_value}/5"
-            else:
-                score, level, evidence = 12, "中", ""
-        else:
-            # 推断: 从相关数据量级估算
-            data_count = len(related_data) if related_data else 0
-            if data_count >= 3:
-                score, level = 18, "强"
-            elif data_count >= 1:
-                score, level = 12, "中"
-            else:
-                score, level = 5, "弱"
-            evidence = f"基于 {data_count} 条相关记录推断"
-
-        return {"level": level, "score": score, "evidence": evidence}
+    def _score_quality_item(self, item_name, explicit_value, related_data):
+        table = self._scoring.get("d3_quality_level_score", {})
+        score = table.get(explicit_value) if isinstance(explicit_value, str) else None
+        return {"level": explicit_value if score is not None else "unknown",
+                "score": score, "evidence": "confirmed_semantic_fact" if score is not None else None}
 
     def _shannon_confidence(self, scores: List[int]) -> float:
         """Shannon Entropy → [0,1] confidence; <0.6 标记 low_confidence"""
@@ -452,7 +532,7 @@ class PortraitGenerator:
         d1_keys = ["sub_degree", "sub_school", "sub_major", "sub_cert", "sub_language"]
         for k in d1_keys:
             total_fields += 1
-            if d1.get(k, 0) > 0: filled_fields += 1
+            if (d1.get(k) or 0) > 0: filled_fields += 1
         for k in ["degree", "school_tier", "major_category"]:
             total_fields += 1
             if d1.get(k): filled_fields += 1
@@ -468,7 +548,7 @@ class PortraitGenerator:
         for item in ["communication", "teamwork", "stress_tolerance", "responsibility"]:
             total_fields += 1
             q = d3.get(item, {})
-            if q.get("score", 0) > 0: filled_fields += 1
+            if q.get("score") is not None: filled_fields += 1
 
         # D4: 4 sub dimensions
         for k in ["sub_competition", "sub_research", "sub_academic", "sub_leadership"]:

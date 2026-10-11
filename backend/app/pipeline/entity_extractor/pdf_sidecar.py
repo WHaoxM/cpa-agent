@@ -50,9 +50,16 @@ def probe_sidecar() -> Tuple[str, str]:
                 return "disabled", "health response is not JSON capability data"
             if not isinstance(capability, dict):
                 return "disabled", "health capability response is invalid"
+            advertised_status = str(capability.get("status") or "").strip().lower()
+            if advertised_status and advertised_status not in {"ready", "healthy", "ok"}:
+                return "disabled", f"sidecar reports status={advertised_status}"
             if capability.get("engine") == "stub" or capability.get("ocr_pdf") is not True:
                 return "disabled", "sidecar does not advertise real PDF OCR capability"
-            return "ready", f"PDF OCR ready ({capability.get('engine') or 'sidecar'})"
+            task_mode = capability.get("task_mode") or "request"
+            return "ready", (
+                f"PDF OCR ready ({capability.get('engine') or 'sidecar'}; "
+                f"task_mode={task_mode}; durable_tasks={bool(capability.get('durable_tasks'))})"
+            )
     except Exception as e:
         # Optional sidecar: treat connect errors as DISABLED so golden path uses PyMuPDF
         return "disabled", f"unreachable: {e}"
@@ -136,9 +143,10 @@ def parse_pdf_via_sidecar(file_path: str) -> Dict[str, Any]:
             "metadata": {
                 "file": file_path,
                 "engine": "sidecar",
+                "sidecar_engine": response_engine or "unknown",
                 "sidecar_url": base,
             },
-            "engine": "sidecar",
+            "engine": response_engine or "sidecar",
         }
     except Exception as e:
         logger.warning("sidecar parse failed: %s", e)

@@ -1,0 +1,103 @@
+# 技能别名映射 - 由SkillNormalizerAgent自动扩展
+# 格式：aliases: {original_name: canonical_name}
+
+aliases:
+  # ── 缩写映射 ──
+  JS: JavaScript
+  TS: TypeScript
+  Py: Python
+  python: Python
+  VUE: Vue.js
+  vue: Vue.js
+  K8S: Kubernetes
+  ML: 机器学习
+  DL: 深度学习
+  dl: 深度学习
+  NLP: 自然语言处理
+  CV: 计算机视觉
+  FE: 前端
+  BE: 后端
+  FS: 全栈
+  DBA: 数据库工程师
+  RD: 研发工程师
+  rd: 研发工程师
+  QA: 测试工程师
+  OP: 运维工程师
+  op: 运维工程师
+  SRE: SRE
+  DevOps: DevOps
+  ng: Next.js
+  r: R语言
+  R: R语言
+
+  # ── 框架映射 ──
+  React: React
+  react: React
+  Vue3: Vue.js
+  Vue2: Vue.js
+  Next.js: Next.js
+  Nuxt.js: Nuxt.js
+  Django: Django
+  Flask: Flask
+  FastAPI: FastAPI
+  SpringBoot: Spring Boot
+  SpringCloud: Spring Cloud
+
+  # ── 数据库映射 ──
+  MySQL: MySQL
+  PostgreSQL: PostgreSQL
+  MongoDB: MongoDB
+  Redis: Redis
+  Elasticsearch: Elasticsearch
+
+  # ── AI/ML映射 ──
+  TensorFlow: TensorFlow
+  PyTorch: PyTorch
+  Keras: Keras
+  Scikit-learn: Scikit-learn
+  Pandas: Pandas
+  NumPy: NumPy
+  LangChain: LangChain
+  LangGraph: LangGraph
+  LLM: 大语言模型
+  AIGC: AIGC
+  RAG: RAG
+
+  # ── DevOps映射 ──
+  Docker: Docker
+  Kubernetes: Kubernetes
+  Linux: Linux
+  Git: Git
+  GitHub: GitHub
+  GitLab: GitLab
+
+  # ── 能力描述映射 ──
+  架构: 架构设计
+  架构设计: 架构设计
+  缓存: 缓存技术
+  消息队列: 消息队列
+  测试: 测试
+  单元测试: 单元测试
+  集成测试: 集成测试
+  自动化测试: 自动化测试
+  持续集成: CI
+  持续部署: CD
+  运维: 运维
+  监控: 监控
+  日志: 日志
+  性能优化: 性能优化
+  调试: 调试
+  文档: 技术文档
+
+  # ── 软技能映射 ──
+  沟通能力: 沟通能力
+  团队协作: 团队协作
+  项目管理: 项目管理
+  领导力: 领导力
+  问题解决: 问题解决
+  学习能力: 学习能力
+  分析能力: 分析能力
+  创新能力: 创新能力
+  抗压能力: 抗压能力
+  时间管理: 时间管理
+  自我驱动: 自我驱动

@@ -1,0 +1,81 @@
+# 岗位别名映射 - 由PositionNormalizerAgent自动扩展
+# 格式：aliases: {original_name: canonical_name}
+
+aliases:
+  # ── 前端岗位 ──
+  前端: 前端开发工程师
+  Web前端: 前端开发工程师
+  前端开发: 前端开发工程师
+  Frontend: 前端开发工程师
+  Frontend Developer: 前端开发工程师
+  前端工程师: 前端开发工程师
+
+  # ── 后端岗位 ──
+  后端: 后端开发工程师
+  后端开发: 后端开发工程师
+  Backend: 后端开发工程师
+  Backend Developer: 后端开发工程师
+  后端工程师: 后端开发工程师
+
+  # ── 全栈岗位 ──
+  全栈: 全栈开发工程师
+  全栈开发: 全栈开发工程师
+  Full Stack: 全栈开发工程师
+  Full Stack Developer: 全栈开发工程师
+  全栈工程师: 全栈开发工程师
+
+  # ── AI/算法岗位 ──
+  AI: AI算法工程师
+  算法: AI算法工程师
+  算法工程师: AI算法工程师
+  机器学习: AI算法工程师
+  深度学习: AI算法工程师
+  AI Engineer: AI算法工程师
+  Algorithm Engineer: AI算法工程师
+  ML Engineer: AI算法工程师
+
+  # ── 数据岗位 ──
+  数据: 数据工程师
+  数据开发: 数据工程师
+  大数据: 大数据工程师
+  Data: 数据工程师
+  Data Engineer: 数据工程师
+  大数据工程师: 大数据工程师
+
+  # ── 运维岗位 ──
+  运维: 运维工程师
+  运维开发: 运维工程师
+  DevOps: DevOps工程师
+  DevOps Engineer: DevOps工程师
+  SRE: SRE工程师
+  Site Reliability Engineer: SRE工程师
+
+  # ── 测试岗位 ──
+  测试: 测试工程师
+  QA: 测试工程师
+  Quality Assurance: 测试工程师
+  自动化测试: 测试开发工程师
+  测试开发: 测试开发工程师
+
+  # ── 产品岗位 ──
+  产品: 产品经理
+  产品经理: 产品经理
+  Product Manager: 产品经理
+  PM: 产品经理
+
+  # ── 设计岗位 ──
+  UI: UI设计师
+  UI设计: UI设计师
+  UI Designer: UI设计师
+  UX: UX设计师
+  UX设计: UX设计师
+  UX Designer: UX设计师
+  设计: 设计师
+  设计师: 设计师
+
+  # ── 安全岗位 ──
+  安全: 安全工程师
+  网络安全: 网络安全工程师
+  信息安全: 信息安全工程师
+  Security: 安全工程师
+  Security Engineer: 安全工程师

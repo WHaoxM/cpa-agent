@@ -94,54 +94,44 @@ class NSLEPipeline:
         try:
             blocks = self._phase1_parse(text, doc_type="resume")
 
-            filtered_blocks = self._phase2_filter(blocks)
-
-            entities = self._phase3_extract(filtered_blocks, doc_type="resume")
-
-            result = self._phase4_guard(entities)
-
-            # Resume Structure Truth: canonical LLM profile over full text.
-            # No regex repair. Section LLM calls remain for entities/debug only.
-            from .resume_structure import (
-                extract_canonical_profile,
-                structure_windows,
-                validate_structure_truth,
-            )
-
-            win = structure_windows(text)
-            if self.use_deepseek:
-                basic = self._extract_basic_info_with_llm(win["basic"])
-                if basic:
-                    result["basic_info"] = basic
-                awards = self._extract_awards_with_llm(win["awards"])
-                result["awards"] = awards
-                edu = result.get("education") or []
-                edu0 = edu[0] if isinstance(edu, list) and edu and isinstance(edu[0], dict) else {}
-                if not (edu0.get("school") or "").strip():
-                    edu_retry = self._extract_education_with_llm(win["education"])
-                    if edu_retry:
-                        result["education"] = edu_retry
-
-            if self.use_deepseek:
-                profile = extract_canonical_profile(self.llm_client, text)
-            else:
-                profile = entities_to_student_profile(result)
-
-            skills = list(profile.get("skills") or []) or self._extract_skills_from_entities(result)
+            from .resume_structure import extract_canonical_profile, validate_structure_truth
+            if not self.use_deepseek:
+                raise ValueError("semantic_extractor_required")
+            profile = extract_canonical_profile(self.llm_client, text)
             validation = validate_structure_truth(profile)
-
             return {
-                "success": True,
-                "blocks": filtered_blocks,
-                "entities": result,
-                "skills": skills,
-                "student_profile": profile,
+                "success": validation["ok"],
+                "status": "needs_input" if validation["ok"] else "partial",
+                "blocks": blocks, "entities": {},
+                "skills": profile.get("skills", []), "student_profile": profile,
                 "structure_validation": validation,
+                "error": None if validation["ok"] else "structure_incomplete",
             }
 
         except Exception as e:
             logger.error(f"简历解析失败: {e}")
             return {"success": False, "error": str(e), "blocks": [], "entities": {}}
+
+    def _parse_agent_loop_result(self, content: str) -> Dict[str, Any]:
+        """解析Agent Loop返回的结果"""
+        import json
+        import re
+
+        if not content:
+            return {}
+
+        # 尝试从内容中提取JSON
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if json_match:
+            try:
+                data = json.loads(json_match.group())
+                # 使用normalize_profile处理
+                from .resume_structure import _normalize_profile
+                return _normalize_profile(data)
+            except json.JSONDecodeError:
+                pass
+
+        return {}
 
     def run_jd_text(self, text: str) -> Dict[str, Any]:
         """
@@ -178,73 +168,9 @@ class NSLEPipeline:
         Phase 1: 物理解析层
         文本分段 + Block 分类
         """
-        lines = text.split("\n")
-        blocks = []
-        current_block_lines = []
-        current_block_type = BlockType.OTHER
-        block_id = 1
-
-        resume_heading_rules = [
-            (["技能", "证书", "能力", "技术栈"], BlockType.SKILLS_CERTS),
-            (["项目", "科研", "课题", "研究"], BlockType.PROJECT_EXPERIENCE),
-            (["工作", "经历", "经验"], BlockType.WORK_EXPERIENCE),
-            (["教育", "学历", "毕业", "学校"], BlockType.EDUCATION),
-            (["个人", "基本信息", "简介"], BlockType.PERSONAL_INFO),
-        ]
-
-        jd_heading_rules = [
-            (["岗位", "职位", "title"], BlockType.JOB_TITLE),
-            (["要求", "任职", "qualification"], BlockType.JOB_REQUIREMENTS),
-            (["职责", "工作内容", "description"], BlockType.JOB_DESCRIPTION),
-            (["技能", "技术", "tech"], BlockType.SKILLS_CERTS),
-        ]
-
-        heading_rules = resume_heading_rules if doc_type == "resume" else jd_heading_rules
-
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-
-            matched_type = None
-            if len(line) <= 20:
-                for keywords, block_type in heading_rules:
-                    for keyword in keywords:
-                        if keyword in line:
-                            matched_type = block_type
-                            break
-                    if matched_type:
-                        break
-
-            if matched_type:
-                if current_block_lines:
-                    blocks.append(DocumentBlock(
-                        block_id=f"b{block_id}",
-                        block_type=current_block_type,
-                        text="\n".join(current_block_lines),
-                        confidence=0.9,
-                        source={"doc_type": doc_type},
-                        heading=""
-                    ))
-                    block_id += 1
-                    current_block_lines = []
-
-                current_block_type = matched_type
-                current_block_lines.append(line)
-            else:
-                current_block_lines.append(line)
-
-        if current_block_lines:
-            blocks.append(DocumentBlock(
-                block_id=f"b{block_id}",
-                block_type=current_block_type,
-                text="\n".join(current_block_lines),
-                confidence=0.8,
-                source={"doc_type": doc_type},
-                heading=""
-            ))
-
-        return blocks
+        # Physical text only. Heading meaning belongs to the schema extractor.
+        return [DocumentBlock("b1", BlockType.OTHER, text, 1.0,
+                              {"doc_type": doc_type, "start": 0, "end": len(text)})] if text else []
 
     def _phase2_filter(self, blocks: List[DocumentBlock]) -> List[DocumentBlock]:
         """
@@ -268,7 +194,7 @@ class NSLEPipeline:
 
             text = re.sub(r'\s+', ' ', text).strip()
 
-            if len(text) > 5:
+            if text:
                 filtered.append(DocumentBlock(
                     block_id=block.block_id,
                     block_type=block.block_type,
@@ -285,61 +211,13 @@ class NSLEPipeline:
         Phase 3: DeepSeek LLM 推理核
         替代 Qwen3-0.6B SFT
         """
-        skills_blocks = [b for b in blocks if b.block_type in [
-            BlockType.SKILLS_CERTS, BlockType.SKILLS_CERTS.upper()
-        ]]
-        experience_blocks = [b for b in blocks if b.block_type in [
-            BlockType.WORK_EXPERIENCE, BlockType.PROJECT_EXPERIENCE,
-            BlockType.WORK_EXPERIENCE.upper(), BlockType.PROJECT_EXPERIENCE.upper()
-        ]]
-        education_blocks = [b for b in blocks if b.block_type in [
-            BlockType.EDUCATION, BlockType.EDUCATION.upper()
-        ]]
-
-        entities = {}
-
-        all_text = "\n".join([b.text for b in blocks])
-        entities["skills"] = self._extract_skills_with_llm(all_text) if self.use_deepseek else []
-
-        if self.use_deepseek and skills_blocks:
-            skills_text = "\n".join([b.text for b in skills_blocks])
-            llm_skills = self._extract_skills_with_llm(skills_text)
-            if llm_skills:
-                entities["skills"] = llm_skills
-
-        if not entities.get("skills"):
-            entities["skills"] = self._rule_based_extract(blocks, doc_type).get("skills", [])
-
-        from .resume_structure import structure_windows
-
-        win = structure_windows(all_text)
-
-        if experience_blocks:
-            exp_text = "\n".join([b.text for b in experience_blocks])
-            entities["experience"] = self._extract_experience_with_llm(exp_text)
-        else:
-            entities["experience"] = []
-
-        if education_blocks:
-            edu_text = "\n".join([b.text for b in education_blocks])
-            # Prefer dedicated blocks but pad with large window so 教育经历 is not truncated
-            if len(edu_text) < 200:
-                edu_text = win["education"]
-            entities["education"] = self._extract_education_with_llm(edu_text)
-        else:
-            entities["education"] = []
-
-        certs_text = "\n".join([b.text for b in skills_blocks]) if skills_blocks else win["skills"]
-        entities["certificates"] = self._extract_certificates_with_llm(certs_text)
-
-        # Prefer project/work blocks; fall back to structure window (not 2k head)
-        if not experience_blocks and self.use_deepseek:
-            entities["experience"] = self._extract_experience_with_llm(win["experience"])
-
-        if not education_blocks and self.use_deepseek:
-            entities["education"] = self._extract_education_with_llm(win["education"])
-
-        return entities
+        if not self.use_deepseek:
+            raise ValueError("semantic_extractor_required")
+        all_text = "\n".join(b.text for b in blocks)
+        return {"skills": self._extract_skills_with_llm(all_text),
+                "experience": self._extract_experience_with_llm(all_text),
+                "education": self._extract_education_with_llm(all_text),
+                "certificates": self._extract_certificates_with_llm(all_text)}
 
     def _extract_basic_info_with_llm(self, text: str) -> Dict[str, Any]:
         if not text or not text.strip():
@@ -380,7 +258,7 @@ class NSLEPipeline:
 
     def _extract_skills_with_llm(self, text: str) -> List[str]:
         """使用 LLM 抽取技能"""
-        prompt = load_prompt("pipeline.nsle.extract.skills.user", text=text[:1000])
+        prompt = load_prompt("pipeline.nsle.extract.skills.user", text=text)
 
         try:
             response = self.llm_client.chat(
@@ -395,23 +273,16 @@ class NSLEPipeline:
                 return skills if isinstance(skills, list) else []
             elif isinstance(data, list):
                 return data
-            return self._rule_based_extract([DocumentBlock(
-                block_id="llm_fallback", block_type=BlockType.SKILLS_CERTS,
-                text=text[:1000], confidence=1.0, source={}
-            )], "resume").get("skills", [])
-        except Exception as e:
-            logger.warning(f"LLM技能抽取失败: {e}")
-            return self._rule_based_extract([DocumentBlock(
-                block_id="llm_fallback", block_type=BlockType.SKILLS_CERTS,
-                text=text[:1000], confidence=1.0, source={}
-            )], "resume").get("skills", [])
+            raise ValueError("invalid_skill_schema")
+        except Exception:
+            raise
 
     def _extract_experience_with_llm(self, text: str) -> List[Dict]:
         """使用 LLM 抽取工作经历"""
         if not text or not text.strip():
             return []
 
-        prompt = load_prompt("pipeline.nsle.extract.experience.user", text=text[:1500])
+        prompt = load_prompt("pipeline.nsle.extract.experience.user", text=text)
 
         try:
             response = self.llm_client.chat(
@@ -435,7 +306,7 @@ class NSLEPipeline:
         if not text or not text.strip():
             return []
 
-        prompt = load_prompt("pipeline.nsle.extract.education.user", text=text[:1500])
+        prompt = load_prompt("pipeline.nsle.extract.education.user", text=text)
 
         try:
             response = self.llm_client.chat(
@@ -459,7 +330,7 @@ class NSLEPipeline:
         if not text or not text.strip():
             return []
 
-        prompt = load_prompt("pipeline.nsle.extract.certificates.user", text=text[:1500])
+        prompt = load_prompt("pipeline.nsle.extract.certificates.user", text=text)
 
         try:
             response = self.llm_client.chat(
@@ -477,21 +348,6 @@ class NSLEPipeline:
         except Exception as e:
             logger.warning(f"LLM证书抽取失败: {e}")
             return []
-
-    def _rule_based_extract(self, blocks: List[DocumentBlock], doc_type: str) -> Dict[str, Any]:
-        """
-        基于规则的提取 (无LLM时的降级方案)
-        """
-        from app.pipeline.entity_extractor.skill_extractor import extract_skills as dict_extract
-
-        all_text = "\n".join([b.text for b in blocks])
-        skills = dict_extract(all_text)
-
-        return {
-            "skills": [s["name"] for s in skills],
-            "experience": [],
-            "education": []
-        }
 
     def _phase4_guard(self, entities: Dict[str, Any]) -> Dict[str, Any]:
         """

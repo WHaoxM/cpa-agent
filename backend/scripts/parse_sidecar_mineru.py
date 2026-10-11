@@ -50,6 +50,11 @@ def health():
         "status": "ready" if ready else "unavailable",
         "engine": "mineru",
         "ocr_pdf": ready,
+        # This thin adapter is intentionally synchronous. Durable delivery and
+        # restart recovery live in the CPA Celery media worker, not MinerU's
+        # process-local /tasks manager in the installed 3.0.7 runtime.
+        "task_mode": "synchronous",
+        "durable_tasks": False,
         "reason": reason,
     }), 200 if ready else 503
 
@@ -94,4 +99,7 @@ def parse_pdf():
 
 if __name__ == "__main__":
     port = int(os.environ.get("CPA_PARSE_SIDECAR_PORT") or "9380")
-    app.run(host="127.0.0.1", port=port, threaded=False)
+    host = os.environ.get("CPA_PARSE_SIDECAR_HOST") or "127.0.0.1"
+    # OCR can run for minutes. A debug reloader notices unrelated backend edits
+    # and kills an in-flight parse, leaving the caller with a reset connection.
+    app.run(host=host, port=port, threaded=False, debug=False, use_reloader=False)

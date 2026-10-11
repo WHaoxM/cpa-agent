@@ -18,67 +18,21 @@ def gen() -> PortraitGenerator:
 # 纯函数级别
 # ─────────────────────────────────────────────────────────
 
-class TestScoreSchool:
-    def test_985_school(self, gen):
-        """985: 15 分"""
-        for s in ["清华大学", "北京大学", "上海交通大学", "浙江大学", "985大学"]:
-            assert gen._score_school(s) == 15, f"{s} 应得 15"
+class TestExplicitCategories:
+    @pytest.mark.parametrize("name", ["清华大学", "985大学", "北京邮电大学", "某普通一本大学", ""])
+    def test_school_names_are_not_categories(self, gen, name):
+        assert gen._score_school(name) is None
+        assert gen._classify_school(name) is None
 
-    def test_211_school(self, gen):
-        """211: 12 分"""
-        assert gen._score_school("北京邮电大学") == 12
-        assert gen._score_school("211工程大学") == 12
+    def test_explicit_category_tables_preserved(self, gen):
+        assert gen._score_school("985") == 15
+        assert gen._score_school("211") == 12
+        assert gen._score_major("文科") == 5
+        assert gen._score_major("其他理工") == 10
 
-    def test_double_first_class(self, gen):
-        """双一流: 10 分"""
-        assert gen._score_school("某双一流大学") == 10
-
-    def test_other_school(self, gen):
-        """其他: 默认 8 分 (一本)"""
-        assert gen._score_school("某普通一本大学") == 8
-
-    def test_empty_school(self, gen):
-        """空字符串: 0 分"""
-        assert gen._score_school("") == 0
-
-
-class TestScoreMajor:
-    def test_top_major(self, gen):
-        """计算机/软工/AI: 25 分"""
-        for m in ["计算机科学与技术", "软件工程", "人工智能"]:
-            assert gen._score_major(m) == 25, f"{m} 应得 25"
-
-    def test_data_science(self, gen):
-        """数据科学/信息安全: 23 分"""
-        assert gen._score_major("数据科学") == 23
-        assert gen._score_major("信息安全") == 23
-
-    def test_other_engineering(self, gen):
-        """其他理工: 10 分"""
-        assert gen._score_major("机械工程") == 10
-
-    def test_liberal_arts(self, gen):
-        """文科: 5 分"""
-        assert gen._score_major("汉语言文学") == 5
-
-    def test_empty_major(self, gen):
-        """空: 0 分"""
-        assert gen._score_major("") == 0
-
-
-class TestClassifySchool:
-    def test_985(self, gen):
-        assert gen._classify_school("清华大学") == "985"
-        assert gen._classify_school("北京大学") == "985"
-
-    def test_211(self, gen):
-        assert gen._classify_school("北京邮电大学") == "211"
-
-    def test_double_first_class(self, gen):
-        assert gen._classify_school("某双一流大学") == "双一流"
-
-    def test_empty(self, gen):
-        assert gen._classify_school("") == ""
+    @pytest.mark.parametrize("major", ["机械工程", "汉语言文学", "未知专业", ""])
+    def test_major_is_not_guessed(self, gen, major):
+        assert gen._score_major(major) is None
 
 
 class TestSkillCoverage:
@@ -185,12 +139,9 @@ class TestGenerateStudentPortraitExact:
             student_profile=_full_student_profile(),
         )
         s = result["summary"]
-        # 档位: ≥85 极强
-        assert s["competitiveness_level"] == "极强", (
-            f"期望 极强 (≥85), 实际 {s['competitiveness_level']} ({s['competitiveness_score']})"
-        )
-        # 分数 ≥85
-        assert s["competitiveness_score"] >= 85
+        assert result["status"] == "partial"
+        assert s["competitiveness_score"] is None
+        assert s["competitiveness_level"] == "unknown"
 
     def test_empty_skills(self, gen):
         """零技能学生: D2=0, 但 D1/D3/D4 仍可计算"""
@@ -204,8 +155,8 @@ class TestGenerateStudentPortraitExact:
         # D2 维度分数 = 0
         assert d2["dimension_score"] == 0
         # 但 competitiveness 不应崩溃
-        assert 0 <= s["competitiveness_score"] <= 100
-        assert s["competitiveness_level"] in {"极强", "强", "中等", "偏弱", "弱"}
+        assert s["competitiveness_score"] is None
+        assert s["competitiveness_level"] == "unknown"
 
     def test_mid_student_中等_or_偏弱(self, gen):
         """混合档位: 普通学生 (普通本科+一般技能)"""
@@ -220,12 +171,9 @@ class TestGenerateStudentPortraitExact:
             student_id="stu_mid", skills=skills, student_profile=profile,
         )
         s = result["summary"]
-        # 档位: 中等/偏弱/弱 都可能
-        assert s["competitiveness_level"] in {"中等", "偏弱", "弱"}, (
-            f"期望中等/偏弱/弱, 实际 {s['competitiveness_level']} ({s['competitiveness_score']})"
-        )
-        # 分数 < 70
-        assert s["competitiveness_score"] < 70
+        assert s["competitiveness_level"] == "unknown"
+        assert s["competitiveness_score"] is None
+
 
 
 # ─────────────────────────────────────────────────────────
@@ -248,7 +196,7 @@ class TestInvariants:
         )
         for dim in ("D1_basic", "D2_skill", "D3_quality", "D4_potential"):
             d_score = result[dim]["dimension_score"]
-            assert 0 <= d_score <= 100, f"{dim} score {d_score} out of [0,100]"
+            assert d_score is None or 0 <= d_score <= 100, f"{dim} score {d_score} out of [0,100]"
 
     @pytest.mark.parametrize("score,expected_level", [
         (90, "极强"), (85, "极强"), (84.9, "强"),
