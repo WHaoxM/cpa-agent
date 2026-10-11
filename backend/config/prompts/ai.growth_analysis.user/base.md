@@ -13,7 +13,7 @@ Required keys (all required):
 - timeline (list of objects with date and label)
 - nextSteps (string[])
 
-Use only the provided context (reports, portrait, target roles). If data is insufficient, still return valid JSON with empty arrays and growthScore 0, and explain insufficiency in summary — do not fabricate metrics.
+Use only the provided, owner-verified context (reports, published portrait, target roles and source_refs). The server will set growthScore and scoreTooltip from the published portrait after generation; do not invent or recalculate a numeric score. If a qualitative claim lacks evidence, omit that claim rather than filling it with a guessed value. Never treat browser snapshots or an incomplete task as an authoritative report.
 
 Context:
 {context_json}

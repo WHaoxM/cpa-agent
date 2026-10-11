@@ -2,18 +2,21 @@
 匹配与分析 API 路由
 /api/match — 四维匹配、技能差距、职业路径推荐、hybrid 召回、可解释匹配
 
-分数权威：rules/代码确定性 scorer；hybrid/explain 不得改写 total_score。
+匹配总分由规则评分器计算；候选检索和结果解释不修改该分数。
 """
 
-import uuid
 from flask import request, jsonify
 
 from . import match_bp
 from ._helpers import (
+    ScopeError,
     build_dimensions_d1_d4,
     clamp_pagination,
     parse_json_field,
+    require_student_path,
+    resolve_request_scope,
     safe_error,
+    scope_error_response,
     sub_dimensions_from_payload,
 )
 from ..services.db import get_mysql_client
@@ -27,44 +30,41 @@ logger = get_logger('cpa-agent.api.match')
 def run_match():
     """执行人岗匹配 (L3 管线)"""
     data = request.get_json() or {}
-    student_id = data.get('student_id')
+    try:
+        student_id = resolve_request_scope().student_id
+    except ScopeError as e:
+        return scope_error_response(e)
     job_portrait_id = data.get('job_portrait_id') or data.get('job_id')
 
-    if not student_id or not job_portrait_id:
+    if not job_portrait_id:
         return jsonify({
             "success": False,
-            "error": "student_id 和 job_portrait_id 必填"
+            "error": "job_portrait_id 必填"
         }), 400
-
-    task_id = f"task_{uuid.uuid4().hex[:12]}"
 
     logger.info(f"触发人岗匹配: student_id={student_id}, job_portrait_id={job_portrait_id}")
 
     try:
-        from ..services.tools.pipeline_run import PipelineRunTool
+        from ..services.pipeline import PipelineLevel, PipelineRunner
 
-        pipeline_tool = PipelineRunTool()
         params = {
             "student_id": student_id,
             "job_portrait_id": job_portrait_id
         }
-
-        result = pipeline_tool._run_l3_run_match(params)
-
-        if result.get("success"):
-            return jsonify({
-                "success": True,
-                "data": {
-                    "task_id": task_id,
-                    "status": "completed",
-                    "result": result
-                }
-            })
-        else:
-            return jsonify({
-                "success": False,
-                "error": result.get("summary", "匹配执行失败")
-            }), 500
+        result = PipelineRunner().run(PipelineLevel.L3_RUN_MATCH, params)
+        status = result.get("status") if isinstance(result, dict) else None
+        if status == "completed":
+            rows = get_mysql_client().fetch_all(
+                "SELECT status FROM pipeline_task WHERE task_id=:task_id AND student_id=:student_id LIMIT 1",
+                {"task_id": result["task_id"], "student_id": student_id},
+            )
+            if not rows or rows[0].get("status") != "completed":
+                status = "unverified"
+        elif status not in {"partial", "failed", "needs_input"}:
+            status = "unverified"
+        return jsonify({"success": status == "completed", "status": status, "data": {
+            "task_id": result["task_id"], "status": status, "result": result,
+        }})
 
     except Exception as e:
         return jsonify(safe_error("人岗匹配执行", e, message="匹配执行失败，请稍后重试")), 500
@@ -74,6 +74,7 @@ def run_match():
 def get_match_result(student_id: str, job_portrait_id: str):
     """获取匹配结果"""
     try:
+        require_student_path(student_id, resolve_request_scope())
         mysql = get_mysql_client()
 
         sql = """
@@ -114,6 +115,18 @@ def get_match_result(student_id: str, job_portrait_id: str):
 
         result = results[0]
 
+        # A legacy row is not by itself an authoritative current match.  The
+        # shared resource reader checks its task, digest, owner and all source
+        # versions (including a revoked job publication) before exposing scores.
+        from ..services.agent_runtime.match_report_resources import read_match_report_resource
+        resource = read_match_report_resource(
+            mysql, student_id=student_id, uri=f"career://me/matches/{result['id']}")
+        if not resource.get("business_artifact_verified"):
+            return jsonify({"success": False, "status": "stale", "data": {
+                "resource_id": str(result["id"]), "job_portrait_id": job_portrait_id,
+                "reason": resource.get("reason"), "next_action": resource.get("next_action"),
+            }}), 409
+
         result['result_json'] = parse_json_field(result.get('result_json'))
 
         # 构造 D1-D4 维度 (match 特有 passed/skill_coverage 字段在 helper 返回基础上补充)
@@ -128,6 +141,7 @@ def get_match_result(student_id: str, job_portrait_id: str):
 
         return jsonify({
             "success": True,
+            "status": resource["status"],
             "data": {
                 "student_id": result['student_id'],
                 "student_name": result.get('student_name'),
@@ -143,10 +157,15 @@ def get_match_result(student_id: str, job_portrait_id: str):
                 "total_score": result.get('total_score', 0),
                 "is_matched": result.get('is_matched', False),
                 "match_level": result.get('match_level'),
+                "status": resource["status"],
+                "score_kind": resource.get("data", {}).get("score_kind"),
+                "quality_status": resource.get("data", {}).get("quality_status"),
                 "created_at": result.get('created_at')
             }
         })
 
+    except ScopeError as e:
+        return scope_error_response(e)
     except Exception as e:
         return jsonify(safe_error("获取匹配结果", e)), 500
 
@@ -155,6 +174,7 @@ def get_match_result(student_id: str, job_portrait_id: str):
 def get_skill_gap(student_id: str, job_portrait_id: str):
     """获取技能差距分析"""
     try:
+        require_student_path(student_id, resolve_request_scope())
         mysql = get_mysql_client()
 
         sql = """
@@ -237,6 +257,8 @@ def get_skill_gap(student_id: str, job_portrait_id: str):
             }
         })
 
+    except ScopeError as e:
+        return scope_error_response(e)
     except Exception as e:
         return jsonify(safe_error("获取技能差距", e, message="查询失败，请稍后重试")), 500
 
@@ -245,6 +267,7 @@ def get_skill_gap(student_id: str, job_portrait_id: str):
 def explain_match(student_id: str, job_portrait_id: str):
     """可解释匹配：evidence + 关键词覆盖 + 图谱路径；分数只读自 match_result。"""
     try:
+        require_student_path(student_id, resolve_request_scope())
         mysql = get_mysql_client()
         mr_rows = mysql.execute(
             """
@@ -304,6 +327,8 @@ def explain_match(student_id: str, job_portrait_id: str):
         explain["is_matched"] = mr.get("is_matched")
         explain["match_level"] = mr.get("match_level")
         return jsonify({"success": True, "data": explain})
+    except ScopeError as e:
+        return scope_error_response(e)
     except Exception as e:
         return jsonify(safe_error("匹配解释", e, message="查询失败，请稍后重试")), 500
 
@@ -335,6 +360,7 @@ def hybrid_candidates():
 def get_career_recommendation(student_id: str):
     """获取职业发展推荐"""
     try:
+        require_student_path(student_id, resolve_request_scope())
         mysql = get_mysql_client()
 
         job_portrait_id = request.args.get('job_portrait_id')
@@ -407,6 +433,8 @@ def get_career_recommendation(student_id: str):
             }
         })
 
+    except ScopeError as e:
+        return scope_error_response(e)
     except Exception as e:
         return jsonify(safe_error("获取职业推荐", e, message="查询失败，请稍后重试")), 500
 
@@ -415,6 +443,7 @@ def get_career_recommendation(student_id: str):
 def list_match_results(student_id: str):
     """获取学生的所有匹配结果"""
     try:
+        require_student_path(student_id, resolve_request_scope())
         mysql = get_mysql_client()
 
         limit, offset = clamp_pagination(
@@ -474,5 +503,7 @@ def list_match_results(student_id: str):
             "offset": offset
         })
 
+    except ScopeError as e:
+        return scope_error_response(e)
     except Exception as e:
         return jsonify(safe_error("获取匹配结果列表", e)), 500

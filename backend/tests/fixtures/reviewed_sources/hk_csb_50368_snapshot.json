@@ -1,0 +1,36 @@
+{
+  "position_name": "Educational Psychology Service Assistant Officer (EDB/SE/185/26)",
+  "source_uri": "https://www.csb.gov.hk/datagovhk/gov-vacancies/gov-job-vacancies-en.json",
+  "source_record_id": "50368",
+  "source_record_sha256": "8317decd44928022aa2afe20e47dc74e899680b8682e4460dfbb3dd54c46f055",
+  "source_feed_sha256": "9b880f6e2df0b9832b99040a3f5b4c41b8f3fe918973c7a0768bcde2a805f299",
+  "source_published_at": "2026-10-09",
+  "source_closes_at": "2026-10-22 23:59:00",
+  "source_text": "Educational Psychology Service Assistant Officer (EDB/SE/185/26)\nEntry Requirements:\n(a) A Hong Kong bachelor's degree in Psychology, Counselling, Guidance or related disciplines, or equivalent;\n(e) Good command of both spoken and written English and Chinese;\n(f) Good communication, interpersonal, analytical and organization skills; and\n(g) Ability to work independently and as a team to meet requirements.\n",
+  "source_text_sha256": "19663df7f4f0efd9409fb364a4b83d2adc9911ee6ad6d8401c1e730eb5175170",
+  "source_fetched_at": "2026-10-09T16:54:15Z",
+  "source_license": "DATA.GOV.HK Terms of Use v1.2 (2025-05-26): free commercial/non-commercial reuse with source/IP-owner attribution; https://data.gov.hk/en/terms-and-conditions",
+  "review_state": "pending",
+  "reviewed_by": "codex-agent-source-review (machine-assisted; human approval pending)",
+  "reviewed_at": "2026-10-09T16:54:45Z",
+  "required_skills": [
+    {"name": "communication", "level": "必须"},
+    {"name": "interpersonal", "level": "必须"},
+    {"name": "analytical", "level": "必须"},
+    {"name": "organization", "level": "必须"}
+  ],
+  "job_profile": {
+    "degree_requirement": null,
+    "major_requirements": [],
+    "major_strict": false,
+    "required_certs": []
+  },
+  "field_evidence": {
+    "position_name": {"status": "explicit", "excerpt": "Educational Psychology Service Assistant Officer (EDB/SE/185/26)"},
+    "degree_requirement": {"status": "explicit", "excerpt": "A Hong Kong bachelor's degree in Psychology, Counselling, Guidance or related disciplines, or equivalent"},
+    "major_requirements": {"status": "not_stated", "excerpt": null},
+    "major_strict": {"status": "not_stated", "excerpt": null},
+    "required_certs": {"status": "not_stated", "excerpt": null},
+    "required_skills": {"status": "explicit", "excerpt": "Good communication, interpersonal, analytical and organization skills"}
+  }
+}

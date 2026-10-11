@@ -53,8 +53,6 @@ def resolve_ability_role(role: str) -> Optional[str]:
         """
         MATCH (r:AbilityRole)
         WHERE $role IN coalesce(r.aliases, [])
-           OR r.role CONTAINS $role
-           OR $role CONTAINS r.role
         RETURN r.role AS role
         LIMIT 1
         """,
@@ -66,7 +64,7 @@ def resolve_ability_role(role: str) -> Optional[str]:
     job_hit = neo4j.execute_query(
         """
         MATCH (t:SkillTierNode {tier: 'job'})
-        WHERE t.name = $role OR t.name CONTAINS $role OR $role CONTAINS t.name
+        WHERE t.name = $role
         RETURN t.role AS role
         LIMIT 1
         """,
@@ -263,7 +261,7 @@ def get_ability_graph(role: str) -> Optional[Dict[str, Any]]:
     neo4j = get_neo4j_client()
     node_rows = neo4j.execute_query(
         """
-        MATCH (a:AbilityNode {role: $role})
+        MATCH (:AbilityRole {role: $role})-[:HAS_NODE]->(a:AbilityNode {role: $role})
         RETURN a.id AS id, a.name AS name, a.level AS level, a.group AS group_name,
                a.heat AS heat, a.parentId AS parentId
         ORDER BY a.level, a.id
@@ -275,7 +273,8 @@ def get_ability_graph(role: str) -> Optional[Dict[str, Any]]:
 
     edge_rows = neo4j.execute_query(
         """
-        MATCH (s:AbilityNode {role: $role})-[rel:RELATES_TO]->(t:AbilityNode {role: $role})
+        MATCH (:AbilityRole {role: $role})-[:HAS_NODE]->(s:AbilityNode {role: $role})
+              -[rel:RELATES_TO {role: $role}]->(t:AbilityNode {role: $role})
         RETURN s.id AS source, t.id AS target, rel.relation AS relation, rel.label AS label
         """,
         {"role": role},
@@ -325,7 +324,7 @@ def get_course_system_graph(role: str) -> Optional[Dict[str, Any]]:
     )
     tier_edges = neo4j.execute_query(
         """
-        MATCH (s:SkillTierNode {role: $role})-[rel:SKILL_TIER_REL]->(t:SkillTierNode {role: $role})
+        MATCH (s:SkillTierNode {role: $role})-[rel:SKILL_TIER_REL {role: $role}]->(t:SkillTierNode {role: $role})
         RETURN s.id AS source, t.id AS target, rel.relation AS relation, rel.isCareerPath AS isCareerPath
         """,
         {"role": role},
@@ -341,7 +340,8 @@ def get_course_system_graph(role: str) -> Optional[Dict[str, Any]]:
     )
     skill_course = neo4j.execute_query(
         """
-        MATCH (s:AbilityNode {role: $role})-[rel:COVERS]->(c:CourseGraphNode {role: $role})
+        MATCH (:AbilityRole {role: $role})-[:HAS_NODE]->(s:AbilityNode {role: $role})
+              -[rel:COVERS {role: $role}]->(c:CourseGraphNode {role: $role})
         RETURN s.id AS skillId, c.id AS courseId, rel.relation AS relation
         """,
         {"role": role},

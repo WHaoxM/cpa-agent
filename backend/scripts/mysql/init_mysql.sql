@@ -158,6 +158,32 @@ CREATE TABLE IF NOT EXISTS job_portrait_4d (
 
 
 -- 1.5 match_result (匹配结果 — L3 输出)
+-- Operator-only versioned publication. Legacy jobs are not automatically public.
+CREATE TABLE IF NOT EXISTS job_catalog_publication (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    job_portrait_id VARCHAR(64) NOT NULL,
+    publication_version VARCHAR(64) NOT NULL,
+    snapshot_json JSON NOT NULL,
+    content_sha256 CHAR(64) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'published',
+    published_at DATETIME NOT NULL,
+    UNIQUE KEY uk_job_publication (job_portrait_id, publication_version),
+    INDEX idx_job_publication (job_portrait_id, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Model source reviews are independent of human-approved publications.
+CREATE TABLE IF NOT EXISTS job_catalog_review (
+    review_id VARCHAR(64) PRIMARY KEY,
+    source_record_id VARCHAR(64) NOT NULL,
+    review_version VARCHAR(64) NOT NULL,
+    actor VARCHAR(20) NOT NULL,
+    status VARCHAR(24) NOT NULL,
+    review_json JSON NOT NULL,
+    content_sha256 CHAR(64) NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_job_review_source (source_record_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS match_result (
     id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
     student_id          VARCHAR(64)  NOT NULL COMMENT '→ student_profile.student_id',
@@ -231,6 +257,20 @@ CREATE TABLE IF NOT EXISTS career_path (
 
 
 -- 1.8 career_report (职业发展报告 — L4 输出)
+-- Resume-only reports must not masquerade as job-specific career_report rows.
+CREATE TABLE IF NOT EXISTS resume_diagnostic_report (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    report_id VARCHAR(64) NOT NULL UNIQUE,
+    student_id VARCHAR(64) NOT NULL,
+    source_confirmation_task_id VARCHAR(64) NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    report_json JSON NOT NULL,
+    content_sha256 CHAR(64) NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_resume_diagnostic_source (student_id, source_confirmation_task_id),
+    INDEX idx_resume_diagnostic_owner (student_id, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS career_report (
     id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
     report_id           VARCHAR(64)  NOT NULL UNIQUE COMMENT '报告唯一ID',
@@ -422,6 +462,19 @@ CREATE TABLE IF NOT EXISTS agent_artifact (
     INDEX idx_session_turn (session_id, turn_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent 类型化成果物索引';
 
+CREATE TABLE IF NOT EXISTS agent_action_plan (
+    plan_id         VARCHAR(64) NOT NULL PRIMARY KEY,
+    student_id      VARCHAR(64) NOT NULL,
+    session_id      VARCHAR(64) NOT NULL,
+    title           VARCHAR(160) NOT NULL,
+    body_text       MEDIUMTEXT NOT NULL,
+    body_sha256     CHAR(64) NOT NULL,
+    status          VARCHAR(32) NOT NULL DEFAULT 'draft',
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_plan_owner_session (student_id, session_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent 学习计划正文（按用户和会话归属）';
+
 CREATE TABLE IF NOT EXISTS voice_turn (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
     turn_id         VARCHAR(64)  NOT NULL UNIQUE,
@@ -456,6 +509,29 @@ CREATE TABLE IF NOT EXISTS tool_audit_event (
     INDEX idx_session_time (session_id, created_at DESC),
     INDEX idx_student_time (student_id, created_at DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent 工具审计事件';
+
+-- 2.2e agent_turn_idempotency (显式 Idempotency-Key 回合准入/重放)
+CREATE TABLE IF NOT EXISTS agent_turn_idempotency (
+    id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
+    student_id          VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+    session_id          VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+    key_sha256          CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    request_sha256      CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    state               VARCHAR(16) NOT NULL COMMENT 'reserved/running/completed/unknown/expired',
+    execution_token     CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    response_status     SMALLINT UNSIGNED DEFAULT NULL,
+    response_json       MEDIUMTEXT DEFAULT NULL,
+    stale_after         DATETIME(6) NOT NULL,
+    response_expires_at DATETIME(6) NOT NULL,
+    created_at          DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at          DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+                                      ON UPDATE CURRENT_TIMESTAMP(6),
+    completed_at        DATETIME(6) DEFAULT NULL,
+    UNIQUE KEY uk_agent_turn_idempotency (student_id, session_id, key_sha256),
+    INDEX idx_agent_turn_idempotency_expiry (state, response_expires_at),
+    INDEX idx_agent_turn_idempotency_session (student_id, session_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  COMMENT='显式 Agent HTTP 幂等准入与公开结果重放';
 
 
 -- 2.3 pipeline_task (管线任务)

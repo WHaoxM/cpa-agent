@@ -1,114 +1,73 @@
 """
 知识图谱相关 API 路由
-/api/graph — Neo4j 图谱查询、构建、可视化数据
+/api/graph — 当前只开放 CareerNode 公共路径查询；共享 Skill/JobPortrait 读面停用
 
 安全说明:
 - 所有 Cypher 查询必须使用预编译模板,不允许动态拼接
 - 预编译模板定义在 SAFE_CYPHER_TEMPLATES 中
 """
 
-import uuid
 from flask import request, jsonify
 
 from . import graph_bp
-from ._helpers import safe_error
+from ._helpers import ScopeError, resolve_request_scope, safe_error, scope_error_response
 from ..services.db import get_neo4j_client
 from ..utils.logger import get_logger
+from ..services.public_skill_graph import query_public_skills
 
 logger = get_logger('cpa-agent.api.graph')
 
 SAFE_CYPHER_TEMPLATES = {
-    "skill_neighbors": {
-        "cypher": """
-        MATCH (s:Skill {name: $skill_name})-[r]-(n)
-        RETURN s, r, n
-        LIMIT 50
-        """,
-        "params": ["skill_name"]
-    },
-    "skill_by_category": {
-        "cypher": """
-        MATCH (s:Skill)
-        WHERE s.category = $category
-        RETURN s
-        ORDER BY s.heat DESC
-        LIMIT 50
-        """,
-        "params": ["category"]
-    },
-    "all_skills": {
-        "cypher": """
-        MATCH (s:Skill)
-        RETURN s
-        ORDER BY s.heat DESC
-        LIMIT 100
-        """,
-        "params": []
-    },
-    "job_portrait": {
-        "cypher": """
-        MATCH (j:JobPortrait {portrait_id: $portrait_id})
-        OPTIONAL MATCH (j)-[r:REQUIRES]->(s:Skill)
-        OPTIONAL MATCH (j)-[r2:PREFERS]->(s2:Skill)
-        OPTIONAL MATCH (j)-[r3:BONUS]->(s3:Skill)
-        RETURN j,
-               collect(DISTINCT {name: s.name, level: r.level}) as required_skills,
-               collect(DISTINCT {name: s2.name, level: r2.level}) as preferred_skills,
-               collect(DISTINCT {name: s3.name, level: r3.level}) as bonus_skills
-        """,
-        "params": ["portrait_id"]
-    },
-    "promotion_chains": {
-        "cypher": """
-        MATCH path = (start:JobPortrait {portrait_id: $portrait_id})-[r:PROMOTION*1..3]->(end:JobPortrait)
-        RETURN path, length(path) as steps
-        ORDER BY steps
-        LIMIT 10
-        """,
-        "params": ["portrait_id"]
-    },
-    "transfer_options": {
-        "cypher": """
-        MATCH (start:JobPortrait {portrait_id: $portrait_id})-[r:TRANSFER]->(end:JobPortrait)
-        RETURN start, r, end
-        LIMIT 20
-        """,
-        "params": ["portrait_id"]
-    },
-    "job_requirements": {
-        "cypher": """
-        MATCH (j:JobPortrait {portrait_id: $portrait_id})-[r]-(s:Skill)
-        RETURN j, type(r) as rel_type, s
-        """,
-        "params": ["portrait_id"]
-    },
-    "skill_categories": {
-        "cypher": """
-        MATCH (c:SkillCategory)<-[:BELONGS_TO]-(s:Skill)
-        RETURN c.name as category, c.subcategory as subcategory, count(s) as skill_count
-        ORDER BY category, subcategory
-        """,
-        "params": []
-    },
     "career_path": {
         "cypher": """
         MATCH path=(c1:CareerNode)-[:PROMOTION*1..3]->(c2:CareerNode)
-        WHERE c1.position_name = $position_name
+        WHERE c1.position_name = $position_name AND NOT c1:Person AND NOT c2:Person
+          AND all(n IN nodes(path) WHERE labels(n) = ['CareerNode'])
         RETURN c1.position_name as start, c2.position_name as end, length(path) as steps
         ORDER BY steps
         LIMIT 20
         """,
         "params": ["position_name"]
     },
-    "skill_prerequisite": {
-        "cypher": """
-        MATCH (s1:Skill)-[r:PREREQUISITE]->(s2:Skill)
-        RETURN s1.name as skill, s2.name as prerequisite
-        LIMIT 50
-        """,
-        "params": []
-    },
 }
+
+# JobPortrait is also created from runtime JD input without an owner field.
+# Public API cannot safely distinguish seeded portraits from private ones.
+DISABLED_PRIVATE_TEMPLATES = frozenset({
+    "job_portrait", "promotion_chains", "transfer_options", "job_requirements",
+    "skill_by_category",
+    "skill_prerequisite",
+})
+
+PUBLIC_NODE_FIELDS = frozenset({
+    "position_name", "level", "family",
+})
+PUBLIC_NODE_LABELS = frozenset({"CareerNode"})
+PUBLIC_REL_TYPES = frozenset({"PROMOTION", "TRANSFER"})
+PUBLIC_EDGE_FIELDS = frozenset({"years", "skill_delta"})
+PUBLIC_SCALAR_FIELDS = frozenset({"start", "end", "steps"})
+
+
+def _node_labels(node) -> list:
+    labels = getattr(node, "labels", ())
+    return list(labels() if callable(labels) else labels)
+
+
+def _public_node_labels(node) -> list:
+    labels = _node_labels(node)
+    return labels if labels and set(labels) <= PUBLIC_NODE_LABELS else []
+
+
+def _relationship_type(relation) -> str:
+    rel_type = getattr(relation, "type", "")
+    return str(rel_type() if callable(rel_type) else rel_type)
+
+
+def _public_properties(value, fields: frozenset) -> dict:
+    return {
+        key: val for key, val in value.items()
+        if key in fields and isinstance(val, (str, int, float, bool))
+    }
 
 
 def _execute_safe_query(template_name: str, params: dict) -> list:
@@ -128,34 +87,11 @@ def _execute_safe_query(template_name: str, params: dict) -> list:
 
 @graph_bp.route('/overview', methods=['GET'])
 def graph_overview():
-    """获取图谱概览统计 (节点数/边数/类型分布)"""
-    try:
-        neo4j = get_neo4j_client()
-
-        if not neo4j.test_connection():
-            return jsonify({
-                "success": False,
-                "error": "Neo4j 连接失败"
-            }), 500
-
-        node_count = neo4j.get_node_count()
-        edge_count = neo4j.get_edge_count()
-
-        schema = neo4j.get_schema()
-
-        return jsonify({
-            "success": True,
-            "data": {
-                "node_count": node_count,
-                "edge_count": edge_count,
-                "node_types": schema.get("node_labels", []),
-                "node_counts_by_type": schema.get("node_counts", {}),
-                "edge_types": schema.get("relationship_types", [])
-            }
-        })
-
-    except Exception as e:
-        return jsonify(safe_error("图谱概览查询", e)), 500
+    """Whole-database counts include Graph B; no public-scope count exists yet."""
+    return jsonify({
+        "success": False,
+        "error": "整库概览含未分区的个人图谱，已停用；待公共图谱标记/隔离后恢复",
+    }), 410
 
 
 @graph_bp.route('/query', methods=['POST'])
@@ -163,23 +99,30 @@ def graph_query():
     """
     执行预定义 Cypher 查询模板
 
-    Body:
-        {
-            "template": "skill_neighbors | all_skills | skill_categories | ...",
-            "params": {"skill_name": "Python"},
-            "limit": 100
-        }
+    Body: {"template": "career_path", "params": {"position_name": "初级前端工程师"}}
+    Other historical templates return 410 until public/private graph provenance exists.
     """
     data = request.get_json() or {}
     template_name = data.get('template', '')
     params = data.get('params', {})
-    limit = data.get('limit', 100)
 
     if not template_name:
         return jsonify({
             "success": False,
             "error": "template 参数必填"
         }), 400
+
+    if template_name in {"skills", "all_skills", "skill_neighbors", "skill_categories"}:
+        template_name = "skills" if template_name == "all_skills" else template_name
+        if template_name == "skill_neighbors" and isinstance(params, dict) and "skill_name" in params:
+            params = {"entity_name" if k == "skill_name" else k: v for k, v in params.items()}
+        return _public_skill_response(template_name, params)
+
+    if template_name in DISABLED_PRIVATE_TEMPLATES:
+        return jsonify({
+            "success": False,
+            "error": "该 Skill/JobPortrait 查询没有可验证的公共/用户归属边界，已停用；仅可查询 CareerNode 公共路径",
+        }), 410
 
     if template_name not in SAFE_CYPHER_TEMPLATES:
         return jsonify({
@@ -192,38 +135,62 @@ def graph_query():
 
         nodes = []
         edges = []
+        scalar_rows = []
 
         for record in results:
+            scalar_row = {
+                key: value for key, value in record.items()
+                if key in PUBLIC_SCALAR_FIELDS
+                and (value is None or isinstance(value, (str, int, float, bool)))
+            }
+            if scalar_row:
+                scalar_rows.append(scalar_row)
             for key, value in record.items():
                 if hasattr(value, 'labels'):
+                    labels = _public_node_labels(value)
+                    if not labels:
+                        continue
                     nodes.append({
                         "id": value.element_id,
-                        "labels": list(value.labels()),
-                        "properties": {k: v for k, v in value.items() if not k.startswith('_')}
+                        "labels": labels,
+                        "properties": _public_properties(value, PUBLIC_NODE_FIELDS),
                     })
                 elif hasattr(value, 'type'):
+                    rel_type = _relationship_type(value)
+                    if (rel_type not in PUBLIC_REL_TYPES
+                            or not _public_node_labels(value.start_node)
+                            or not _public_node_labels(value.end_node)):
+                        continue
                     edges.append({
                         "id": value.element_id,
-                        "type": value.type(),
+                        "type": rel_type,
                         "start": value.start_node.get('name', value.start_node.element_id),
                         "end": value.end_node.get('name', value.end_node.element_id),
-                        "properties": {k: v for k, v in value.items() if not k.startswith('_')}
+                        "properties": _public_properties(value, PUBLIC_EDGE_FIELDS),
                     })
                 elif isinstance(value, list):
                     for item in value:
                         if hasattr(item, 'labels'):
+                            labels = _public_node_labels(item)
+                            if not labels:
+                                continue
                             nodes.append({
                                 "id": item.element_id,
-                                "labels": list(item.labels()),
-                                "properties": {k: v for k, v in item.items() if not k.startswith('_')}
+                                "labels": labels,
+                                "properties": _public_properties(item, PUBLIC_NODE_FIELDS),
                             })
                         elif hasattr(item, 'type'):
+                            rel_type = _relationship_type(item)
+                            if (rel_type not in PUBLIC_REL_TYPES
+                                    or not _public_node_labels(item.start_node)
+                                    or not _public_node_labels(item.end_node)):
+                                continue
                             edges.append({
                                 "id": item.element_id,
-                                "type": item.type(),
+                                "type": rel_type,
                                 "start": item.start_node.get('name', item.start_node.element_id),
                                 "end": item.end_node.get('name', item.end_node.element_id),
-                                "properties": {k: v for k, v in item.items() if not k.startswith('_')}
+                                "properties": _public_properties(item, PUBLIC_EDGE_FIELDS),
                             })
 
         unique_nodes = {n['id']: n for n in nodes}.values()
@@ -235,7 +202,9 @@ def graph_query():
                 "nodes": list(unique_nodes),
                 "edges": unique_edges,
                 "total_nodes": len(unique_nodes),
-                "total_edges": len(unique_edges)
+                "total_edges": len(unique_edges),
+                "rows": scalar_rows[:50],
+                "total_rows": len(results),
             }
         })
 
@@ -245,110 +214,29 @@ def graph_query():
 
 @graph_bp.route('/career-path/<job_id>', methods=['GET'])
 def career_path(job_id: str):
-    """查询岗位的晋升路径和换岗路径"""
-    try:
-        promotion_results = _execute_safe_query("promotion_chains", {"portrait_id": job_id})
-        transfer_results = _execute_safe_query("transfer_options", {"portrait_id": job_id})
-
-        promotion_paths = []
-        for record in promotion_results:
-            path = record.get('path')
-            if path:
-                nodes = list(path.nodes)
-                steps = record.get('steps', 0)
-                path_data = {
-                    "steps": steps,
-                    "nodes": [
-                        {"name": n.get('name', 'Unknown'), "level": n.get('level', 0)}
-                        for n in nodes
-                    ]
-                }
-                promotion_paths.append(path_data)
-
-        transfer_options = []
-        for record in transfer_results:
-            start = record.get('start')
-            end = record.get('end')
-            rel = record.get('r')
-            if start and end:
-                transfer_options.append({
-                    "from": start.get('name', 'Unknown'),
-                    "to": end.get('name', 'Unknown'),
-                    "relationship": rel.type() if hasattr(rel, 'type') else 'transfer'
-                })
-
-        return jsonify({
-            "success": True,
-            "data": {
-                "job_id": job_id,
-                "promotion_paths": promotion_paths,
-                "transfer_options": transfer_options
-            }
-        })
-
-    except Exception as e:
-        return jsonify(safe_error("职业路径查询", e)), 500
+    """Legacy JobPortrait path has no owner contract; use public CareerNode query."""
+    return jsonify({
+        "success": False,
+        "error": "JobPortrait 路径查询已停用；请调用 /api/graph/query 的 career_path 模板并传 position_name",
+    }), 410
 
 
 @graph_bp.route('/skill-neighbors/<path:skill_name>', methods=['GET'])
 def skill_neighbors(skill_name: str):
-    """查询技能节点的邻居 (相关技能/岗位/前置技能)"""
+    """Only the isolated seed partition; no fallback to legacy Skill."""
+    return _public_skill_response("skill_neighbors", {"entity_name": skill_name})
+
+
+def _public_skill_response(template, params):
     try:
-        results = _execute_safe_query("skill_neighbors", {"skill_name": skill_name})
-
-        neighbors = []
-        skill_info = None
-
-        for record in results:
-            s = record.get('s')
-            r = record.get('r')
-            n = record.get('n')
-
-            if s and not skill_info:
-                skill_info = {
-                    "name": s.get('name'),
-                    "category": s.get('category'),
-                    "alias": s.get('alias', []),
-                    "description": s.get('description')
-                }
-
-            if n:
-                labels = list(n.labels()) if hasattr(n, 'labels') else []
-                neighbor = {
-                    "name": n.get('name', n.get('title', 'Unknown')),
-                    "type": labels[0] if labels else 'Unknown',
-                    "relationship": r.type() if hasattr(r, 'type') else 'related'
-                }
-                neighbors.append(neighbor)
-
-        if not skill_info:
-            return jsonify({
-                "success": False,
-                "error": f"未找到技能: {skill_name}"
-            }), 404
-
-        neighbor_groups = {}
-        for n in neighbors:
-            rel_type = n['relationship']
-            if rel_type not in neighbor_groups:
-                neighbor_groups[rel_type] = []
-            neighbor_groups[rel_type].append({
-                "name": n['name'],
-                "type": n['type']
-            })
-
-        return jsonify({
-            "success": True,
-            "data": {
-                "center": skill_info,
-                "neighbors": neighbors,
-                "neighbor_groups": neighbor_groups,
-                "total_neighbors": len(neighbors)
-            }
-        })
-
-    except Exception as e:
-        return jsonify(safe_error("技能邻居查询", e)), 500
+        if not isinstance(params, dict):
+            raise ValueError("params must be an object")
+        result = query_public_skills(template, params, client=get_neo4j_client())
+        return jsonify({"success": result["success"], "data": result}), 200 if result["success"] else 503
+    except ValueError:
+        return jsonify({"success": False, "error": "公共技能查询参数无效"}), 400
+    except Exception as exc:
+        return jsonify(safe_error("公共技能查询", exc, message="公共技能分区暂不可用")), 503
 
 
 @graph_bp.route('/build', methods=['POST'])
@@ -356,16 +244,21 @@ def build_graph():
     """触发知识图谱构建 (L1 管线)"""
     data = request.get_json() or {}
     build_type = data.get('type', 'full')
-    student_id = data.get('student_id')
     jd_texts = data.get('jd_texts', [])
     profile_text = data.get('profile_text', '')
+
+    try:
+        scope = resolve_request_scope()
+    except ScopeError as error:
+        return scope_error_response(error)
 
     try:
         from ..services.pipeline import PipelineRunner, PipelineLevel
 
         params = {
             "type": build_type,
-            "student_id": student_id,
+            # Never trust body.student_id for a user-owned graph mutation.
+            "student_id": scope.student_id,
             "jd_texts": jd_texts,
             "profile_text": profile_text
         }
@@ -373,14 +266,26 @@ def build_graph():
         runner = PipelineRunner()
         result = runner.run(PipelineLevel.L1_BUILD_GRAPH.value, params)
 
+        task_id = result.get("task_id") if isinstance(result, dict) else None
+        if not task_id:
+            return jsonify({"success": False, "error": "图谱构建未返回任务记录"}), 500
+        rows = runner.mysql.execute(
+            "SELECT task_id, status FROM pipeline_task "
+            "WHERE task_id=:task_id AND student_id=:student_id LIMIT 1",
+            {"task_id": task_id, "student_id": scope.student_id},
+        )
+        if not rows:
+            return jsonify({"success": False, "error": "图谱任务归属或持久化状态无法核验"}), 500
+        status = rows[0].get("status")
+
         return jsonify({
-            "success": True,
+            "success": status == "completed",
             "data": {
-                "task_id": result.get("student_id", "unknown"),
-                "status": "completed",
+                "task_id": task_id,
+                "status": status,
                 "type": build_type,
                 "result": result,
-                "message": "图谱构建完成"
+                "message": "图谱构建完成" if status == "completed" else "图谱任务未完成"
             }
         })
 
@@ -390,82 +295,14 @@ def build_graph():
 
 @graph_bp.route('/skill-categories', methods=['GET'])
 def skill_categories():
-    """获取技能分类统计"""
-    try:
-        results = _execute_safe_query("skill_categories", {})
-
-        categories = {}
-        for record in results:
-            cat = record.get('category', 'Unknown')
-            sub = record.get('subcategory', 'General')
-            count = record.get('skill_count', 0)
-
-            if cat not in categories:
-                categories[cat] = {"total": 0, "subcategories": {}}
-
-            categories[cat]["total"] += count
-            if sub:
-                categories[cat]["subcategories"][sub] = count
-
-        return jsonify({
-            "success": True,
-            "data": {
-                "categories": categories,
-                "total_categories": len(categories)
-            }
-        })
-
-    except Exception as e:
-        return jsonify(safe_error("技能分类查询", e)), 500
+    """Count only source-verified PublicSkill nodes, never all legacy nodes."""
+    return _public_skill_response("skill_categories", {})
 
 
 @graph_bp.route('/job-requirements/<job_id>', methods=['GET'])
 def job_requirements(job_id: str):
-    """获取岗位的技能要求 (D1-D4 四维映射)"""
-    try:
-        results = _execute_safe_query("job_requirements", {"portrait_id": job_id})
-
-        job_info = None
-        requirements = {"D1_required": [], "D2_preferred": [], "D3_bonus": []}
-
-        for record in results:
-            j = record.get('j')
-            rel_type = record.get('rel_type', '')
-            s = record.get('s')
-
-            if j and not job_info:
-                job_info = {
-                    "id": j.get('id'),
-                    "name": j.get('name'),
-                    "level": j.get('level')
-                }
-
-            if s:
-                skill_info = {
-                    "name": s.get('name'),
-                    "category": s.get('category')
-                }
-
-                if 'REQUIRES' in rel_type.upper():
-                    requirements["D1_required"].append(skill_info)
-                elif 'PREFERS' in rel_type.upper():
-                    requirements["D2_preferred"].append(skill_info)
-                elif 'BONUS' in rel_type.upper():
-                    requirements["D3_bonus"].append(skill_info)
-
-        if not job_info:
-            return jsonify({
-                "success": False,
-                "error": f"未找到岗位: {job_id}"
-            }), 404
-
-        return jsonify({
-            "success": True,
-            "data": {
-                "job": job_info,
-                "requirements": requirements
-            }
-        })
-
-    except Exception as e:
-        return jsonify(safe_error("岗位要求查询", e)), 500
+    """Legacy JobPortrait lookup lacks owner metadata and is fail-closed."""
+    return jsonify({
+        "success": False,
+        "error": "JobPortrait 岗位画像缺少公共/归属标记，要求查询已停用",
+    }), 410

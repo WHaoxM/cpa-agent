@@ -6,12 +6,13 @@ AI 分析 API — /api/ai/*
 from __future__ import annotations
 
 import json
+import math
 from datetime import datetime, timezone
 
 from flask import request, jsonify
 
 from . import ai_bp, agent_bp
-from ._helpers import safe_error
+from ._helpers import ScopeError, resolve_request_scope, safe_error, scope_error_response
 from ..services.db import get_mysql_client
 from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
@@ -45,38 +46,122 @@ def _public_llm_error(message: str = "AI 服务暂不可用，请稍后重试。
     return jsonify({"success": False, "error": message, "data": None})
 
 
+def _verified_growth_sources(mysql, student_id: str, report_ids: list) -> tuple[dict | None, dict]:
+    """Read current, owner-scoped domain projections; never trust browser snapshots.
+
+    A saved row alone is not evidence that its source publication, task and
+    profile version still agree.  Reuse the same reader exposed to the Agent
+    instead of implementing a second report/portrait verification path here.
+    """
+    from ..services.agent_runtime.resource_catalog import read_platform_resource
+
+    coverage = {"portrait": "not_available", "reports": 0, "reason": "authoritative_sources_unavailable"}
+    try:
+        portrait = read_platform_resource(
+            mysql, student_id=student_id, uri="career://me/portrait", section="overview",
+        )
+    except (LookupError, ValueError, PermissionError):
+        portrait = None
+    if not isinstance(portrait, dict) or portrait.get("status") != "completed" or portrait.get("published") is not True:
+        if isinstance(portrait, dict):
+            coverage["portrait"] = str(portrait.get("status") or "not_available")
+        return None, coverage
+    coverage["portrait"] = "completed"
+    portrait_data = portrait.get("data") if isinstance(portrait.get("data"), dict) else {}
+    published_score = portrait_data.get("total_score")
+    if (isinstance(published_score, bool) or not isinstance(published_score, (int, float))
+            or not math.isfinite(published_score) or not 0 <= published_score <= 100):
+        coverage["reason"] = "verified_portrait_score_missing"
+        return None, coverage
+
+    reports: list[dict] = []
+    if report_ids:
+        for report_id in report_ids:
+            try:
+                record = read_platform_resource(
+                    mysql, student_id=student_id,
+                    uri=f"career://me/reports/{report_id}", section="overview",
+                )
+            except (LookupError, ValueError, PermissionError):
+                record = None
+            if not isinstance(record, dict) or record.get("status") != "completed" or record.get("business_artifact_verified") is not True:
+                coverage["reason"] = "requested_report_unavailable"
+                return None, coverage
+            reports.append(record)
+    else:
+        # Same bounded latest-ten window as the previous endpoint, but every
+        # item is projected through the authoritative source/version gate.
+        for offset in range(0, 10, 3):
+            page = read_platform_resource(
+                mysql, student_id=student_id, uri="career://me/reports",
+                section="items", offset=offset, limit=min(3, 10 - offset),
+            )
+            if not isinstance(page, dict) or page.get("success") is not True:
+                break
+            for record in page.get("data") or []:
+                if (isinstance(record, dict) and record.get("status") == "completed"
+                        and record.get("business_artifact_verified") is True):
+                    reports.append(record)
+            if not isinstance(page.get("coverage"), dict) or not page["coverage"].get("has_more"):
+                break
+
+    coverage["reports"] = len(reports)
+    if not reports:
+        coverage["reason"] = "verified_report_missing"
+        return None, coverage
+    coverage["reason"] = "complete"
+    source_refs = {
+        "portrait": {"uri": portrait.get("uri"), "version": portrait.get("version"),
+                     "source_resume_version": portrait.get("source_resume_version")},
+        "reports": [{"uri": report.get("uri"), "version": report.get("version")}
+                    for report in reports],
+    }
+    return {
+        "portrait": portrait_data,
+        "reports": [report.get("data") for report in reports],
+        "source_refs": source_refs,
+        "published_score": published_score,
+    }, coverage
+
+
 @agent_bp.route("/career-suggestions", methods=["POST"])
 def career_suggestions():
     """POST /api/agent/career-suggestions — 返回 string[]。"""
     try:
-        data = request.get_json() or {}
-        user_id = data.get("userId") or data.get("user_id") or "student_001"
-        target_roles = data.get("targetRoles") or data.get("target_roles") or []
-
+        user_id = resolve_request_scope().student_id
         mysql = get_mysql_client()
         roles = mysql.execute(
-            "SELECT * FROM target_role WHERE user_id = :uid ORDER BY priority DESC",
+            "SELECT role_name, priority FROM target_role WHERE user_id = :uid ORDER BY priority DESC",
             {"uid": user_id},
         )
-        enriched = []
-        for r in roles or target_roles:
-            role_name = r.get("role_name") or r.get("role") if isinstance(r, dict) else str(r)
-            insight = mysql.execute(
-                """
-                SELECT role_name, demand_level, core_skills, description, avg_salary_low, avg_salary_high
-                FROM career_insights
-                WHERE role_name = :role OR role_name LIKE :like
-                LIMIT 1
-                """,
-                {"role": role_name, "like": f"%{role_name}%"},
-            )
-            enriched.append({
-                "role": role_name,
-                "insight": insight[0] if insight else None,
-                "target": r if isinstance(r, dict) else {"role": role_name},
-            })
+        # Client targetRoles are UI hints, not persisted user choices.  This
+        # endpoint must not turn arbitrary request JSON into personalized
+        # recommendations or treat cold-start career_insights as live jobs.
+        saved_roles = [
+            {"role_name": row["role_name"], "priority": row.get("priority")}
+            for row in roles or [] if isinstance(row, dict) and row.get("role_name")
+        ]
+        if not saved_roles:
+            return jsonify({"success": False, "status": "needs_input", "data": None,
+                            "error": "请先保存目标职业方向，再生成个人建议。",
+                            "next_action": "save_target_role"}), 409
 
-        context = {"user_id": user_id, "targets": enriched}
+        from ..services.agent_runtime.evidence_retrieval import build_evidence_pack
+        evidence = build_evidence_pack(
+            mysql, student_id=user_id, question="根据已确认技能给已保存目标方向提出建议",
+            resource_refs=[{"uri": "career://me/resume", "section": "skills"}],
+            max_items=10, max_chars=4500,
+        )
+        if not evidence.get("items"):
+            return jsonify({"success": False, "status": "partial", "data": None,
+                            "error": "当前没有可读取的已确认简历技能依据，不能生成个性化建议。",
+                            "source_coverage": evidence.get("coverage"),
+                            "next_action": "confirm_resume_or_retry_evidence"}), 409
+        context = {
+            "targets": saved_roles,
+            "resume_evidence": evidence,
+            "market_source_status": "not_read; no current-job or salary claim authorized",
+        }
         prompt = load_prompt(
             "agent.career_suggestions.user",
             context_json=json.dumps(context, ensure_ascii=False, default=str),
@@ -93,7 +178,13 @@ def career_suggestions():
         if not isinstance(suggestions, list) or not suggestions:
             return jsonify({"success": False, "error": "LLM returned empty suggestions", "data": None}), 502
         suggestions = [str(s) for s in suggestions if s]
-        return jsonify({"success": True, "data": suggestions})
+        return jsonify({"success": True, "data": suggestions,
+                        "status": "partial" if evidence.get("has_more") else "completed",
+                        "completion_scope": "draft_advice_only",
+                        "source_coverage": evidence.get("coverage"),
+                        "source_refs": evidence.get("sources")})
+    except ScopeError as e:
+        return scope_error_response(e)
     except ValueError as e:
         logger.info("career suggestions unavailable: %s", e)
         return _public_llm_error("AI 服务未配置或暂不可用。"), 503
@@ -110,41 +201,21 @@ def growth_analysis():
     """POST /api/ai/growth-analysis — AIAnalysisResult。"""
     try:
         data = request.get_json() or {}
-        user_id = data.get("userId") or data.get("user_id") or data.get("student_id") or "student_001"
+        user_id = resolve_request_scope().student_id
         report_ids = data.get("reportIds") or data.get("report_ids") or []
-        snapshots = data.get("snapshots") or []
+        if (not isinstance(report_ids, list) or len(report_ids) > 10
+                or any(not isinstance(rid, str) or not rid or len(rid) > 128 for rid in report_ids)):
+            return jsonify({"success": False, "error": "reportIds 必须是至多 10 个报告 ID", "data": None}), 400
 
         mysql = get_mysql_client()
-        reports = []
-        if report_ids:
-            for rid in report_ids:
-                rows = mysql.execute(
-                    "SELECT * FROM career_report WHERE report_id = :id LIMIT 1",
-                    {"id": rid},
-                )
-                if rows:
-                    reports.append(rows[0])
-        else:
-            reports = mysql.execute(
-                """
-                SELECT * FROM career_report
-                WHERE student_id = :sid
-                ORDER BY created_at DESC
-                LIMIT 10
-                """,
-                {"sid": user_id},
-            )
-
-        portrait = mysql.execute(
-            """
-            SELECT student_id, d1_score, d2_score, d3_score, d4_score,
-                   competitiveness, completeness, skill_coverage
-            FROM student_portrait_4d
-            WHERE student_id = :sid
-            ORDER BY created_at DESC LIMIT 1
-            """,
-            {"sid": user_id},
-        )
+        verified, coverage = _verified_growth_sources(mysql, user_id, report_ids)
+        if verified is None:
+            return jsonify({
+                "success": False, "status": "partial", "data": None,
+                "error": "当前缺少同版本、已发布的画像和可核验职业报告；不会使用旧分数或页面快照生成成长分析。",
+                "reason": coverage["reason"], "source_coverage": coverage,
+                "next_action": "complete_verified_portrait_and_report",
+            }), 409
         targets = mysql.execute(
             "SELECT role_name, priority FROM target_role WHERE user_id = :uid",
             {"uid": user_id},
@@ -152,10 +223,10 @@ def growth_analysis():
 
         context = {
             "user_id": user_id,
-            "reports": reports,
-            "snapshots": snapshots,
-            "portrait": portrait[0] if portrait else None,
+            "reports": verified["reports"],
+            "portrait": verified["portrait"],
             "target_roles": targets,
+            "source_refs": verified["source_refs"],
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
         prompt = load_prompt(
@@ -187,7 +258,19 @@ def growth_analysis():
             }), 502
         if "generatedAt" not in parsed:
             parsed["generatedAt"] = context["generated_at"]
-        return jsonify({"success": True, "data": parsed})
+        # This UI field denotes the published portrait's competitiveness,
+        # not a new score authored by a language model.  The model may write
+        # prose, but it cannot replace the authoritative numeric result.
+        parsed["growthScore"] = verified["published_score"]
+        parsed["scoreTooltip"] = (
+            "综合竞争力来自已发布四维画像（版本 "
+            + str(verified["source_refs"]["portrait"]["version"])
+            + "）；AI 只解释证据，不重新评分。"
+        )
+        return jsonify({"success": True, "data": parsed,
+                        "source_refs": verified["source_refs"], "source_coverage": coverage})
+    except ScopeError as e:
+        return scope_error_response(e)
     except ValueError as e:
         logger.info("growth analysis unavailable: %s", e)
         return _public_llm_error("AI 服务未配置或暂不可用。"), 503

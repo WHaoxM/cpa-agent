@@ -52,25 +52,10 @@ class SemanticSearchTool(BaseTool):
 
     @property
     def description(self) -> str:
-        return """\
-【语义检索 — Milvus + BGE-M3】
-基于向量相似度的语义检索, 从 Milvus 中查找与查询最相似的内容。
-
-【向量集合】
-- skill_vectors: 技能节点向量 (~500个, 1024dim)
-- jd_vectors: JD 岗位描述向量
-- resume_vectors: 简历内容向量
-- conversation_vectors: 对话历史向量 (RAG 记忆)
-
-【使用场景】
-- "类似React的前端技能有哪些"
-- "跟我简历最匹配的岗位"
-- "之前我们聊过Python相关的内容吗" (跨会话 RAG)
-- "机器学习相关的岗位要求"
-
-【返回内容】
-- Top-K 最相似的结果 (名称/相似度/来源)
-- 相关上下文片段"""
+        return (
+            "语义检索暂不可用：现有技能/JD/简历/对话集合缺少可信公共来源或 owner 隔离。"
+            "不得以空结果推断没有匹配；公共技能证据改用 graph_query。"
+        )
 
     @property
     def parameters(self) -> Dict[str, str]:
@@ -129,54 +114,18 @@ class SemanticSearchTool(BaseTool):
 
     def execute(self, **kwargs) -> str:
         query = kwargs.get("query", "")
-        collection = kwargs.get("collection", "all")
-        top_k = kwargs.get("top_k", 5)
 
         if not query:
-            return "[semantic_search] 错误: query 参数不能为空"
+            return json.dumps({"success": False, "status": "failed", "message": "[semantic_search] 错误: query 参数不能为空"}, ensure_ascii=False)
 
-        try:
-            top_k = int(top_k) if isinstance(top_k, str) else top_k
-        except (ValueError, TypeError):
-            logger.warning(f"top_k 参数解析失败: {top_k}, 使用默认值 5")
-            top_k = 5
-
-        logger.info(f"semantic_search 执行: query={query}, collection={collection}, top_k={top_k}")
-
-        try:
-            if not self.embedding.is_available():
-                return (
-                    "[semantic_search] 不可用: 未安装 sentence-transformers。"
-                    "请执行 pip install 'sentence-transformers>=3.0.0' 后重启后端。"
-                )
-            query_vector = self._encode([query])[0]
-
-            collections = self._get_collections(collection)
-            all_results = {}
-
-            for coll in collections:
-                try:
-                    if not self.milvus.test_connection():
-                        continue
-
-                    expr = None
-                    if coll == "jd_vectors":
-                        expr = "is_it_position == 1"
-
-                    results = self.milvus.search(
-                        collection_name=coll,
-                        query_vector=query_vector,
-                        top_k=top_k,
-                        expr=expr,
-                    )
-                    if results:
-                        all_results[coll] = results
-                except Exception as e:
-                    logger.warning(f"集合 {coll} 检索失败: {e}")
-                    continue
-
-            return self._format_results(all_results)
-
-        except Exception as e:
-            logger.error(f"semantic_search 执行失败: {e}")
-            return f"[semantic_search] 执行失败，请稍后重试"
+        # None of the current collections has a trusted publication/owner
+        # contract. Even skill/jd vectors are writable from runtime upload APIs.
+        # Do not call embedding/Milvus, silently remove a filter on errors, or
+        # mistake an IT-position flag for public provenance. Unknown names are
+        # also denied rather than passed through to arbitrary collections.
+        message = (
+            "[semantic_search] 不可用: 当前技能/JD/简历/会话向量尚未完成公共来源与 Principal 归属隔离。"
+            "已停止跨集合检索；不能据此判断没有匹配内容。公共技能证据请用 graph_query；"
+            "个人检索需完成 owner 字段迁移与可信作用域下沉后恢复。"
+        )
+        return json.dumps({"success": False, "status": "unavailable", "message": message}, ensure_ascii=False)

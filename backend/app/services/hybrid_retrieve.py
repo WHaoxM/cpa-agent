@@ -73,7 +73,7 @@ def keyword_retrieve_jobs(
         # Prefer structured job portraits when present
         rows = mysql.execute(
             """
-            SELECT portrait_id, position_name, required_skills_json
+            SELECT portrait_id, position_name, portrait_json
             FROM job_portrait_4d
             ORDER BY updated_at DESC
             LIMIT 200
@@ -84,17 +84,24 @@ def keyword_retrieve_jobs(
 
     student_set = {_norm_skill(n) for n in names}
     for row in rows:
-        raw = row.get("required_skills_json") or "[]"
-        try:
-            req = json.loads(raw) if isinstance(raw, str) else (raw or [])
-        except Exception:
-            req = []
+        portrait_json = row.get("portrait_json") or {}
+        if isinstance(portrait_json, str):
+            try:
+                portrait_json = json.loads(portrait_json)
+            except Exception:
+                portrait_json = {}
+
+        # 从portrait_json中提取required_skills
+        d2_req = portrait_json.get("D2_requirements", {})
+        raw = d2_req.get("required_skills", [])
         req_names = []
-        for item in req:
+        for item in raw:
             if isinstance(item, str):
                 req_names.append(item)
             elif isinstance(item, dict) and item.get("name"):
                 req_names.append(str(item["name"]))
+            elif isinstance(item, dict) and item.get("skill"):
+                req_names.append(str(item["skill"]))
         overlap = [r for r in req_names if _norm_skill(r) in student_set]
         if not overlap:
             continue

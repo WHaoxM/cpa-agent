@@ -15,7 +15,7 @@ from typing import Optional
 
 from flask import Blueprint, request, jsonify
 
-from ._helpers import parse_json_field, safe_error
+from ._helpers import ScopeError, parse_json_field, resolve_request_scope, safe_error, scope_error_response
 from ..services.db import get_mysql_client
 from ..utils.logger import get_logger
 from ..validators import validate_student_id, validate_pipeline_name
@@ -24,6 +24,45 @@ from ..config import Config
 logger = get_logger('cpa-agent.api.pipeline')
 
 pipeline_bp = Blueprint('pipeline', __name__)
+
+
+@pipeline_bp.route('/entity-review', methods=['GET'])
+def get_entity_review():
+    """Current confirmed resume's model-link proposals and user review journal."""
+    try:
+        scope = resolve_request_scope()
+        from ..services.resume_entity_review import read_entity_review
+        data = read_entity_review(get_mysql_client(), student_id=scope.student_id)
+        return jsonify({'success': True, 'data': data})
+    except ScopeError as e:
+        return scope_error_response(e)
+    except LookupError:
+        return jsonify({'success': False, 'error': '当前用户没有已确认简历'}), 404
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 409
+    except Exception as e:
+        return jsonify(safe_error('读取实体审阅', e, message='实体审阅暂不可用，请检查迁移和数据库')), 503
+
+
+@pipeline_bp.route('/entity-review', methods=['POST'])
+def post_entity_review():
+    """Append a versioned review. No profile or graph mutation occurs here."""
+    try:
+        scope = resolve_request_scope()
+        from ..services.resume_entity_review import ReviewConflict, write_entity_review
+        data = write_entity_review(get_mysql_client(), student_id=scope.student_id,
+                                   payload=request.get_json(silent=True))
+        return jsonify({'success': True, 'data': data})
+    except ScopeError as e:
+        return scope_error_response(e)
+    except LookupError:
+        return jsonify({'success': False, 'error': '当前用户没有已确认简历'}), 404
+    except ReviewConflict as e:
+        return jsonify({'success': False, 'error': str(e)}), 409
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        return jsonify(safe_error('保存实体审阅', e, message='实体审阅未确认保存，请刷新重试')), 503
 
 
 def _get_mvp_pipeline():
@@ -86,7 +125,7 @@ def _build_demo_result(pipeline: str, params: dict) -> dict:
     base = {
         "source": "demo_fallback",
         "pipeline": pipeline,
-        "message": "Demo mode completed this task synchronously for local runnable validation.",
+        "message": "Demo preview only; no domain artifact was persisted.",
     }
 
     if pipeline == "L0_parse_resume":
@@ -121,7 +160,7 @@ def _complete_demo_task(task_id: str, pipeline: str, params: dict, mysql) -> dic
     mysql.execute_write(
         """
         UPDATE pipeline_task
-        SET status='completed', progress=100, result_json=:result, error_message=NULL
+        SET status='partial', progress=100, result_json=:result, error_message=NULL
         WHERE task_id=:task_id
         """,
         {
@@ -153,9 +192,14 @@ def list_pipelines():
 def trigger_pipeline():
     """触发管线任务"""
     data = request.get_json() or {}
+    try:
+        scope = resolve_request_scope()
+    except ScopeError as e:
+        return scope_error_response(e)
+    data["student_id"] = scope.student_id
 
     pipeline = data.get('pipeline', '')
-    student_id = data.get('student_id', '')
+    student_id = scope.student_id
 
     ok, msg = validate_pipeline_name(pipeline)
     if not ok:
@@ -173,7 +217,7 @@ def trigger_pipeline():
 
     if Config.DEMO_MODE:
         result = _complete_demo_task(task_id, pipeline, data, mysql)
-        status = "completed"
+        status = "partial"
 
     logger.info(f"管线触发: task_id={task_id}, pipeline={pipeline}")
 
@@ -183,7 +227,7 @@ def trigger_pipeline():
             'task_id': task_id,
             'pipeline': pipeline,
             'status': status,
-            'progress': 100 if status == "completed" else 0,
+            'progress': 100 if status == "partial" else 0,
             'result': result,
         }
     })
@@ -192,13 +236,17 @@ def trigger_pipeline():
 @pipeline_bp.route('/status/<task_id>', methods=['GET'])
 def get_task_status(task_id: str):
     """获取任务状态"""
+    try:
+        scope = resolve_request_scope()
+    except ScopeError as e:
+        return scope_error_response(e)
     mysql = get_mysql_client()
 
     sql = """
     SELECT task_id, pipeline, status, progress, result_json, error_message, created_at
-    FROM pipeline_task WHERE task_id = :task_id
+    FROM pipeline_task WHERE task_id = :task_id AND student_id = :student_id
     """
-    result = mysql.execute(sql, {"task_id": task_id})
+    result = mysql.execute(sql, {"task_id": task_id, "student_id": scope.student_id})
 
     if not result:
         return jsonify({'success': False, 'error': '任务不存在'}), 404
@@ -221,16 +269,53 @@ def get_task_status(task_id: str):
     })
 
 
+@pipeline_bp.route('/events/<task_id>', methods=['GET'])
+def get_task_events(task_id: str):
+    """Replay committed business transitions, not estimated progress."""
+    try:
+        scope = resolve_request_scope()
+    except ScopeError as e:
+        return scope_error_response(e)
+    try:
+        cursor = int(request.args.get('cursor', '0'))
+        limit = int(request.args.get('limit', '100'))
+        if cursor < 0 or not 1 <= limit <= 200:
+            raise ValueError()
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'cursor/limit 无效'}), 400
+    from ..services.pipeline_events import read_pipeline_events
+    try:
+        data = read_pipeline_events(get_mysql_client(), student_id=scope.student_id,
+                                    task_id=task_id, cursor=cursor, limit=limit)
+        return jsonify({'success': True, 'data': data})
+    except LookupError:
+        return jsonify({'success': False, 'error': '任务不存在'}), 404
+    except Exception as e:
+        return jsonify(safe_error('Pipeline events', e, message='任务事件暂不可用，请检查迁移和数据库')), 503
+
+
 @pipeline_bp.route('/l0/parse-resume', methods=['POST'])
 def parse_resume():
     """L0: 简历解析"""
     data = request.get_json() or {}
+    try:
+        scope = resolve_request_scope()
+    except ScopeError as e:
+        return scope_error_response(e)
 
     file_path = data.get('file_path')
-    student_id = data.get('student_id')
+    student_id = scope.student_id
 
-    if not student_id:
-        return jsonify({'success': False, 'error': 'student_id 必填'}), 400
+    # This legacy route accepts paths; only the Principal's upload directory is readable.
+    if file_path:
+        owner_root = os.path.realpath(os.path.join(Config.UPLOAD_FOLDER, student_id))
+        resolved = os.path.realpath(str(file_path))
+        try:
+            owned = os.path.commonpath((owner_root, resolved)) == owner_root
+        except ValueError:
+            owned = False
+        if not owned:
+            return jsonify({'success': False, 'error': '简历文件不属于当前 Principal'}), 403
 
     mysql = get_mysql_client()
     task_id = _create_task('L0_parse_resume', {'student_id': student_id, 'file_path': file_path}, mysql)
@@ -248,8 +333,11 @@ def parse_resume():
         pipeline = NSLEPipeline()
         result = pipeline.process_resume(file_path, student_id)
 
+        if isinstance(result, dict) and result.get("success") is False:
+            raise RuntimeError(result.get("error") or "解析失败")
+
         mysql.execute_write(
-            "UPDATE pipeline_task SET status='completed', progress=100, result_json=:result WHERE task_id=:task_id",
+            "UPDATE pipeline_task SET status='partial', progress=100, result_json=:result WHERE task_id=:task_id",
             {"result": str(result), "task_id": task_id}
         )
 
@@ -257,8 +345,8 @@ def parse_resume():
             'success': True,
             'data': {
                 'task_id': task_id,
-                'status': 'completed',
-                'message': '简历解析完成'
+                'status': 'partial',
+                'message': '解析结果已返回，结构化画像仍待确认和持久化'
             }
         })
 
@@ -274,10 +362,10 @@ def parse_resume():
 def build_graph():
     """L1: 知识图谱构建"""
     data = request.get_json() or {}
-    student_id = data.get('student_id')
-
-    if not student_id:
-        return jsonify({'success': False, 'error': 'student_id 必填'}), 400
+    try:
+        student_id = resolve_request_scope().student_id
+    except ScopeError as e:
+        return scope_error_response(e)
 
     mysql = get_mysql_client()
     task_id = _create_task('L1_build_graph', {'student_id': student_id}, mysql)
@@ -296,11 +384,11 @@ def build_graph():
 def generate_portrait():
     """L2: 画像生成"""
     data = request.get_json() or {}
-    student_id = data.get('student_id')
+    try:
+        student_id = resolve_request_scope().student_id
+    except ScopeError as e:
+        return scope_error_response(e)
     job_id = data.get('job_id')
-
-    if not student_id:
-        return jsonify({'success': False, 'error': 'student_id 必填'}), 400
 
     mysql = get_mysql_client()
     task_id = _create_task('L2_generate_portrait', {'student_id': student_id, 'job_id': job_id}, mysql)
@@ -319,11 +407,14 @@ def generate_portrait():
 def run_match():
     """L3: 人岗匹配"""
     data = request.get_json() or {}
-    student_id = data.get('student_id')
+    try:
+        student_id = resolve_request_scope().student_id
+    except ScopeError as e:
+        return scope_error_response(e)
     job_portrait_id = data.get('job_portrait_id')
 
-    if not student_id or not job_portrait_id:
-        return jsonify({'success': False, 'error': 'student_id 和 job_portrait_id 必填'}), 400
+    if not job_portrait_id:
+        return jsonify({'success': False, 'error': 'job_portrait_id 必填'}), 400
 
     mysql = get_mysql_client()
     task_id = _create_task('L3_run_match', {'student_id': student_id, 'job_portrait_id': job_portrait_id}, mysql)
@@ -342,11 +433,14 @@ def run_match():
 def generate_report():
     """L4: 报告生成"""
     data = request.get_json() or {}
-    student_id = data.get('student_id')
+    try:
+        student_id = resolve_request_scope().student_id
+    except ScopeError as e:
+        return scope_error_response(e)
     job_portrait_id = data.get('job_portrait_id')
 
-    if not student_id or not job_portrait_id:
-        return jsonify({'success': False, 'error': 'student_id 和 job_portrait_id 必填'}), 400
+    if not job_portrait_id:
+        return jsonify({'success': False, 'error': 'job_portrait_id 必填'}), 400
 
     mysql = get_mysql_client()
     task_id = _create_task('L4_generate_report', {'student_id': student_id, 'job_portrait_id': job_portrait_id}, mysql)

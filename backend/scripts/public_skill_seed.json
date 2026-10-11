@@ -1,0 +1,22 @@
+{
+  "provenance": "Reviewed subset of backend/scripts/neo4j/init_neo4j.cql; never copied from a live database",
+  "skills": [
+    {"name": "HTML/CSS", "category": "前端"},
+    {"name": "JavaScript", "category": "前端"},
+    {"name": "Vue 3", "category": "前端"},
+    {"name": "React", "category": "前端"},
+    {"name": "Python", "category": "后端"},
+    {"name": "Java", "category": "后端"},
+    {"name": "Spring Boot", "category": "后端"},
+    {"name": "MySQL", "category": "后端"},
+    {"name": "Redis", "category": "后端"},
+    {"name": "数据结构", "category": "算法"},
+    {"name": "机器学习", "category": "算法"}
+  ],
+  "relations": [
+    {"source": "Vue 3", "target": "JavaScript", "confidence": 0.9},
+    {"source": "React", "target": "JavaScript", "confidence": 0.9},
+    {"source": "机器学习", "target": "数据结构", "confidence": 0.85},
+    {"source": "机器学习", "target": "Python", "confidence": 0.9}
+  ]
+}

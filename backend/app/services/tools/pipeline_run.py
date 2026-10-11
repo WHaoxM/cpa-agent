@@ -4,6 +4,7 @@ Tool 4: pipeline_run — L0-L4 管线触发
 """
 
 import json
+import os
 import uuid
 from datetime import datetime
 from typing import Dict, Optional
@@ -48,10 +49,11 @@ class PipelineRunTool(BaseTool):
 
 【可触发的管线】
 - L0_parse_resume: 简历解析 (MinerU + YOLOv10 + Qwen3-SFT)
-- L1_build_graph: 知识图谱构建 (技能骨架 + 岗位聚合 + 路径图谱)
 - L2_generate_portrait: 画像生成 (学生四维画像 + 岗位四维画像)
 - L3_run_match: 人岗匹配 (D1硬约束 + D2技能覆盖 + D3/D4加权)
 - L4_generate_report: 报告生成 (6章结构, 模板70% + LLM30%)
+
+L1 管理性图谱构建不对 Agent 开放；个人图谱由已确认资料发布流程维护。
 
 【使用场景】
 - "帮我分析简历" → L0_parse_resume
@@ -67,7 +69,7 @@ class PipelineRunTool(BaseTool):
     @property
     def parameters(self) -> Dict[str, str]:
         return {
-            "pipeline": "管线名称 (L0_parse_resume / L1_build_graph / L2_generate_portrait / L3_run_match / L4_generate_report)",
+            "pipeline": "管线名称 (L0_parse_resume / L2_generate_portrait / L3_run_match / L4_generate_report)",
             "params": "管线参数 (JSON 字符串, 如 student_id / job_id 等)"
         }
 
@@ -111,26 +113,43 @@ class PipelineRunTool(BaseTool):
         )
 
         try:
-            result = self._execute_pipeline(pipeline, params)
+            result = self._execute_pipeline(pipeline, params, task_id=task_id)
+            if not isinstance(result, dict) or result.get("success") is False or result.get("status") == "failed":
+                raise RuntimeError(str((result or {}).get("summary") or "管线未完成"))
 
+            final_status = result.get("status", "completed")
+            if final_status not in {"completed", "needs_input", "partial"}:
+                raise RuntimeError("管线返回未知完成状态")
             self.mysql.execute(
                 "UPDATE pipeline_task SET status=:status, completed_at=:completed_at, result_json=:result_json WHERE task_id=:task_id",
-                {"status": "completed", "completed_at": datetime.now(), "result_json": json.dumps(result), "task_id": task_id},
+                {"status": final_status, "completed_at": datetime.now() if final_status == "completed" else None,
+                 "result_json": json.dumps(result), "task_id": task_id},
                 commit=True
             )
 
             summary = result.get("summary", "处理完成")
+            confirmation_workflow = None
+            if pipeline == "L0_parse_resume" and final_status == "needs_input":
+                try:
+                    from ..agent_runtime.resume_confirmation import run_confirmation
+                    confirmation_workflow = run_confirmation(
+                        student_id=params["student_id"], task_id=task_id)
+                except Exception:
+                    logger.exception("Durable confirmation unavailable for %s", task_id)
+                    confirmation_workflow = {"workflow": "resume_confirmation",
+                        "resume_state": "not_available", "next_action": "confirm_resume"}
             return json.dumps({
-                "message": f"[pipeline_run] 任务完成\n任务ID: {task_id}\n管线: {pipeline}\n结果: {summary}",
-                "summary": f"{PIPELINE_TASKS.get(pipeline, pipeline)}完成",
+                "confirmation_workflow": confirmation_workflow,
+                "message": f"[pipeline_run] {summary}\n任务ID: {task_id}\n管线: {pipeline}",
+                "summary": summary,
                 "task_id": task_id,
                 "pipeline": pipeline,
-                "status": "completed",
+                "status": final_status,
                 "result": result,
                 "artifact_candidates": self._artifact_candidates_for_pipeline(
                     task_id=task_id,
                     pipeline=pipeline,
-                    status="completed",
+                    status=final_status,
                     result=result,
                 ),
             }, ensure_ascii=False)
@@ -156,18 +175,15 @@ class PipelineRunTool(BaseTool):
                 ),
             }, ensure_ascii=False)
 
-    def _execute_pipeline(self, pipeline: str, params: dict) -> dict:
-        if pipeline == "L0_parse_resume":
-            return self._run_l0_parse_resume(params)
-        elif pipeline == "L1_build_graph":
-            return self._run_l1_build_graph(params)
-        elif pipeline == "L2_generate_portrait":
-            return self._run_l2_generate_portrait(params)
-        elif pipeline == "L3_run_match":
-            return self._run_l3_run_match(params)
-        elif pipeline == "L4_generate_report":
-            return self._run_l4_generate_report(params)
-        return {"summary": "未知管线"}
+    def _execute_pipeline(self, pipeline: str, params: dict, *, task_id: str) -> dict:
+        # Agent and REST must execute the same writer, against the same task id.
+        # The older _run_l* helpers below only calculated previews and did not
+        # persist the domain artifacts they claimed to create.
+        from ..pipeline import PipelineRunner
+
+        pipeline_cls = PipelineRunner.PIPELINES[pipeline]
+        result = pipeline_cls(task_id, params, self.mysql).run()
+        return {**result, "task_id": task_id}
 
     def _artifact_candidates_for_pipeline(
         self,
@@ -178,13 +194,8 @@ class PipelineRunTool(BaseTool):
         result: dict,
     ) -> list:
         summary = str((result or {}).get("summary") or PIPELINE_TASKS.get(pipeline, pipeline))
-        kind_by_pipeline = {
-            "L0_parse_resume": "pipeline_task",
-            "L1_build_graph": "pipeline_task",
-            "L2_generate_portrait": "pipeline_task",
-            "L3_run_match": "pipeline_task",
-            "L4_generate_report": "pipeline_task",
-        }
+        # A task card is a progress record, not proof of a domain artifact.
+        kind_by_pipeline = {name: "pipeline_task" for name in PIPELINE_TASKS}
         return [{
             "kind": kind_by_pipeline.get(pipeline, "pipeline_task"),
             "status": status,
@@ -195,13 +206,12 @@ class PipelineRunTool(BaseTool):
                 "task_id": task_id,
                 "status": status,
             },
-            "actions": [{
-                "id": "open_pipeline_task",
-                "label": "查看任务",
-            }],
+            "actions": [{"id": "confirm_resume", "label": "核对简历"}]
+                if pipeline == "L0_parse_resume" and status == "needs_input" else [],
             "resource_type": "pipeline_task",
             "resource_id": task_id,
             "version": 1,
+            "verified": status == "completed",
         }]
 
     def _get_student_profile(self, student_id: str) -> Optional[Dict]:
@@ -435,9 +445,15 @@ class PipelineRunTool(BaseTool):
         pipeline = kwargs.get("pipeline", "")
         params_str = kwargs.get("params", "{}")
 
+        # Defense in depth for direct/legacy adapters that bypass PreToolUse.
+        # Keep the trusted domain L1 runner available; deny only this model-
+        # writable dispatcher, before task creation or any graph side effect.
+        if pipeline == "L1_build_graph":
+            raise PermissionError("Agent 不可执行管理性图谱构建")
+
         logger.info(f"pipeline_run 执行: pipeline={pipeline}, params={params_str}")
 
-        valid_pipelines = set(PIPELINE_TASKS.keys())
+        valid_pipelines = set(PIPELINE_TASKS) - {"L1_build_graph"}
         if pipeline not in valid_pipelines:
             return f"[pipeline_run] 错误: 未知管线 '{pipeline}', 可选: {', '.join(sorted(valid_pipelines))}"
 
@@ -445,5 +461,25 @@ class PipelineRunTool(BaseTool):
             params = json.loads(params_str) if isinstance(params_str, str) else params_str
         except json.JSONDecodeError:
             return f"[pipeline_run] 错误: params 不是有效的 JSON 格式"
+
+        if not isinstance(params, dict):
+            return "[pipeline_run] 错误: params 必须是 JSON 对象"
+        # Never use the model-written params identity as the execution owner.
+        # GateContext injects the trusted student_id outside the JSON string.
+        trusted_student_id = kwargs.get("student_id")
+        if not trusted_student_id:
+            return "[pipeline_run] 错误: 缺少服务端 Principal"
+        params["student_id"] = trusted_student_id
+        if pipeline == "L0_parse_resume" and params.get("file_path"):
+            from ...config import Config
+
+            owner_root = os.path.realpath(os.path.join(Config.UPLOAD_FOLDER, trusted_student_id))
+            file_path = os.path.realpath(str(params["file_path"]))
+            try:
+                is_owned_path = os.path.commonpath((owner_root, file_path)) == owner_root
+            except ValueError:
+                is_owned_path = False
+            if not is_owned_path:
+                return "[pipeline_run] 错误: 简历文件不属于当前 Principal"
 
         return self._run_pipeline_sync(pipeline, params)

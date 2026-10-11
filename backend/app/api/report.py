@@ -8,12 +8,60 @@ import uuid
 from flask import request, jsonify
 
 from . import report_bp
-from ._helpers import clamp_pagination, parse_json_field, safe_error
+from ._helpers import (
+    ScopeError, clamp_pagination, parse_json_field, resolve_request_scope,
+    safe_error, scope_error_response,
+)
 from ..config import Config
 from ..services.db import get_mysql_client
 from ..utils.logger import get_logger
 
 logger = get_logger('cpa-agent.api.report')
+
+
+def _resume_diagnostic_error(error):
+    from ..services.resume_diagnostic_report import ResumeReportNeedsInput, ResumeReportStale
+    if isinstance(error, ResumeReportNeedsInput):
+        return jsonify({"success": False, "status": "needs_input",
+                        "next_action": "confirm_resume", "error": str(error)}), 409
+    if isinstance(error, ResumeReportStale):
+        return jsonify({"success": False, "status": "stale",
+                        "next_action": "regenerate_resume_diagnostic", "error": str(error)}), 409
+    if isinstance(error, LookupError):
+        return jsonify({"success": False, "error": str(error)}), 404
+    return jsonify(safe_error("简历诊断报告", error, message="报告读取或生成失败")), 500
+
+
+@report_bp.route('/resume-diagnostic', methods=['POST', 'GET'])
+def resume_diagnostic():
+    """Generate or read a report sourced only from the current confirmed resume."""
+    try:
+        scope = resolve_request_scope()
+        mysql = get_mysql_client()
+        from ..services.resume_diagnostic_report import (
+            create_or_read_resume_diagnostic, read_resume_diagnostic)
+        report = (create_or_read_resume_diagnostic(mysql, student_id=scope.student_id)
+                  if request.method == 'POST' else
+                  read_resume_diagnostic(mysql, student_id=scope.student_id))
+        return jsonify({"success": True, "status": report["status"], "data": report})
+    except ScopeError as error:
+        return scope_error_response(error)
+    except Exception as error:
+        return _resume_diagnostic_error(error)
+
+
+@report_bp.route('/resume-diagnostic/<report_id>', methods=['GET'])
+def get_resume_diagnostic(report_id: str):
+    try:
+        scope = resolve_request_scope()
+        from ..services.resume_diagnostic_report import read_resume_diagnostic
+        report = read_resume_diagnostic(get_mysql_client(), student_id=scope.student_id,
+                                        report_id=report_id)
+        return jsonify({"success": True, "status": report["status"], "data": report})
+    except ScopeError as error:
+        return scope_error_response(error)
+    except Exception as error:
+        return _resume_diagnostic_error(error)
 
 
 def _build_demo_report_payload(report_id: str, student_id: str, job_portrait_id: str, data: dict) -> dict:
@@ -149,13 +197,17 @@ def _save_demo_report(mysql, report: dict) -> None:
 def generate_report():
     """生成职业发展报告 (L4 管线)"""
     data = request.get_json() or {}
-    student_id = data.get('student_id')
+    try:
+        scope = resolve_request_scope()
+    except ScopeError as e:
+        return scope_error_response(e)
+    student_id = scope.student_id
     job_portrait_id = data.get('job_portrait_id') or data.get('job_id')
 
-    if not student_id or not job_portrait_id:
+    if not job_portrait_id:
         return jsonify({
             "success": False,
-            "error": "student_id 和 job_portrait_id 必填"
+            "error": "job_portrait_id 必填"
         }), 400
 
     report_id = f"report_{uuid.uuid4().hex[:12]}"
@@ -195,32 +247,59 @@ def generate_report():
         )
     except Exception as e:
         logger.error(f"L4 报告生成失败: {e}")
-        report_result = {"status": "failed", "error": "报告生成失败"}
+        return jsonify({"success": False, "error": "报告生成失败"}), 500
 
-    response_data = {
-        "report_id": report_id,
-    }
-
-    if report_result and isinstance(report_result, dict):
-        response_data["status"] = report_result.get("status", "completed")
-        if "error" not in report_result:
-            response_data["message"] = "报告生成完成"
-        else:
-            response_data["message"] = f"报告生成失败: {report_result.get('error', '')}"
-    else:
-        response_data["status"] = "pending"
-        response_data["message"] = "报告生成任务已创建，请通过 report_id 查询进度"
-
-    return jsonify({
-        "success": True,
-        "data": response_data
-    })
+    if not isinstance(report_result, dict) or not report_result.get("task_id"):
+        return jsonify({"success": False, "error": "报告未返回权威任务 ID"}), 500
+    if not report_result.get("report_id"):
+        try:
+            task_rows = get_mysql_client().execute(
+                "SELECT status FROM pipeline_task WHERE task_id=:task_id AND student_id=:student_id LIMIT 1",
+                {"task_id": report_result["task_id"], "student_id": student_id},
+            )
+            if not task_rows:
+                raise RuntimeError("任务归属回读失败")
+            status = str(task_rows[0].get("status") or "unverified")
+            return jsonify({
+                "success": False, "status": status,
+                "data": {"task_id": report_result["task_id"], "status": status,
+                         "report_id": None, "message": report_result.get("summary") or "报告尚未生成"},
+            })
+        except Exception as e:
+            logger.error("报告任务回读失败: %s", e)
+            return jsonify({"success": False, "error": "报告任务未通过权威回读"}), 500
+    try:
+        mysql = get_mysql_client()
+        report_rows = mysql.execute(
+            "SELECT status FROM career_report WHERE report_id=:report_id AND student_id=:student_id LIMIT 1",
+            {"report_id": report_result["report_id"], "student_id": student_id},
+        )
+        task_rows = mysql.execute(
+            "SELECT status FROM pipeline_task WHERE task_id=:task_id AND student_id=:student_id LIMIT 1",
+            {"task_id": report_result["task_id"], "student_id": student_id},
+        )
+        if not report_rows or not task_rows:
+            raise RuntimeError("报告或任务记录未通过归属回读")
+        report_status = str(report_rows[0].get("status") or "unverified")
+        task_status = str(task_rows[0].get("status") or "unverified")
+        completed = report_status == task_status == "completed"
+        status = "completed" if completed else "partial" if "partial" in {report_status, task_status} else "failed"
+        response_data = {
+            "report_id": report_result["report_id"], "task_id": report_result["task_id"],
+            "status": status,
+            "message": "报告生成完成" if completed else "报告草稿或任务未完成，请核对来源后继续",
+        }
+        return jsonify({"success": completed, "status": status, "data": response_data})
+    except Exception as e:
+        logger.error("报告记录回读失败: %s", e)
+        return jsonify({"success": False, "error": "报告记录未通过权威回读"}), 500
 
 
 @report_bp.route('/<report_id>', methods=['GET'])
 def get_report(report_id: str):
     """获取报告详情"""
     try:
+        scope = resolve_request_scope()
         mysql = get_mysql_client()
 
         sql = """
@@ -249,10 +328,10 @@ def get_report(report_id: str):
         FROM career_report cr
         LEFT JOIN student_profile sp ON cr.student_id = sp.student_id
         LEFT JOIN job_portrait_4d jp ON cr.job_portrait_id = jp.portrait_id
-        WHERE cr.report_id = :report_id
+        WHERE cr.report_id = :report_id AND cr.student_id = :student_id
         """
 
-        results = mysql.execute(sql, {"report_id": report_id})
+        results = mysql.execute(sql, {"report_id": report_id, "student_id": scope.student_id})
 
         if not results:
             return jsonify({
@@ -261,6 +340,19 @@ def get_report(report_id: str):
             }), 404
 
         report = results[0]
+
+        if Config.DEMO_MODE:
+            # Explicit demo fallback predates the verified L4 snapshot format.
+            resource = {"status": report.get("status")}
+        else:
+            from ..services.agent_runtime.match_report_resources import read_match_report_resource
+            resource = read_match_report_resource(
+                mysql, student_id=scope.student_id, uri=f"career://me/reports/{report_id}")
+            if not resource.get("business_artifact_verified"):
+                return jsonify({"success": False, "status": "stale", "data": {
+                    "report_id": report_id, "reason": resource.get("reason"),
+                    "next_action": resource.get("next_action"),
+                }}), 409
 
         chapters = {}
         for i in range(1, 7):
@@ -272,6 +364,7 @@ def get_report(report_id: str):
 
         return jsonify({
             "success": True,
+            "status": resource["status"],
             "data": {
                 "report_id": report['report_id'],
                 "student_id": report['student_id'],
@@ -280,7 +373,7 @@ def get_report(report_id: str):
                 "job_portrait_id": report['job_portrait_id'],
                 "position_name": report.get('position_name'),
                 "title": report.get('title'),
-                "status": report.get('status'),
+                "status": resource["status"],
                 "chapters": chapters,
                 "report_json": report.get('report_json'),
                 "download_urls": {
@@ -293,6 +386,8 @@ def get_report(report_id: str):
             }
         })
 
+    except ScopeError as e:
+        return scope_error_response(e)
     except Exception as e:
         return jsonify(safe_error("获取报告", e, message="查询失败，请稍后重试")), 500
 
@@ -303,10 +398,11 @@ def export_report(report_id: str):
     fmt = request.args.get('format', 'html')
 
     try:
+        scope = resolve_request_scope()
         mysql = get_mysql_client()
 
-        sql = "SELECT report_id, status, html_path, pdf_path FROM career_report WHERE report_id = :report_id"
-        results = mysql.execute(sql, {"report_id": report_id})
+        sql = "SELECT report_id, status, html_path, pdf_path FROM career_report WHERE report_id = :report_id AND student_id = :student_id"
+        results = mysql.execute(sql, {"report_id": report_id, "student_id": scope.student_id})
 
         if not results:
             return jsonify({
@@ -316,6 +412,15 @@ def export_report(report_id: str):
 
         report = results[0]
         status = report.get('status')
+
+        if not Config.DEMO_MODE:
+            from ..services.agent_runtime.match_report_resources import read_match_report_resource
+            resource = read_match_report_resource(
+                mysql, student_id=scope.student_id, uri=f"career://me/reports/{report_id}")
+            if not resource.get("business_artifact_verified") or resource.get("status") != "completed":
+                return jsonify({"success": False, "status": "stale" if not resource.get(
+                    "business_artifact_verified") else "partial",
+                    "error": "报告来源未通过当前版本校验或报告尚未完成"}), 409
 
         if status != 'completed':
             return jsonify({
@@ -344,6 +449,8 @@ def export_report(report_id: str):
             }
         })
 
+    except ScopeError as e:
+        return scope_error_response(e)
     except Exception as e:
         return jsonify(safe_error("导出报告", e, message="导出失败，请稍后重试")), 500
 
@@ -352,9 +459,10 @@ def export_report(report_id: str):
 def list_reports():
     """获取报告列表"""
     try:
+        scope = resolve_request_scope()
         mysql = get_mysql_client()
 
-        student_id = request.args.get('student_id')
+        student_id = scope.student_id
         status = request.args.get('status')
         limit, offset = clamp_pagination(
             request.args.get('limit', type=int),
@@ -412,6 +520,8 @@ def list_reports():
             "offset": offset
         })
 
+    except ScopeError as e:
+        return scope_error_response(e)
     except Exception as e:
         return jsonify(safe_error("获取报告列表", e, message="查询失败，请稍后重试")), 500
 
@@ -420,6 +530,7 @@ def list_reports():
 def get_report_progress(report_id: str):
     """获取报告生成进度"""
     try:
+        scope = resolve_request_scope()
         mysql = get_mysql_client()
 
         sql = """
@@ -431,11 +542,12 @@ def get_report_progress(report_id: str):
             pt.started_at,
             pt.completed_at
         FROM career_report cr
-        LEFT JOIN pipeline_task pt ON pt.result_json LIKE CONCAT('%', cr.report_id, '%')
-        WHERE cr.report_id = :report_id
+        LEFT JOIN pipeline_task pt ON pt.student_id = cr.student_id
+            AND pt.result_json LIKE CONCAT('%', cr.report_id, '%')
+        WHERE cr.report_id = :report_id AND cr.student_id = :student_id
         """
 
-        results = mysql.execute(sql, {"report_id": report_id})
+        results = mysql.execute(sql, {"report_id": report_id, "student_id": scope.student_id})
 
         if not results:
             return jsonify({
@@ -478,6 +590,8 @@ def get_report_progress(report_id: str):
             }
         })
 
+    except ScopeError as e:
+        return scope_error_response(e)
     except Exception as e:
         return jsonify(safe_error("获取报告进度", e, message="查询失败，请稍后重试")), 500
 
@@ -486,6 +600,7 @@ def get_report_progress(report_id: str):
 def get_report_task(task_id: str):
     """获取报告生成任务状态"""
     try:
+        scope = resolve_request_scope()
         mysql = get_mysql_client()
 
         sql = """
@@ -501,10 +616,10 @@ def get_report_task(task_id: str):
             pt.completed_at,
             pt.created_at
         FROM pipeline_task pt
-        WHERE pt.task_id = :task_id
+        WHERE pt.task_id = :task_id AND pt.student_id = :student_id
         """
 
-        results = mysql.execute(sql, {"task_id": task_id})
+        results = mysql.execute(sql, {"task_id": task_id, "student_id": scope.student_id})
 
         if not results:
             return jsonify({
@@ -522,5 +637,7 @@ def get_report_task(task_id: str):
             "data": task
         })
 
+    except ScopeError as e:
+        return scope_error_response(e)
     except Exception as e:
         return jsonify(safe_error("获取任务状态", e)), 500
