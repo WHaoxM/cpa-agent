@@ -1,0 +1,7 @@
+{
+  "classification": "synthetic; no real person, school, employer, resume or job advertisement",
+  "initial_message": "这是合成验收材料，不是真实学生。请记住我的目标城市是成都，下一轮继续讨论。第1页：候选人完成Python/SQL课程和一个RAG检索实验，未记录评测指标；没有生产部署经历。第2页：教育：某大学计算机本科。目标薪资未提供。唯一提供的参考来源 https://example.invalid/reference/backend-jd 是测试用JD指针，不要声称你已联网验证。请简短确认。",
+  "followup_message": "依据上一轮材料给职业建议，但为验收严格只返回JSON对象，不要代码围栏，字段：education（学历原文）、education_page（数字）、project_metrics_available（布尔）、salary_amount（无依据则null）、salary_supported（布尔）、target_city（沿用上轮城市）、recommendation_sources（只列上轮提供的来源URL）、advice（2条需要人工审阅的具体建议）。不得编造项目成果、薪资或外部推荐链接。",
+  "expected": {"education": "某大学计算机本科", "education_page": 2, "target_city": "成都"},
+  "allowed_sources": ["https://example.invalid/reference/backend-jd"]
+}
