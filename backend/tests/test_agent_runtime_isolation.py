@@ -107,7 +107,7 @@ def test_load_blackboard_migrates_legacy_flat_keys():
 def test_plan_detect_end_to_end():
     from app.services.agent_runtime.plan import detect_plan_template, PLAN_TEMPLATES
 
-    assert detect_plan_template("请生成完整职业方案", plan_mode=False) == "end_to_end"
+    assert detect_plan_template("请生成完整职业方案", plan_mode=False) is None
     # Vague chatter must NOT auto-match; Lead owns intent, matcher is hint-only
     assert detect_plan_template("随便问问", plan_mode=True) is None
     assert PLAN_TEMPLATES["end_to_end"] == ["profile", "match", "report"]
@@ -122,45 +122,55 @@ def test_prompt_registry_has_supervisor_bundles():
     assert load_prompt("agent.qa.system")
 
 
-def test_ask_mode_greeting_default():
-    from app.services.agent_runtime.fast_path import is_pure_greeting, keyword_route
+def test_ask_mode_greeting_uses_model_not_keyword_template(monkeypatch):
     from app.services.agent_runtime import get_supervisor_service
     from app.services.agent_runtime.modes import InteractionMode, parse_interaction_mode
 
-    assert is_pure_greeting("你好啊")
     assert parse_interaction_mode(None) == InteractionMode.ASK
-    assert keyword_route("你好啊") is None
+
+    class FakeLLM:
+        def chat(self, **_kwargs):
+            return "你好，今天想聊什么职业方向？"
+
+    monkeypatch.setattr("app.utils.llm_client.get_llm_client", lambda: FakeLLM())
 
     result = get_supervisor_service().chat(message="你好啊")
     assert result["interaction_mode"] == "ask"
     assert result["orchestration"]["strategy"] == "ask"
     assert result.get("tool_calls") == []
-    assert result["elapsed_seconds"] < 2.0
-    assert "职导" in result["reply"] or "你好" in result["reply"]
+    assert result["orchestration"]["supervisor_view"]["path"] == "ask_llm"
+    assert "你好" in result["reply"]
 
 
-def test_ask_upgrade_hint_no_blackboard_write():
+def test_ask_task_request_never_autoruns_business_tools(monkeypatch):
     from app.services.agent_runtime import get_supervisor_service
+
+    class FakeLLM:
+        def chat(self, **_kwargs):
+            return "当前仅可讨论职业报告思路；若要执行，请切换到可执行模式。"
+
+    monkeypatch.setattr("app.utils.llm_client.get_llm_client", lambda: FakeLLM())
 
     result = get_supervisor_service().chat(
         message="请帮我生成职业报告",
         interaction_mode="ask",
     )
     assert result["interaction_mode"] == "ask"
-    assert result.get("upgrade_hint")
-    assert result["upgrade_hint"]["to"] in ("agent", "experts")
+    assert not result.get("upgrade_hint")
     bb = result.get("blackboard") or {}
     assert "report.current" not in bb or not bb.get("report.current")
 
 
-def test_agent_mode_keyword_match():
+def test_agent_mode_semantic_match(monkeypatch):
     from app.services.agent_runtime.mode_runtime import ModeRuntime
     from app.services.agent_runtime.task_packet import build_standard_packet
 
-    # Unit-level: keyword + packet for match without calling LLM/tools
-    from app.services.agent_runtime.fast_path import keyword_route
+    # Semantic router selects match; deterministic portrait gate still blocks.
+    class FakeLLM:
+        def chat_json(self, **_kwargs):
+            return {"action": "call", "subagent": "match", "goal": "匹配岗位", "document_view": "answer"}
 
-    assert keyword_route("帮我做人岗匹配") == "match"
+    monkeypatch.setattr("app.utils.llm_client.get_llm_client", lambda: FakeLLM())
     pkt = build_standard_packet("match", goal="匹配", user_utterance="帮我做人岗匹配")
     assert pkt.subagent == "match"
     assert "match.current" in pkt.write_keys
@@ -170,10 +180,10 @@ def test_agent_mode_keyword_match():
 
     assert parse_interaction_mode("agent") == InteractionMode.AGENT
     rt = ModeRuntime()
-    # gate without portrait → no crash, gate_block or clarify-like reply
+    # Gate without portrait must not synthesize a completed match.
     out = rt.chat(message="帮我做人岗匹配", interaction_mode="agent")
     assert out["interaction_mode"] == "agent"
-    assert out["orchestration"]["strategy"] in ("gate_block", "agent", "agent_clarify")
+    assert out["orchestration"]["strategy"] == "gate_block"
 
 
 def test_experts_mode_plan_structure():
@@ -298,11 +308,15 @@ def test_rollup_summary_uses_deterministic_cursor(monkeypatch):
     assert "m4" in prompts[-1]
 
 
-def test_blackboard_does_not_force_match_on_chitchat():
-    from app.services.agent_runtime.fast_path import keyword_route
+def test_router_decision_not_derived_from_keywords(monkeypatch):
+    from app.services.agent_runtime.mode_runtime import _llm_route
 
-    assert keyword_route("你好啊") is None
-    assert keyword_route("帮我做人岗匹配") == "match"
+    class FakeLLM:
+        def chat_json(self, **_kwargs):
+            return {"action": "call", "subagent": "qa", "goal": "解释匹配", "document_view": "answer"}
+
+    monkeypatch.setattr("app.utils.llm_client.get_llm_client", lambda: FakeLLM())
+    assert _llm_route("帮我做人岗匹配", "") ["subagent"] == "qa"
 
 
 def test_prompt_registry_three_modes():

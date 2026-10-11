@@ -15,7 +15,7 @@ from app.services.agent_runtime.task_packet import build_standard_packet
 
 
 def test_template_matcher_is_hint_only():
-    assert detect_plan_template("从简历到报告") == "end_to_end"
+    assert detect_plan_template("从简历到报告") is None
     assert detect_plan_template("专家模式干什么用的") is None
 
 
@@ -94,7 +94,7 @@ def test_lead_run_plan_with_resume_ok():
 
 
 def test_infer_known_slots_from_blackboard():
-    bb = Blackboard({"attachments.mounted": {"files": ["a.pdf"]}})
+    bb = Blackboard({"attachments.mounted": {"files": [{"file_id": "a"}]}})
     assert "resume" in _infer_known_slots("随便", bb)
 
 
@@ -111,7 +111,7 @@ def test_handoff_brief_in_first_packet():
 def test_hollow_present_true_not_substantive():
     assert _is_substantive_payload({"present": True}, had_tools=False) is False
     assert _is_substantive_payload(
-        {"summary": "基于简历生成的四维画像摘要，覆盖技能与潜力", "portrait_id": "p1"},
+        {"resource_id": "p1", "source_task_id": "t1", "status": "completed", "verified": True},
         had_tools=True,
     )
 
@@ -150,6 +150,8 @@ def test_experts_lead_fallback_explain_without_llm(monkeypatch):
 
     monkeypatch.setattr(lead, "_llm_lead", lambda *a, **k: None)
     d = experts_lead_decide("专家模式干什么用的", plan_mode=True)
-    assert d["action"] == "explain"
+    assert d["action"] == "clarify"
+    assert d["source"] == "lead_unavailable"
     assert d.get("template") is None
-    assert d.get("user_job") == "meta" or d.get("goal_summary")
+    assert d.get("goal_summary") == ""
+    assert d["confidence"] == 0

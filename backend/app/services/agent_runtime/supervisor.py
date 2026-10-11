@@ -34,6 +34,8 @@ class SupervisorService:
         content_parts: Optional[List[Dict[str, Any]]] = None,
         voice_turn_id: Optional[str] = None,
         use_memory: Optional[bool] = None,
+        prepared_turn: Optional[Dict[str, Any]] = None,
+        session_lock: Optional[threading.Lock] = None,
     ) -> Dict[str, Any]:
         return self._runtime.chat(
             message,
@@ -49,6 +51,8 @@ class SupervisorService:
             content_parts=content_parts,
             voice_turn_id=voice_turn_id,
             use_memory=use_memory,
+            prepared_turn=prepared_turn,
+            session_lock=session_lock,
         )
 
 

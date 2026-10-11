@@ -9,6 +9,7 @@ prompts for Ask stay product-facing; egress is defense-in-depth.
 from __future__ import annotations
 
 import re
+from typing import Optional
 
 from .tool_egress import redact_text
 
@@ -44,7 +45,7 @@ _REPLACEMENTS = [
 ]
 
 
-def sanitize_user_reply(text: str, *, max_len: int = 8000) -> str:
+def sanitize_user_reply(text: str, *, max_len: Optional[int] = 8000) -> str:
     """Convert model reply to ui_view: product language + PII redact."""
     out = str(text or "")
     if not out.strip():

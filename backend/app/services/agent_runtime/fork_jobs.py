@@ -8,6 +8,7 @@ Jobs run after the response is prepared (daemon thread).
 from __future__ import annotations
 
 import threading
+from uuid import uuid4
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
@@ -21,6 +22,10 @@ class ForkJob:
     kind: str
     session_id: str
     payload: Dict[str, Any] = field(default_factory=dict)
+    job_id: str = field(default_factory=lambda: str(uuid4()))
+    student_id: str = ""
+    usage_turn_id: str = ""
+    durable: bool = False
 
 
 _lock = threading.Lock()
@@ -56,15 +61,70 @@ def _run_job(job: ForkJob) -> None:
     if not handler:
         logger.warning("no fork handler for kind=%s", job.kind)
         return
-    try:
-        handler(job)
-        _stats["ran"] += 1
-    except Exception as e:
-        logger.warning("fork job failed kind=%s session=%s: %s", job.kind, job.session_id, e)
+    # Detached work cannot inherit its originating request's token budget.
+    # Give it an independent cap at the same provider boundary instead of
+    # allowing unbounded model calls after the HTTP response.
+    from .budget import capture_usage_ledger, _positive_env_int
+    from .fork_usage_store import save_record
+
+    with capture_usage_ledger(f"fork:{job.kind}",
+                              turn_token_cap=_positive_env_int("CPA_AGENT_FORK_TOKEN_CAP"),
+                              session_id=job.session_id, student_id=job.student_id) as ledger:
+        ledger.update(job_id=job.job_id, origin_usage_turn_id=job.usage_turn_id,
+                      resume_state="not_available")
+        status = "failed"
+        try:
+            if job.durable:
+                save_record(job, "running", ledger)
+            handler(job)
+            status = "partial" if ledger.get("stop_reason") else "completed"
+            _stats["ran"] += 1
+        except Exception as e:
+            status = "partial" if ledger.get("stop_reason") else "failed"
+            logger.warning("fork job failed kind=%s session=%s: %s", job.kind, job.session_id, e)
+        finally:
+            if status == "partial" and job.kind == "rollup_summary":
+                ledger["resume_state"] = "retry_on_next_turn"
+            if job.durable:
+                try:
+                    save_record(job, status, ledger)
+                except Exception:
+                    logger.exception("fork accounting persistence failed job_id=%s", job.job_id)
+            logger.info(
+                "fork job usage kind=%s calls=%d verified=%s total_tokens=%d",
+                job.kind, len(ledger["calls"]),
+                bool(ledger["calls"]) and all(
+                    isinstance(call.get("usage"), dict)
+                    and type(call["usage"].get("total_tokens")) is int
+                    for call in ledger["calls"]
+                ),
+                sum((call.get("usage") or {}).get("total_tokens") or 0 for call in ledger["calls"]),
+            )
 
 
 def enqueue(session_id: str, kind: str, payload: Optional[Dict[str, Any]] = None) -> str:
     job = ForkJob(kind=kind, session_id=session_id or "", payload=payload or {})
+    # Only the model-backed summary path is migrated. Audit/reflection keep their
+    # existing transport; neither is advertised as durable model accounting.
+    from .budget import current_usage_ledger
+    parent = current_usage_ledger()
+    if kind == "rollup_summary":
+        from .fork_usage_store import create_record
+        job.student_id = str((parent or {}).get("student_id") or "")
+        job.usage_turn_id = str((parent or {}).get("usage_turn_id") or "")
+        reference = {"job_id": job.job_id, "kind": kind, "status": "queued",
+                     "resume_state": "not_available"}
+        if parent is not None:
+            parent["background_jobs"].append(reference)
+        try:
+            if not job.student_id or not job.session_id or not job.usage_turn_id:
+                raise ValueError("fork accounting owner/session/turn required")
+            create_record(job)
+            job.durable = True
+        except Exception:
+            reference["status"] = "accounting_unavailable"
+            logger.warning("fork skipped: accounting unavailable job_id=%s", job.job_id)
+            return kind
     _stats["enqueued"] += 1
     if _run_inline_for_tests:
         _run_job(job)

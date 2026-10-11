@@ -12,10 +12,22 @@ from .tool_egress import sanitize_tool_calls
 from .turn_contract import (
     build_message_parts,
     build_turn_events,
+    derive_turn_outcome,
     extract_artifact_refs,
     new_turn_id,
+    normalize_artifact_ref,
     normalize_message_parts,
+    normalize_turn_outcome,
 )
+
+
+_PUBLIC_EVIDENCE_STATUSES = frozenset({"completed", "partial", "unavailable"})
+_PUBLIC_EVIDENCE_COVERAGE_REASONS = frozenset({
+    "not_read", "char_budget", "budget_too_small", "reference_not_current",
+    "reference_version_conflict", "continuation_invalid", "evidence_not_needed",
+    "selection_unavailable", "no_valid_selection", "no_valid_reference",
+    "item_limit", "source_unavailable", "complete",
+})
 
 
 @dataclass(frozen=True)
@@ -33,6 +45,7 @@ class EgressEnvelope:
 @dataclass(frozen=True)
 class PublicTurn:
     turn_id: str
+    outcome: Dict[str, Any]
     reply: str
     tool_calls: List[Dict[str, Any]]
     thinking_steps: List[str]
@@ -48,6 +61,9 @@ class PublicTurn:
     fork_jobs_enqueued: List[str]
     permission_denials: List[Dict[str, str]]
     orchestration: Dict[str, Any]
+    usage_ledger: Optional[Dict[str, Any]] = None
+    session_title: Optional[str] = None
+    session_summary: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -88,6 +104,12 @@ def project_turn(
         result.get("thinking_steps") or orch.get("thinking_steps") or []
     )
     artifacts = extract_artifact_refs(result.get("tool_calls"))
+    seen_artifact_ids = {ref["artifact_id"] for ref in artifacts}
+    for raw in result.get("artifacts") or []:
+        ref = normalize_artifact_ref(raw)
+        if ref and ref["artifact_id"] not in seen_artifact_ids:
+            artifacts.append(ref)
+            seen_artifact_ids.add(ref["artifact_id"])
     explicit_parts = result.get("parts")
     parts = normalize_message_parts(explicit_parts, fallback_text="") or build_message_parts(
         reply=reply,
@@ -98,6 +120,7 @@ def project_turn(
         permission_denials=denials,
     )
     turn_id = str(result.get("turn_id") or new_turn_id())
+    outcome = derive_turn_outcome(result)
     events = build_turn_events(
         turn_id=turn_id,
         session_id=result.get("session_id"),
@@ -105,9 +128,11 @@ def project_turn(
         reply=reply,
         orchestration=public_orch,
         artifacts=artifacts,
+        outcome=outcome,
     )
     return PublicTurn(
         turn_id=turn_id,
+        outcome=outcome,
         reply=reply,
         tool_calls=tool_calls,
         thinking_steps=thinking_steps,
@@ -123,7 +148,50 @@ def project_turn(
         fork_jobs_enqueued=[str(x) for x in fork_jobs],
         permission_denials=denials,
         orchestration=public_orch,
+        usage_ledger=_public_usage_ledger(result.get("usage_ledger")),
+        session_title=_sanitize_title(result.get("session_title")),
+        session_summary=_sanitize_summary(result.get("session_summary")),
     )
+
+
+def _public_usage_ledger(value: Any) -> Optional[Dict[str, Any]]:
+    """Expose accounting only; never copy arbitrary provider metadata or prompts."""
+    if not isinstance(value, dict):
+        return None
+    calls = []
+    for raw in value.get("calls") or []:
+        if not isinstance(raw, dict):
+            continue
+        usage = raw.get("usage")
+        clean_usage = {
+            key: usage[key] for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+            if isinstance(usage, dict) and type(usage.get(key)) is int and usage[key] >= 0
+        } if isinstance(usage, dict) else None
+        calls.append({
+            "call_id": str(raw.get("call_id") or "")[:80],
+            "stage": str(raw.get("stage") or "")[:80],
+            "provider": str(raw.get("provider") or "")[:80],
+            "model": str(raw.get("model") or "")[:120],
+            "usage": clean_usage if clean_usage else None,
+            "finish_reason": str(raw.get("finish_reason") or "")[:80],
+        })
+    cap = value.get("turn_token_cap")
+    return {
+        "mode": str(value.get("mode") or "")[:40],
+        "usage_turn_id": str(value.get("usage_turn_id") or "")[:64],
+        "background_jobs": [
+            {key: str(job.get(key) or "")[:80]
+             for key in ("job_id", "kind", "status", "resume_state")}
+            for job in value.get("background_jobs", []) if isinstance(job, dict)
+        ],
+        "turn_token_cap": cap if type(cap) is int and cap > 0 else None,
+        "verified": bool(calls) and all(
+            c["usage"] and all(k in c["usage"] for k in ("prompt_tokens", "completion_tokens", "total_tokens"))
+            and c["usage"]["total_tokens"] >= c["usage"]["prompt_tokens"] + c["usage"]["completion_tokens"]
+            for c in calls
+        ),
+        "calls": calls,
+    }
 
 
 def project_session_context(context: Dict[str, Any]) -> Dict[str, Any]:
@@ -166,6 +234,8 @@ def project_session_messages(messages: Iterable[Dict[str, Any]]) -> List[Dict[st
             out["turn_id"] = meta["turn_id"]
         if meta.get("interaction_mode"):
             out["interaction_mode"] = meta["interaction_mode"]
+        if meta.get("outcome"):
+            out["outcome"] = meta["outcome"]
         parts = normalize_message_parts(meta.get("parts_v1"), fallback_text=content)
         if parts:
             out["parts"] = parts
@@ -185,6 +255,9 @@ def _public_message_metadata(meta: Dict[str, Any]) -> Dict[str, Any]:
         out["turn_id"] = str(meta["turn_id"])
     if meta.get("interaction_mode"):
         out["interaction_mode"] = str(meta["interaction_mode"])
+    outcome = normalize_turn_outcome(meta.get("outcome"))
+    if outcome:
+        out["outcome"] = outcome
     if isinstance(meta.get("parts_v1"), list):
         out["parts_v1"] = normalize_message_parts(meta.get("parts_v1"))
     if isinstance(meta.get("artifacts"), list):
@@ -238,6 +311,13 @@ def _public_orchestration(
     if denials:
         out["permission_denials"] = denials
     progress = _public_progress(orch.get("supervisor_view") if isinstance(orch, dict) else None)
+    # Assistant messages persist the already-public orchestration projection,
+    # not the private ``supervisor_view``. Re-projecting that metadata through
+    # history must retain its safe evidence/source coverage instead of
+    # silently dropping it. The persisted shape is still re-whitelisted here;
+    # it is not trusted as arbitrary output.
+    if not progress and isinstance(orch, dict):
+        progress = _public_persisted_progress(orch.get("progress"))
     if progress:
         out["progress"] = progress
     mount_errors = orch.get("mount_errors") if isinstance(orch, dict) else None
@@ -246,12 +326,73 @@ def _public_orchestration(
     return _drop_forbidden_keys(out)
 
 
+def _public_persisted_progress(raw: Any) -> Dict[str, Any]:
+    """Re-validate an already-public progress projection stored in history."""
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    if isinstance(raw.get("path"), str):
+        out["path"] = sanitize_user_reply(raw["path"], max_len=80)
+    grounding = raw.get("grounding")
+    if isinstance(grounding, dict) and grounding.get("status") in {
+        "model_checked", "blocked", "not_applicable", "not_checked", "source_count",
+    }:
+        out["grounding"] = {
+            key: grounding[key]
+            for key in ("status", "checks", "revised", "reason")
+            if key in grounding
+        }
+    if "document_complete" in raw:
+        out["document_complete"] = bool(raw.get("document_complete"))
+    if isinstance(raw.get("evidence"), dict):
+        evidence = raw["evidence"]
+        coverage = evidence.get("coverage") if isinstance(evidence.get("coverage"), dict) else {}
+        safe_coverage: Dict[str, Any] = {}
+        if type(coverage.get("complete")) is bool:
+            safe_coverage["complete"] = coverage["complete"]
+        for key in ("returned", "total"):
+            value = coverage.get(key)
+            if type(value) is int and value >= 0:
+                safe_coverage[key] = value
+        reason = coverage.get("reason")
+        if isinstance(reason, str) and reason in _PUBLIC_EVIDENCE_COVERAGE_REASONS:
+            safe_coverage["reason"] = reason
+        safe_evidence: Dict[str, Any] = {
+            "status": _public_evidence_status(evidence.get("status")),
+            "coverage": safe_coverage,
+            "has_more": bool(evidence.get("has_more")),
+            "next_offset": evidence.get("next_offset")
+            if type(evidence.get("next_offset")) is int and evidence["next_offset"] >= 0 else None,
+            "truncated": bool(evidence.get("truncated")),
+        }
+        next_action = evidence.get("next_action")
+        if next_action in {"continue_evidence", "retry_evidence"}:
+            safe_evidence["next_action"] = next_action
+        sources = []
+        for source in evidence.get("sources") or []:
+            if not isinstance(source, dict):
+                continue
+            sources.append({
+                "uri": sanitize_user_reply(str(source.get("uri") or ""), max_len=160),
+                "section": sanitize_user_reply(str(source.get("section") or ""), max_len=80),
+                "version": sanitize_user_reply(str(source.get("version") or ""), max_len=160),
+                "status": sanitize_user_reply(str(source.get("status") or ""), max_len=80),
+            })
+        if sources:
+            safe_evidence["sources"] = sources[:4]
+        out["evidence"] = safe_evidence
+    return out
+
+
 def _public_progress(view: Any) -> Dict[str, Any]:
     if not isinstance(view, dict):
         return {}
     out: Dict[str, Any] = {}
     if view.get("path"):
         out["path"] = str(view["path"])
+    grounding = view.get("grounding")
+    if isinstance(grounding, dict) and grounding.get("status") in {"model_checked", "blocked", "not_applicable", "not_checked", "source_count"}:
+        out["grounding"] = {key: grounding[key] for key in ("status", "checks", "revised", "reason") if key in grounding}
     if isinstance(view.get("filenames"), list):
         out["filenames"] = [sanitize_user_reply(str(x), max_len=120) for x in view["filenames"][:4]]
     doc_pack = view.get("doc_pack") if isinstance(view.get("doc_pack"), dict) else {}
@@ -265,7 +406,58 @@ def _public_progress(view: Any) -> Dict[str, Any]:
         out["missing_slots"] = [str(x) for x in view["missing_slots"][:4]]
     if isinstance(view.get("plan_sketch"), list):
         out["plan_sketch"] = [sanitize_user_reply(str(x), max_len=120) for x in view["plan_sketch"][:4]]
+    evidence = view.get("evidence_pack") if isinstance(view.get("evidence_pack"), dict) else {}
+    if evidence:
+        coverage = evidence.get("coverage") if isinstance(evidence.get("coverage"), dict) else {}
+        public_coverage: Dict[str, Any] = {}
+        if type(coverage.get("complete")) is bool:
+            public_coverage["complete"] = coverage["complete"]
+        for key in ("returned", "total"):
+            value = coverage.get(key)
+            if type(value) is int and value >= 0:
+                public_coverage[key] = value
+            elif key == "total" and value is None and key in coverage:
+                public_coverage[key] = None
+        reason = coverage.get("reason")
+        if isinstance(reason, str) and reason in _PUBLIC_EVIDENCE_COVERAGE_REASONS:
+            public_coverage["reason"] = reason
+        has_more = bool(evidence.get("has_more"))
+        unavailable = bool(evidence.get("unavailable")) or evidence.get("status") == "unavailable"
+        if has_more:
+            next_action = "continue_evidence"
+        elif unavailable or evidence.get("budget_exceeded"):
+            next_action = "retry_evidence"
+        else:
+            next_action = None
+        public_evidence: Dict[str, Any] = {
+            "status": _public_evidence_status(evidence.get("status")),
+            "coverage": public_coverage,
+            "has_more": has_more,
+            "next_offset": evidence.get("next_offset")
+            if type(evidence.get("next_offset")) is int else None,
+            "truncated": bool(evidence.get("truncated")),
+        }
+        if next_action:
+            public_evidence["next_action"] = next_action
+        sources = []
+        for source in evidence.get("sources") or []:
+            if not isinstance(source, dict):
+                continue
+            sources.append({
+                "uri": sanitize_user_reply(str(source.get("uri") or ""), max_len=160),
+                "section": sanitize_user_reply(str(source.get("section") or ""), max_len=80),
+                "version": sanitize_user_reply(str(source.get("version") or ""), max_len=160),
+                "status": sanitize_user_reply(str(source.get("status") or ""), max_len=80),
+            })
+        if sources:
+            public_evidence["sources"] = sources[:4]
+        out["evidence"] = public_evidence
     return out
+
+
+def _public_evidence_status(raw: Any) -> str:
+    """Expose only stable coverage states, never arbitrary evidence strings."""
+    return raw if isinstance(raw, str) and raw in _PUBLIC_EVIDENCE_STATUSES else "unavailable"
 
 
 def _public_permission_denials(raw: Any) -> List[Dict[str, str]]:
@@ -305,3 +497,17 @@ def _drop_forbidden_keys(data: Any) -> Any:
     if isinstance(data, list):
         return [_drop_forbidden_keys(v) for v in data]
     return data
+
+
+def _sanitize_title(raw: Any) -> Optional[str]:
+    if not raw or not isinstance(raw, str):
+        return None
+    cleaned = sanitize_user_reply(raw.strip(), max_len=60)
+    return cleaned or None
+
+
+def _sanitize_summary(raw: Any) -> Optional[str]:
+    if not raw or not isinstance(raw, str):
+        return None
+    cleaned = sanitize_user_reply(raw.strip(), max_len=200)
+    return cleaned or None

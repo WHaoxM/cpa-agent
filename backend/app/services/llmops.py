@@ -36,6 +36,19 @@ def langfuse_enabled() -> bool:
     )
 
 
+def langfuse_content_capture_enabled() -> bool:
+    """Whether an operator explicitly permits prompt/answer export to Langfuse.
+
+    Provider accounting (model, finish state, and token usage) is enough for
+    default production observability.  Agent prompts can include a student's
+    resume, contact details, or owner-scoped evidence, so content must not be
+    exported merely because tracing credentials happen to be configured.
+    """
+    return (os.environ.get("CPA_LANGFUSE_CAPTURE_CONTENT") or "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
 @contextmanager
 def trace_generation(
     name: str,
@@ -43,10 +56,11 @@ def trace_generation(
     metadata: Optional[Dict[str, Any]] = None,
     input_preview: str = "",
 ) -> Iterator[Dict[str, Any]]:
-    """Yield a mutable bag; callers may set output/usage. No-op without Langfuse."""
+    """Yield an accounting bag; content export requires explicit operator opt-in."""
     bag: Dict[str, Any] = {"name": name, "metadata": metadata or {}}
     trace = None
     generation = None
+    capture_content = langfuse_content_capture_enabled()
     if langfuse_enabled():
         try:
             from langfuse import Langfuse
@@ -57,10 +71,10 @@ def trace_generation(
                 host=(os.environ.get("LANGFUSE_HOST") or "https://cloud.langfuse.com").strip(),
             )
             trace = client.trace(name=name, metadata=metadata or {})
-            generation = trace.generation(
-                name=name,
-                input=input_preview[:2000] if input_preview else None,
-            )
+            generation_args: Dict[str, Any] = {"name": name}
+            if capture_content and input_preview:
+                generation_args["input"] = input_preview[:2000]
+            generation = trace.generation(**generation_args)
             bag["_lf_generation"] = generation
             bag["_lf_client"] = client
         except Exception as e:
@@ -71,10 +85,10 @@ def trace_generation(
         try:
             gen = bag.get("_lf_generation")
             if gen is not None:
-                gen.end(
-                    output=(bag.get("output") or "")[:4000],
-                    metadata=bag.get("end_metadata") or {},
-                )
+                end_args: Dict[str, Any] = {"metadata": bag.get("end_metadata") or {}}
+                if capture_content and bag.get("output"):
+                    end_args["output"] = str(bag["output"])[:4000]
+                gen.end(**end_args)
             client = bag.get("_lf_client")
             if client is not None and hasattr(client, "flush"):
                 client.flush()

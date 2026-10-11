@@ -7,20 +7,31 @@ session so future prompt-cache layers can hit; do not reshuffle tool lists mid-s
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from .modes import InteractionMode
 from .prompt_selector import PromptSelectionKey, get_prompt_selector
 from .tool_policy import describe_allowlist
 
-# Session-scoped cache: (mode, tool_digest_key) -> prefix
-_PREFIX_CACHE: Dict[str, str] = {}
+# Session-scoped cache: (mode, tool_digest_key) -> (prefix, epoch_hash)
+_PREFIX_CACHE: Dict[str, Tuple[str, int]] = {}
 
 
 def tool_schema_digest(subagent: str) -> str:
     names = describe_allowlist(subagent)
     # Stable sorted list — never reorder across turns
     return ", ".join(sorted(names)) if names else "(none)"
+
+
+def _compute_epoch_hash() -> int:
+    """计算当前 prompt registry 的 epoch 哈希值。"""
+    try:
+        from .context_epoch import ContextEpoch
+        epoch = ContextEpoch.current()
+        # 使用 prompt_versions 的哈希作为 epoch 标识
+        return hash(tuple(sorted(epoch.prompt_versions.items())))
+    except Exception:
+        return 0
 
 
 def build_mode_prefix(
@@ -36,7 +47,19 @@ def build_mode_prefix(
     the frozen head so the head bytes stay cacheable.
     """
     cache_key = f"{mode.value}|tools:{agent_tool_digest}"
-    head = _PREFIX_CACHE.get(cache_key)
+    current_epoch_hash = _compute_epoch_hash()
+    cached = _PREFIX_CACHE.get(cache_key)
+
+    if cached is not None:
+        cached_prefix, cached_epoch = cached
+        if cached_epoch == current_epoch_hash:
+            head = cached_prefix
+        else:
+            # Epoch changed, regenerate prefix
+            head = None
+    else:
+        head = None
+
     if head is None:
         bundle = get_prompt_selector().select(
             PromptSelectionKey(
@@ -51,7 +74,7 @@ def build_mode_prefix(
         if mode == InteractionMode.EXPERTS:
             parts.append("【Experts】仅执行白名单计划步骤；每步成功才 commit。")
         head = "\n\n".join(p for p in parts if p)
-        _PREFIX_CACHE[cache_key] = head
+        _PREFIX_CACHE[cache_key] = (head, current_epoch_hash)
 
     tail: List[str] = []
     if memory_mount:

@@ -19,7 +19,9 @@ from langchain_core.messages import (
     HumanMessage,
     SystemMessage,
     ToolMessage,
+    convert_to_openai_messages,
 )
+from langchain_core.runnables import Runnable
 from langchain_core.tools import tool as lc_tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
@@ -38,6 +40,9 @@ from config.prompt_loader import load_prompt
 
 from ..utils.logger import get_logger
 from ..utils.llm_client import LLMClient
+from .agent_runtime.budget import (
+    context_window_status, record_model_call, require_turn_token_capacity,
+)
 from ..config import Config
 
 logger = get_logger('cpa-agent.langgraph')
@@ -133,6 +138,7 @@ def _build_langchain_tools() -> List[Any]:
     """从现有 BaseTool 实例构建 langchain tool 列表"""
     from .tools.graph_query import GraphQueryTool
     from .tools.db_query import DbQueryTool
+    from .tools.career_data_read import CareerDataReadTool
     from .tools.semantic_search import SemanticSearchTool
     from .tools.pipeline_run import PipelineRunTool
     from .tools.llm_reason import LlmReasonTool
@@ -155,6 +161,7 @@ def _build_langchain_tools() -> List[Any]:
     instances = [
         GraphQueryTool(),
         DbQueryTool(),
+        CareerDataReadTool(),
         SemanticSearchTool(),
         PipelineRunTool(),
         LlmReasonTool(),
@@ -225,6 +232,131 @@ def agent_node(state: CPAState, llm_with_tools) -> Dict:
 def _build_llm_with_tools(lc_tools: List[Any], temperature: float, max_tokens: int):
     """按 LLM_FAILOVER_ORDER 构建 ChatOpenAI + tools；402/鉴权等自动落到下一厂商。"""
     from config.integration_loader import get_failover_order, get_provider_config
+    from langchain_core.utils.function_calling import convert_to_openai_tool
+
+    class BudgetedCandidates(Runnable):
+        """Guard the *final* LangChain messages on every tool round and fallback."""
+
+        def __init__(self, candidates, tool_schema):
+            self.candidates = candidates
+            self.tool_schema = tool_schema
+
+        def _checked(self, messages):
+            import json
+
+            # LangChain's own serializer retains tool_call arguments and
+            # multimodal blocks; unsupported content fails closed below.
+            wire = convert_to_openai_messages(messages)
+            if isinstance(wire, dict):
+                wire = [wire]
+            if self.tool_schema:
+                wire = [{"role": "system", "content": json.dumps(
+                    self.tool_schema, ensure_ascii=False, separators=(",", ":"),
+                )}] + wire
+            return wire
+
+        @staticmethod
+        def _usage(response):
+            metadata = getattr(response, "usage_metadata", None) or {}
+            if metadata:
+                return {
+                    "prompt_tokens": metadata.get("input_tokens"),
+                    "completion_tokens": metadata.get("output_tokens"),
+                    "total_tokens": metadata.get("total_tokens"),
+                }
+            raw = (getattr(response, "response_metadata", None) or {}).get("token_usage") or {}
+            if raw:
+                return {key: raw.get(key) for key in (
+                    "prompt_tokens", "completion_tokens", "total_tokens",
+                )}
+            return None
+
+        def invoke(self, input, config=None, **kwargs):
+            wire = self._checked(input)
+            budget_errors = []
+            provider_errors = []
+            for provider, model, bound in self.candidates:
+                status = context_window_status(provider, model, wire, max_tokens)
+                if status.fits is not True:
+                    budget_errors.append(f"{provider}/{model}: {status.reason}")
+                    continue
+                require_turn_token_capacity(max_tokens, estimated_input_tokens=status.estimated_input_tokens or 0)
+                try:
+                    response = bound.invoke(input, config=config, **kwargs)
+                except Exception as exc:
+                    record_model_call(
+                        provider=provider, model=model, stage="langgraph",
+                        usage=None, preflight=status, finish_reason="provider_error",
+                    )
+                    require_turn_token_capacity(0)
+                    provider_errors.append(f"{provider}/{model}: {exc}")
+                    continue
+                response_metadata = getattr(response, "response_metadata", None) or {}
+                finish_reason = response_metadata.get("finish_reason")
+                actual_model = response_metadata.get("model_name") or model
+                record_model_call(
+                    provider=provider, model=actual_model, stage="langgraph",
+                    usage=self._usage(response), preflight=status,
+                    finish_reason=finish_reason,
+                )
+                require_turn_token_capacity(0)
+                if actual_model != model:
+                    raise RuntimeError(
+                        f"provider_model_mismatch: requested={model} actual={actual_model}"
+                    )
+                if finish_reason == "length":
+                    raise RuntimeError(f"LangGraph output truncated provider={provider} model={model}")
+                return response
+            raise RuntimeError(
+                "LangGraph providers failed or context budget unproven: "
+                + " | ".join(budget_errors + provider_errors)
+            )
+
+        def stream(self, input, config=None, **kwargs):
+            # The main LangGraph path invokes the model in agent_node. Keep
+            # direct streaming guarded as well for future callers.
+            wire = self._checked(input)
+            errors = []
+            for provider, model, bound in self.candidates:
+                status = context_window_status(provider, model, wire, max_tokens)
+                if status.fits is not True:
+                    errors.append(f"{provider}/{model}: {status.reason}")
+                    continue
+                require_turn_token_capacity(max_tokens, estimated_input_tokens=status.estimated_input_tokens or 0)
+                emitted = False
+                last_chunk = None
+                observed_usage = None
+                try:
+                    for chunk in bound.stream(input, config=config, **kwargs):
+                        emitted = True
+                        last_chunk = chunk
+                        observed_usage = self._usage(chunk) or observed_usage
+                        yield chunk
+                except Exception:
+                    record_model_call(
+                        provider=provider, model=model, stage="langgraph.stream",
+                        usage=observed_usage, preflight=status,
+                        finish_reason="stream_error",
+                    )
+                    require_turn_token_capacity(0)
+                    raise
+                metadata = getattr(last_chunk, "response_metadata", None) or {}
+                finish_reason = metadata.get("finish_reason")
+                actual_model = metadata.get("model_name") or model
+                record_model_call(
+                    provider=provider, model=actual_model, stage="langgraph.stream",
+                    usage=observed_usage, preflight=status,
+                    finish_reason=finish_reason,
+                )
+                require_turn_token_capacity(0)
+                if actual_model != model:
+                    raise RuntimeError(
+                        f"provider_model_mismatch: requested={model} actual={actual_model}"
+                    )
+                if finish_reason == "length":
+                    raise RuntimeError(f"LangGraph output truncated provider={provider} model={model}")
+                return
+            raise RuntimeError("LangGraph streaming context budget unproven: " + " | ".join(errors))
 
     bound: List[Any] = []
     for provider in get_failover_order():
@@ -238,8 +370,9 @@ def _build_llm_with_tools(lc_tools: List[Any], temperature: float, max_tokens: i
             temperature=temperature,
             max_tokens=max_tokens,
             timeout=cfg.get("timeout") or Config.LLM_TIMEOUT,
+            max_retries=0,
         )
-        bound.append(llm.bind_tools(lc_tools))
+        bound.append((provider, cfg["model"], llm.bind_tools(lc_tools)))
         logger.info(
             "LangGraph LLM candidate provider=%s model=%s",
             provider,
@@ -248,9 +381,7 @@ def _build_llm_with_tools(lc_tools: List[Any], temperature: float, max_tokens: i
 
     if not bound:
         raise ValueError("未配置可用 LLM（LangGraph 需要至少一个 provider 的 API Key）")
-    if len(bound) == 1:
-        return bound[0]
-    return bound[0].with_fallbacks(bound[1:])
+    return BudgetedCandidates(bound, [convert_to_openai_tool(tool) for tool in lc_tools])
 
 
 def build_cpa_agent(
@@ -356,40 +487,8 @@ def _align_checkpoint_collation() -> None:
     utf8mb4_0900_ai_ci，与表列比较时报错。
     见 https://github.com/tjni/langgraph-checkpoint-mysql/issues/55
     """
-    from .db import get_mysql_client
-
-    mysql = get_mysql_client()
-    target = "utf8mb4_0900_ai_ci"
-    rows = mysql.execute(
-        """
-        SELECT TABLE_NAME
-        FROM information_schema.TABLES
-        WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_NAME IN (
-            'checkpoints', 'checkpoint_blobs',
-            'checkpoint_writes', 'checkpoint_migrations'
-          )
-        """
-    )
-    for row in rows or []:
-        name = row["TABLE_NAME"] if isinstance(row, dict) else row[0]
-        # 已是目标 collation 则跳过
-        status = mysql.execute(
-            """
-            SELECT TABLE_COLLATION
-            FROM information_schema.TABLES
-            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :name
-            LIMIT 1
-            """,
-            {"name": name},
-        )
-        current = (status[0].get("TABLE_COLLATION") if status else None) or ""
-        if current == target:
-            continue
-        mysql.execute(
-            f"ALTER TABLE `{name}` CONVERT TO CHARACTER SET utf8mb4 COLLATE {target}"
-        )
-        logger.info("checkpoint 表 collation 已对齐: %s -> %s", name, target)
+    from .agent_runtime.checkpoint_mysql import align_checkpoint_collation
+    align_checkpoint_collation()
 
 
 def get_checkpointer():

@@ -113,6 +113,22 @@ class RedisClient:
             logger.error(f"Redis GET 失败: {e}")
             return default
 
+    def get_strict(self, key: str) -> Any:
+        """Read authoritative state without conflating an outage with a miss."""
+        value = self._get_client().get(key)
+        if value is None:
+            return None
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return value
+
+    def set_strict(self, key: str, value: Any, *, ex: Optional[int] = None) -> None:
+        """Persist authoritative state or raise; never report a swallowed SET as success."""
+        encoded = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+        if not self._get_client().set(key, encoded, ex=ex):
+            raise RuntimeError("Redis SET did not persist session state")
+
     def delete(self, *keys: str) -> int:
         """删除键"""
         try:

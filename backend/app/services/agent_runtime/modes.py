@@ -25,7 +25,6 @@ class ModeBudget:
     allow_memory_read: bool
     allow_memory_write_sync: bool  # only confirmed USER constraints
     allow_llm_router: bool
-    ask_greeting_accel: bool  # Ask-only narrow accel
 
 
 BUDGETS: Dict[InteractionMode, ModeBudget] = {
@@ -38,7 +37,6 @@ BUDGETS: Dict[InteractionMode, ModeBudget] = {
         allow_memory_read=False,
         allow_memory_write_sync=True,  # confirmed USER constraints still writable
         allow_llm_router=False,
-        ask_greeting_accel=True,
     ),
     InteractionMode.AGENT: ModeBudget(
         allow_tools=True,
@@ -46,8 +44,7 @@ BUDGETS: Dict[InteractionMode, ModeBudget] = {
         allow_blackboard_business_write=True,
         allow_memory_read=True,
         allow_memory_write_sync=True,
-        allow_llm_router=True,  # only when keyword miss + ambiguous
-        ask_greeting_accel=False,
+        allow_llm_router=True,
     ),
     InteractionMode.EXPERTS: ModeBudget(
         allow_tools=True,
@@ -56,15 +53,8 @@ BUDGETS: Dict[InteractionMode, ModeBudget] = {
         allow_memory_read=True,
         allow_memory_write_sync=True,
         allow_llm_router=False,
-        ask_greeting_accel=False,
     ),
 }
-
-
-_TASK_UPGRADE_HINTS = (
-    "报告", "匹配", "画像", "学习路径", "pipeline", "生成职业", "一键出报告",
-    "完整职业方案", "端到端", "从简历到",
-)
 
 
 def parse_interaction_mode(
@@ -91,24 +81,6 @@ def parse_interaction_mode(
 
 def budget_for(mode: InteractionMode) -> ModeBudget:
     return BUDGETS[mode]
-
-
-def detect_upgrade_hint(message: str, mode: InteractionMode) -> Optional[Dict[str, str]]:
-    """Ask mode: suggest upgrade when user asks for tool-heavy work; never auto-escalate."""
-    if mode != InteractionMode.ASK:
-        return None
-    text = message or ""
-    if any(k in text for k in ("完整职业方案", "一键出报告", "端到端", "从简历到报告")):
-        return {
-            "to": InteractionMode.EXPERTS.value,
-            "reason": "该请求适合 Experts 多步骤协作（画像→匹配→报告）。",
-        }
-    if any(k in text for k in _TASK_UPGRADE_HINTS):
-        return {
-            "to": InteractionMode.AGENT.value,
-            "reason": "该请求需要调用业务工具执行，建议切换到 Agent 模式。",
-        }
-    return None
 
 
 def persist_mode_into_context(context: Dict[str, Any], mode: InteractionMode) -> Dict[str, Any]:

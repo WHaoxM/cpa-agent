@@ -121,6 +121,7 @@ runtime_routes:
 
 prompts:
   - id: agent.chat.system
+    version: 1
     description: ReAct Agent 对话系统提示词 (工具调用 + 阶段感知)
     base: agent.chat.system/base.md
     tone: agent.chat.system/tone.md
@@ -133,6 +134,7 @@ prompts:
   # entity_extractor — 简历抽取 (Qwen3-0.6B 极简指令)
   # ------------------------------------------------------------------
   - id: entity.resume.system
+    version: 1
     description: 简历抽取系统提示词 — 强制 XML 标签规则
     base: entity.resume.system/base.md
     tone: entity.resume.system/tone.md
@@ -140,6 +142,7 @@ prompts:
       - app.pipeline.entity_extractor.prompts.resume_prompts
 
   - id: entity.resume.user.basic_info
+    version: 1
     description: 简历基本信息抽取
     base: entity.resume.user.basic_info/base.md
     tone: entity.resume.user.basic_info/tone.md
@@ -149,6 +152,7 @@ prompts:
       - indexed_text
 
   - id: entity.resume.user.education
+    version: 1
     description: 简历教育经历抽取
     base: entity.resume.user.education/base.md
     tone: entity.resume.user.education/tone.md
@@ -159,6 +163,7 @@ prompts:
       - confirmed
 
   - id: entity.resume.user.experience
+    version: 1
     description: 简历工作/项目经历抽取
     base: entity.resume.user.experience/base.md
     tone: entity.resume.user.experience/tone.md
@@ -169,6 +174,7 @@ prompts:
       - confirmed
 
   - id: entity.resume.user.skills
+    version: 1
     description: 简历技能抽取
     base: entity.resume.user.skills/base.md
     tone: entity.resume.user.skills/tone.md
@@ -182,6 +188,7 @@ prompts:
   # entity_extractor — JD 抽取
   # ------------------------------------------------------------------
   - id: entity.jd.system
+    version: 1
     description: JD 抽取系统提示词 — JSON-only 严格模式
     base: entity.jd.system/base.md
     tone: entity.jd.system/tone.md
@@ -189,6 +196,7 @@ prompts:
       - app.pipeline.entity_extractor.prompts.jd_prompts
 
   - id: entity.jd.user.job_info
+    version: 1
     description: JD 职位基本信息抽取
     base: entity.jd.user.job_info/base.md
     tone: entity.jd.user.job_info/tone.md
@@ -198,6 +206,7 @@ prompts:
       - jd_text
 
   - id: entity.jd.user.requirements
+    version: 1
     description: JD 任职要求抽取
     base: entity.jd.user.requirements/base.md
     tone: entity.jd.user.requirements/tone.md
@@ -208,6 +217,7 @@ prompts:
       - constraints
 
   - id: entity.jd.user.description
+    version: 1
     description: JD 职责/描述抽取
     base: entity.jd.user.description/base.md
     tone: entity.jd.user.description/tone.md
@@ -220,6 +230,7 @@ prompts:
   # tool.llm_reason — ReAct Agent 推理工具
   # ------------------------------------------------------------------
   - id: tool.llm_reason.system
+    version: 1
     description: llm_reason 工具系统提示词（职业规划专家）
     base: tool.llm_reason.system/base.md
     tone: tool.llm_reason.system/tone.md
@@ -230,6 +241,7 @@ prompts:
   # entity_normalizer — OOV 闭环 LLM 归一化
   # ------------------------------------------------------------------
   - id: entity.normalize.user.award
+    version: 1
     description: 奖项级别归一化（国家级/省级/校级）
     base: entity.normalize.user.award/base.md
     tone: entity.normalize.user.award/tone.md
@@ -240,6 +252,7 @@ prompts:
       - ctx
 
   - id: entity.normalize.user.generic
+    version: 1
     description: 通用实体（技能/职位/专业/证书）归一化
     base: entity.normalize.user.generic/base.md
     tone: entity.normalize.user.generic/tone.md
@@ -254,6 +267,7 @@ prompts:
   # text_cyber — Text-to-Cypher 三段 prompt
   # ------------------------------------------------------------------
   - id: cypher.intent.user
+    version: 1
     description: Cypher 意图理解（节点/关系/路径/聚合/Schema/相似度）
     base: cypher.intent.user/base.md
     tone: cypher.intent.user/tone.md
@@ -263,6 +277,7 @@ prompts:
       - query
 
   - id: cypher.generate.user
+    version: 1
     description: 自然语言 → Cypher (READ-ONLY 安全约束)
     base: cypher.generate.user/base.md
     tone: cypher.generate.user/tone.md
@@ -272,6 +287,7 @@ prompts:
       - query
 
   - id: cypher.rewrite.user
+    version: 1
     description: Cypher 查询结果 → 自然语言中文回复
     base: cypher.rewrite.user/base.md
     tone: cypher.rewrite.user/tone.md
@@ -284,7 +300,28 @@ prompts:
   # ------------------------------------------------------------------
   # l4_report_generator — 报告 LLM 摘要
   # ------------------------------------------------------------------
+  - id: report.resume_diagnostic.user
+    version: 1
+    description: 已确认简历事实的证据约束型语义诊断
+    base: report.resume_diagnostic.user/base.md
+    tone: report.resume_diagnostic.user/tone.md
+    consumers:
+      - app.services.resume_diagnostic_report
+    variables:
+      - evidence_json
+
+  - id: report.role_directions.user
+    version: 3
+    description: 已确认简历事实的候选岗位方向，不是实时招聘或正式匹配
+    base: report.role_directions.user/base.md
+    tone: report.role_directions.user/tone.md
+    consumers:
+      - app.services.resume_diagnostic_report
+    variables:
+      - evidence_json
+
   - id: report.summary.user
+    version: 1
     description: 人岗匹配报告 100 字摘要生成
     base: report.summary.user/base.md
     tone: report.summary.user/tone.md
@@ -299,10 +336,11 @@ prompts:
       - gap_lines
 
   # ------------------------------------------------------------------
-  # graph_query tool — 携带 schema 上下文的 Cypher 生成
+  # graph_query tool — 公共图谱模板选择与实体名抽取
   # ------------------------------------------------------------------
   - id: tool.graph_query.system
-    description: graph_query 工具系统提示词（携带动态 Neo4j schema）
+    version: 1
+    description: graph_query 公共图谱模板选择提示词（不生成 Cypher）
     base: tool.graph_query.system/base.md
     tone: tool.graph_query.system/tone.md
     consumers:
@@ -315,6 +353,7 @@ prompts:
   # langgraph_agent — 备用 agent 系统提示词（基于 LangGraph 状态机）
   # ------------------------------------------------------------------
   - id: agent.langgraph.system
+    version: 1
     description: LangGraph Agent 系统提示词（含用户阶段感知；legacy mode）
     base: agent.langgraph.system/base.md
     tone: agent.langgraph.system/tone.md
@@ -326,6 +365,7 @@ prompts:
   # Supervisor + Expert bundles（上下文隔离运行时）
   # ------------------------------------------------------------------
   - id: agent.manual
+    version: 1
     description: 共享 Work Manual（隔离/黑板 ACL/工具/记忆禁令）
     base: agent.manual/base.md
     tone: agent.manual/tone.md
@@ -335,6 +375,7 @@ prompts:
       - app.services.agent_runtime.subagent_graphs
 
   - id: agent.supervisor.system
+    version: 1
     description: Supervisor 编排器系统提示
     base: agent.supervisor.system/base.md
     tone: agent.supervisor.system/tone.md
@@ -342,6 +383,7 @@ prompts:
       - app.services.agent_runtime.supervisor
 
   - id: agent.ask.manual
+    version: 1
     description: Ask 用户通道契约（产品语义，不含内部工具/黑板名）
     base: agent.ask.manual/base.md
     tone: agent.ask.manual/tone.md
@@ -349,6 +391,7 @@ prompts:
       - app.services.agent_runtime.prefix
 
   - id: agent.ask.system
+    version: 1
     description: Ask 交互模式系统提示（轻量问答）
     base: agent.ask.system/base.md
     tone: agent.ask.system/tone.md
@@ -357,6 +400,7 @@ prompts:
       - app.services.agent_runtime.prefix
 
   - id: agent.agent.system
+    version: 1
     description: Agent 交互模式系统提示（单子 Agent）
     base: agent.agent.system/base.md
     tone: agent.agent.system/tone.md
@@ -365,6 +409,7 @@ prompts:
       - app.services.agent_runtime.prefix
 
   - id: agent.experts.system
+    version: 1
     description: Experts 交互模式系统提示（Lead 多步）
     base: agent.experts.system/base.md
     tone: agent.experts.system/tone.md
@@ -373,6 +418,7 @@ prompts:
       - app.services.agent_runtime.prefix
 
   - id: agent.profile.system
+    version: 1
     description: profile 子 Agent 系统提示
     base: agent.profile.system/base.md
     tone: agent.profile.system/tone.md
@@ -381,6 +427,7 @@ prompts:
       - app.services.agent_runtime.subagent_graphs
 
   - id: agent.match.system
+    version: 1
     description: match 子 Agent 系统提示
     base: agent.match.system/base.md
     tone: agent.match.system/tone.md
@@ -389,6 +436,7 @@ prompts:
       - app.services.agent_runtime.subagent_graphs
 
   - id: agent.report.system
+    version: 1
     description: report 子 Agent 系统提示
     base: agent.report.system/base.md
     tone: agent.report.system/tone.md
@@ -397,6 +445,7 @@ prompts:
       - app.services.agent_runtime.subagent_graphs
 
   - id: agent.planner.system
+    version: 1
     description: planner 子 Agent 系统提示
     base: agent.planner.system/base.md
     tone: agent.planner.system/tone.md
@@ -405,6 +454,7 @@ prompts:
       - app.services.agent_runtime.subagent_graphs
 
   - id: agent.qa.system
+    version: 1
     description: qa 子 Agent 系统提示
     base: agent.qa.system/base.md
     tone: agent.qa.system/tone.md
@@ -412,6 +462,7 @@ prompts:
       - app.services.agent_runtime.scoped_invoke
 
   - id: agent.ask.attachment_qa.system
+    version: 1
     description: Ask 附件问答系统提示（产品语义，不暴露内部工具名）
     base: agent.ask.attachment_qa.system/base.md
     tone: agent.ask.attachment_qa.system/tone.md
@@ -420,6 +471,7 @@ prompts:
       - app.services.agent_runtime.scoped_invoke
 
   - id: agent.router.system
+    version: 1
     description: Agent 模式路由器 JSON 契约
     base: agent.router.system/base.md
     tone: agent.router.system/tone.md
@@ -430,6 +482,7 @@ prompts:
       - message
 
   - id: agent.experts.lead.system
+    version: 1
     description: Experts Lead JSON 契约
     base: agent.experts.lead.system/base.md
     tone: agent.experts.lead.system/tone.md
@@ -446,6 +499,7 @@ prompts:
       - message
 
   - id: agent.ask.thinking.system
+    version: 1
     description: Ask thinking 操作指令（只进模型，不出站）
     base: agent.ask.thinking.system/base.md
     tone: agent.ask.thinking.system/tone.md
@@ -453,6 +507,7 @@ prompts:
       - app.services.agent_runtime.thinking_trace
 
   - id: agent.attachment.integrity.system
+    version: 1
     description: 附件完整性模型指令
     base: agent.attachment.integrity.system/base.md
     tone: agent.attachment.integrity.system/tone.md
@@ -461,6 +516,7 @@ prompts:
       - app.services.agent_runtime.scoped_invoke
 
   - id: agent.task_packet.system
+    version: 1
     description: 子 Agent TaskPacket 瘦包规则
     base: agent.task_packet.system/base.md
     tone: agent.task_packet.system/tone.md
@@ -470,7 +526,29 @@ prompts:
   # ------------------------------------------------------------------
   # llm_skill_extractor — LLM 技能抽取 prompt
   # ------------------------------------------------------------------
+  - id: entity.skill_mentions.user
+    version: 1
+    description: 简历技能原文提及的窄schema抽取
+    base: entity.skill_mentions.user/base.md
+    tone: entity.skill_mentions.user/tone.md
+    consumers:
+      - app.pipeline.entity_extractor.llm_skill_extractor
+    variables:
+      - text
+
+  - id: entity.resume_link.user
+    version: 1
+    description: 简历原文技能与已发布公共技能的语义对齐建议
+    base: entity.resume_link.user/base.md
+    tone: entity.resume_link.user/tone.md
+    consumers:
+      - app.services.resume_entity_linking
+    variables:
+      - mentions_json
+      - candidates_json
+
   - id: entity.skill_extractor.user
+    version: 1
     description: LLM 技能抽取（硬技能 + 软技能 + 掌握程度）
     base: entity.skill_extractor.user/base.md
     tone: entity.skill_extractor.user/tone.md
@@ -483,6 +561,7 @@ prompts:
   # nsle_pipeline — DeepSeek 版本 LLM 抽取 prompt
   # ------------------------------------------------------------------
   - id: pipeline.nsle.extract.skills.user
+    version: 1
     description: NS-LE 简历技能抽取（技能数组 + reasoning）
     base: pipeline.nsle.extract.skills.user/base.md
     tone: pipeline.nsle.extract.skills.user/tone.md
@@ -492,6 +571,7 @@ prompts:
       - text
 
   - id: pipeline.nsle.extract.experience.user
+    version: 1
     description: NS-LE 工作经历抽取
     base: pipeline.nsle.extract.experience.user/base.md
     tone: pipeline.nsle.extract.experience.user/tone.md
@@ -501,6 +581,7 @@ prompts:
       - text
 
   - id: pipeline.nsle.extract.education.user
+    version: 1
     description: NS-LE 教育经历抽取
     base: pipeline.nsle.extract.education.user/base.md
     tone: pipeline.nsle.extract.education.user/tone.md
@@ -510,6 +591,7 @@ prompts:
       - text
 
   - id: pipeline.nsle.extract.certificates.user
+    version: 1
     description: NS-LE 证书与资格认证抽取
     base: pipeline.nsle.extract.certificates.user/base.md
     tone: pipeline.nsle.extract.certificates.user/tone.md
@@ -519,6 +601,7 @@ prompts:
       - text
 
   - id: pipeline.nsle.extract.basic_info.user
+    version: 1
     description: NS-LE 基本信息抽取（姓名/联系方式/年级）
     base: pipeline.nsle.extract.basic_info.user/base.md
     tone: pipeline.nsle.extract.basic_info.user/tone.md
@@ -528,6 +611,7 @@ prompts:
       - text
 
   - id: pipeline.nsle.extract.awards.user
+    version: 1
     description: NS-LE 竞赛/奖学金/荣誉抽取
     base: pipeline.nsle.extract.awards.user/base.md
     tone: pipeline.nsle.extract.awards.user/tone.md
@@ -537,6 +621,7 @@ prompts:
       - text
 
   - id: pipeline.nsle.extract.student_profile.user
+    version: 1
     description: Resume Structure Truth — 全文/窗口 canonical student_profile（LLM only）
     base: pipeline.nsle.extract.student_profile.user/base.md
     tone: pipeline.nsle.extract.student_profile.user/tone.md
@@ -547,6 +632,7 @@ prompts:
       - text
 
   - id: pipeline.nsle.merge.student_profile.user
+    version: 1
     description: Resume Structure Truth — 多窗口 LLM merge 为单一 student_profile
     base: pipeline.nsle.merge.student_profile.user/base.md
     tone: pipeline.nsle.merge.student_profile.user/tone.md
@@ -559,6 +645,7 @@ prompts:
   # admin_kb — 知识库智能上传实体解析
   # ------------------------------------------------------------------
   - id: admin.kb.extract_entities.user
+    version: 1
     description: 知识库上传内容实体解析（技能/职业/关系/薪资/需求）
     base: admin.kb.extract_entities.user/base.md
     tone: admin.kb.extract_entities.user/tone.md
@@ -572,6 +659,7 @@ prompts:
   # scripts/ — 冷启动脚本 prompt (向量化种子数据)
   # ------------------------------------------------------------------
   - id: script.vector.skill_enrich.user
+    version: 1
     description: generate_vectors.py 技能语义丰富化 (150-200 字)
     base: script.vector.skill_enrich.user/base.md
     tone: script.vector.skill_enrich.user/tone.md
@@ -584,6 +672,7 @@ prompts:
       - tier
 
   - id: script.vector.jd_chunk.user
+    version: 1
     description: generate_vectors.py JD 切片向量化 (200-300 字)
     base: script.vector.jd_chunk.user/base.md
     tone: script.vector.jd_chunk.user/tone.md
@@ -595,6 +684,7 @@ prompts:
       - category
 
   - id: script.vector.skill_seed_enrich.user
+    version: 1
     description: seed_skill_vectors.py 种子技能丰富化 (含 orig 字段)
     base: script.vector.skill_seed_enrich.user/base.md
     tone: script.vector.skill_seed_enrich.user/tone.md
@@ -608,6 +698,7 @@ prompts:
       - orig
 
   - id: agent.career_suggestions.user
+    version: 1
     description: 职业匹配建议 — 仅输出 JSON suggestions 数组
     base: agent.career_suggestions.user/base.md
     tone: agent.career_suggestions.user/tone.md
@@ -617,6 +708,7 @@ prompts:
       - context_json
 
   - id: ai.growth_analysis.user
+    version: 1
     description: 报告成长分析 — AIAnalysisResult JSON
     base: ai.growth_analysis.user/base.md
     tone: ai.growth_analysis.user/tone.md

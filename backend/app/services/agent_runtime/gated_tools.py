@@ -4,6 +4,8 @@ Wrap langchain tools with PreToolUse + dual-channel projection.
 
 from __future__ import annotations
 
+import json
+import inspect
 from typing import Any, Dict, List, Optional
 
 from langchain_core.tools import StructuredTool
@@ -18,6 +20,34 @@ from .permissions import visible_tools_for
 from .artifact_committer import get_artifact_committer
 
 logger = get_logger("cpa-agent.agent_runtime.gated")
+
+# Only repeat idempotent reads. Mutating pipeline/report tools must never be
+# re-executed merely because their response was lost after a timeout.
+_TRANSIENT_RETRY_READS = frozenset({
+    "attachment_read", "career_data_read", "graph_query", "semantic_search",
+})
+
+
+def _failure(code: str, *, retryable: bool, attempts: int) -> Dict[str, Any]:
+    return {
+        "status": "error", "success": False, "error_code": code,
+        "retryable": retryable, "attempts": attempts,
+        "summary": "工具执行未完成，请根据错误状态调整下一步；不得声称操作成功。",
+    }
+
+
+def _transient(exc: Exception) -> bool:
+    return isinstance(exc, (TimeoutError, ConnectionError))
+
+
+def _error_code(exc: Exception) -> str:
+    if isinstance(exc, PermissionError):
+        return "permission_denied"
+    if isinstance(exc, TimeoutError):
+        return "tool_timeout"
+    if isinstance(exc, ConnectionError):
+        return "tool_connection_error"
+    return "tool_execution_error"
 
 
 def _accepts_kwargs(fn) -> bool:
@@ -79,9 +109,10 @@ def _wrap_one(
     def gated_func(**kwargs: Any) -> str:
         gate = pre_tool_use(name, kwargs, gate_ctx)
         if not gate.allowed:
-            msg = f"[permission_denied] {gate.verdict.reason}"
+            raw = _failure("permission_denied", retryable=False, attempts=0)
+            msg = json.dumps(raw, ensure_ascii=False)
             ui_collector.append(
-                build_ui_view(name, msg, parameters=gate.args, status="error")
+                build_ui_view(name, raw, parameters=gate.args, status="error")
             )
             enqueue_audit(
                 session_id=gate_ctx.session_id,
@@ -95,39 +126,60 @@ def _wrap_one(
             return build_model_view(name, msg)
 
         raw: Any
-        try:
+        execution_status = "done"
+        attempts = 0
+
+        def invoke_once() -> Any:
             # Prefer func(**args): StructuredTool.invoke() strips keys not in
             # args_schema, which drops PreToolUse-injected student_id/session_id.
             func = getattr(base_tool, "func", None)
             if callable(func):
-                raw = func(**gate.args)
-            elif hasattr(base_tool, "run"):
-                raw = base_tool.run(**gate.args) if _accepts_kwargs(base_tool.run) else base_tool.run(gate.args)
-            elif hasattr(base_tool, "invoke"):
-                raw = base_tool.invoke(gate.args)
-            else:
-                raw = f"[error] cannot invoke tool {name}"
-        except TypeError as te:
-            # Fallback: schema-visible keys only (injected keys may not match signature)
-            try:
-                fields = getattr(args_schema, "model_fields", None) or {}
-                slim = {k: v for k, v in gate.args.items() if not fields or k in fields}
-                if callable(func):
-                    raw = func(**slim)
-                elif hasattr(base_tool, "invoke"):
-                    raw = base_tool.invoke(slim)
-                else:
-                    raise te
-            except Exception as e:
-                logger.warning("gated tool %s failed: %s", name, e)
-                raw = f"[error] {name} 执行失败"
-        except Exception as e:
-            logger.warning("gated tool %s failed: %s", name, e)
-            raw = f"[error] {name} 执行失败"
+                # Check *binding* before invocation. Catching an execution
+                # TypeError and calling again can duplicate side effects.
+                call_args = gate.args
+                try:
+                    signature = inspect.signature(func)
+                    signature.bind_partial(**call_args)
+                except TypeError:
+                    fields = getattr(args_schema, "model_fields", None) or signature.parameters
+                    call_args = {k: v for k, v in gate.args.items() if k in fields}
+                except ValueError:
+                    pass  # Some native callables expose no inspectable signature.
+                return func(**call_args)
+            if hasattr(base_tool, "run"):
+                return base_tool.run(**gate.args) if _accepts_kwargs(base_tool.run) else base_tool.run(gate.args)
+            if hasattr(base_tool, "invoke"):
+                return base_tool.invoke(gate.args)
+            raise NotImplementedError("tool has no callable executor")
 
-        text = raw if isinstance(raw, str) else str(raw)
-        model_view = build_model_view(name, text)
-        ui_view = build_ui_view(name, raw, parameters=gate.args, status="done")
+        while True:
+            attempts += 1
+            try:
+                raw = invoke_once()
+                break
+            except Exception as e:
+                retryable = name in _TRANSIENT_RETRY_READS and _transient(e)
+                if retryable and attempts == 1:
+                    logger.warning("gated read tool %s transient failure; retrying once", name)
+                    continue
+                logger.warning("gated tool %s failed: %s", name, type(e).__name__)
+                raw = _failure(_error_code(e), retryable=retryable, attempts=attempts)
+                execution_status = "error"
+                break
+
+        if attempts > 1 and isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    raw = {**parsed, "attempts": attempts}
+            except ValueError:
+                pass
+        elif attempts > 1 and isinstance(raw, dict):
+            raw = {**raw, "attempts": attempts}
+
+        text = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False)
+        model_view = build_model_view(name, raw)
+        ui_view = build_ui_view(name, raw, parameters=gate.args, status=execution_status)
         candidates = ui_view.pop("artifact_candidates", [])
         artifact_refs = get_artifact_committer().commit_candidates(
             candidates,

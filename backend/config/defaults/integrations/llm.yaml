@@ -5,6 +5,12 @@ providers:
   openai:
     base_url: "https://api.openai.com/v1"
     model: "gpt-4o-mini"
+    capability:
+      # Official model card checked 2026-10-09.
+      # https://developers.openai.com/api/docs/models/gpt-4o-mini
+      context_window_tokens: 128000
+      max_output_tokens: 16384
+      tokenizer: tiktoken
 
   deepseek:
     base_url: "https://api.deepseek.com/v1"
@@ -14,10 +20,37 @@ providers:
     # 通义千问 OpenAI 兼容模式
     base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
     model: "qwen-plus"
+    capability:
+      # Conservative older-snapshot/region ceiling; current alias may allow 1M.
+      # https://help.aliyun.com/en/model-studio/qwen-plus (checked 2026-10-09)
+      context_window_tokens: 131072
+      max_input_tokens: 98304
+      max_output_tokens: 16384
+      tokenizer: utf8_bytes_conservative
+
+  qwen-turbo:
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model: "qwen-turbo"
+    capability:
+      # https://help.aliyun.com/en/model-studio/qwen-turbo (checked 2026-10-09)
+      context_window_tokens: 131072
+      max_input_tokens: 98304
+      max_output_tokens: 16384
+      tokenizer: utf8_bytes_conservative
+
+  qwen-max:
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model: "qwen-max"
+    capability:
+      # https://help.aliyun.com/zh/model-studio/text-generation-model (checked 2026-10-09)
+      context_window_tokens: 32768
+      tokenizer: utf8_bytes_conservative
 
   moonshot:
     base_url: "https://api.moonshot.cn/v1"
     model: "moonshot-v1-8k"
+    # No verified official window metadata in this environment. Fail closed
+    # until CPA_LLM_CONTEXT_WINDOW_TOKENS_MOONSHOT is explicitly configured.
 
   zhipu:
     base_url: "https://open.bigmodel.cn/api/paas/v4"
@@ -39,11 +72,14 @@ providers:
     base_url: null
     model: null
 
+# Capabilities are tied to the exact preset model ID, never to a provider
+# alias after an env model override. Verify values before changing them.
+
 defaults:
   # 启动时默认 provider，.env 中 LLM_PROVIDER 可覆盖
-  provider: "deepseek"
+  provider: "qwen"
   timeout: 120
   # 故障转移顺序（.env LLM_FAILOVER_ORDER 可覆盖，逗号分隔）
   failover_order:
-    - deepseek
     - qwen
+    - qwen-turbo

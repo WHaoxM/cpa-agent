@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Dict, FrozenSet, List, Set
 
 SHARED_READONLY = frozenset({
+    "career_data_read",
     "graph_query",
     "normalize_entity",
     "semantic_search",
@@ -14,6 +15,7 @@ SHARED_READONLY = frozenset({
 # Hard partitions (plan D)
 TOOL_ALLOWLIST: Dict[str, FrozenSet[str]] = {
     "profile": frozenset({
+        "career_data_read",
         "pipeline_run",
         "portrait_generate",
         "skill_extract",
@@ -22,6 +24,7 @@ TOOL_ALLOWLIST: Dict[str, FrozenSet[str]] = {
         "attachment_read",
     }),
     "match": frozenset({
+        "career_data_read",
         "skill_match",
         "pipeline_run",
         "semantic_search",
@@ -30,6 +33,7 @@ TOOL_ALLOWLIST: Dict[str, FrozenSet[str]] = {
         "attachment_read",
     }),
     "report": frozenset({
+        "career_data_read",
         "report_generate",
         "llm_reason",
         "db_query",
@@ -42,6 +46,7 @@ TOOL_ALLOWLIST: Dict[str, FrozenSet[str]] = {
         "llm_reason",
     }) | SHARED_READONLY,
     "qa": frozenset({
+        "career_data_read",
         "graph_query",
         "semantic_search",
         "db_query",

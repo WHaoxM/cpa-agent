@@ -50,23 +50,14 @@ def sanitize_parameters(params: Any) -> Dict[str, str]:
     return safe
 
 
-def public_tool_summary(tool_name: str, result_text: str = "", ok: bool = True) -> str:
-    name = tool_name or "tool"
-    if not ok or (result_text and ("错误" in result_text or "失败" in result_text)):
-        snippet = redact_text(result_text, max_len=100)
-        return f"{name} 未成功" + (f"：{snippet}" if snippet else "")
-    # Prefer status line over raw dump
-    if "任务ID" in (result_text or "") or "task_" in (result_text or ""):
-        m = re.search(r"task_[a-zA-Z0-9]+", result_text or "")
-        tid = m.group(0) if m else ""
-        return f"{name} 已完成" + (f"（{tid}）" if tid else "")
-    if "查询结果" in (result_text or ""):
-        m = re.search(r"查询结果\s*\((\d+)\s*条\)", result_text or "")
-        n = m.group(1) if m else "?"
-        return f"{name} 完成，返回 {n} 条（已脱敏）"
-    if "skills_count" in (result_text or ""):
-        return f"{name} 完成"
-    return f"{name} 已完成"
+def public_tool_summary(tool_name: str, result_text: str = "", ok: bool = True, *, status: Optional[str] = None) -> str:
+    """Render producer state; result prose cannot prove business completion."""
+    labels = {"done": "调用已结束", "completed": "调用已结束", "error": "未成功",
+              "failed": "未成功", "partial": "部分完成", "needs_input": "待补充或确认",
+              "running": "进行中", "pending": "等待执行", "queued": "等待执行",
+              "unverified": "结果待核验", "cancelled": "已取消"}
+    state = status or ("done" if ok else "error")
+    return f"{tool_name or 'tool'} {labels.get(state, '结果待核验')}（已脱敏）"
 
 
 def sanitize_tool_call_record(record: Dict[str, Any]) -> Dict[str, Any]:
@@ -87,23 +78,46 @@ def sanitize_tool_call_record(record: Dict[str, Any]) -> Dict[str, Any]:
         or ""
     )
     params = record.get("parameters") or record.get("args") or {}
-    summary = public_tool_summary(name, raw_preview, ok=True)
+    status = str(record.get("status") or "unverified")
+    summary = public_tool_summary(name, status=status)
+    row_count = record.get("row_count")
+    if isinstance(row_count, int) and not isinstance(row_count, bool) and row_count >= 0:
+        summary += f"，返回 {row_count} 条"
     out: Dict[str, Any] = {
         "tool_name": name,
-        "status": str(record.get("status") or "done"),
+        "status": status,
         "summary": summary,
         "result_preview": summary,  # never raw DB dump
         "parameters": sanitize_parameters(params),
         "egress": "redacted",
     }
+    if status in {"error", "failed", "denied", "unavailable"}:
+        error_code = record.get("error_code")
+        if isinstance(error_code, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", error_code):
+            out["error_code"] = error_code
+        if type(record.get("retryable")) is bool:
+            out["retryable"] = record["retryable"]
+    attempts = record.get("attempts")
+    if type(attempts) is int and 1 <= attempts <= 9:
+        out["attempts"] = attempts
+    if isinstance(row_count, int) and not isinstance(row_count, bool) and row_count >= 0:
+        out["row_count"] = row_count
+    if record.get("truncated") is True:
+        out["truncated"] = True
+        continuation = record.get("continuation")
+        # build_ui_view emits this fixed pagination form from a validated
+        # integer next_offset. Never forward arbitrary tool-result prose.
+        out["continuation"] = (
+            continuation
+            if isinstance(continuation, str)
+            and re.fullmatch(r"下一页从 offset=\d{1,9} 继续读取", continuation)
+            else "请缩小查询范围后重试"
+        )
     # Keep task_id if present for pipeline polling
     if isinstance(params, dict):
         tid = params.get("task_id") or params.get("taskId")
         if tid:
             out["parameters"]["task_id"] = str(tid)
-    m = re.search(r"task_[a-zA-Z0-9]+", raw_preview)
-    if m and "task_id" not in out["parameters"]:
-        out["parameters"]["task_id"] = m.group(0)
     refs = record.get("artifact_refs") or record.get("artifacts")
     if isinstance(refs, list):
         safe_refs = []
@@ -113,7 +127,7 @@ def sanitize_tool_call_record(record: Dict[str, Any]) -> Dict[str, Any]:
             safe_refs.append({
                 "artifact_id": str(ref.get("artifact_id") or ""),
                 "kind": str(ref.get("kind") or "file"),
-                "status": str(ref.get("status") or "completed"),
+                "status": str(ref.get("status") or "unverified"),
                 "title": redact_text(str(ref.get("title") or "成果物"), max_len=120),
                 "summary": redact_text(str(ref.get("summary") or ""), max_len=240),
                 "preview": ref.get("preview") if isinstance(ref.get("preview"), dict) else {},

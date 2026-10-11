@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
+import json
 from typing import Any, Dict, List, Optional, Set
 
 from .modes import InteractionMode
@@ -65,7 +66,34 @@ class ToolScopeNormalizer:
         if deny:
             return self.args, False, deny
 
+        # pipeline_run accepts params as a model-writable JSON string. Decode it
+        # before applying the same scope normalization used for nested objects.
+        if self.tool_name == "pipeline_run" and "params" in self.args:
+            raw_params = self.args["params"]
+            params_was_string = isinstance(raw_params, str)
+            if isinstance(raw_params, str):
+                try:
+                    raw_params = json.loads(raw_params)
+                except (TypeError, ValueError):
+                    return self.args, False, "pipeline params must be a JSON object"
+            if not isinstance(raw_params, dict):
+                return self.args, False, "pipeline params must be a JSON object"
+            self.args["params"] = raw_params
         out = self._rewrite_value(self.args)
+        if self.tool_name == "pipeline_run":
+            params = out.setdefault("params", {})
+            if params.get("student_id") != self.student_id:
+                self.rewritten = True
+                params["student_id"] = self.student_id
+            # Preserve the caller's representation: LangChain uses a string,
+            # while direct gate users can pass an already-decoded object.
+            if "params" in self.args and params_was_string:
+                out["params"] = json.dumps(params, ensure_ascii=False)
+        if self.tool_name == "portrait_generate" and out.get("entity_type") == "student":
+            # `name` was historically passed as student_id by the tool.
+            if out.get("name") != self.student_id:
+                self.rewritten = True
+                out["name"] = self.student_id
         if self.student_id is not None and out.get("student_id") != self.student_id:
             self.rewritten = True
             out["student_id"] = self.student_id
@@ -78,7 +106,7 @@ class ToolScopeNormalizer:
     def _missing_scope_reason(self) -> Optional[str]:
         if self.student_id:
             return None
-        if self.tool_name == "attachment_read":
+        if self.tool_name in ("attachment_read", "career_data_read"):
             return "missing session student_id for scoped tool"
         if self.tool_name in ("db_query", "pipeline_run", "portrait_generate", "report_generate"):
             q = str(self.args.get("query", ""))
@@ -170,6 +198,16 @@ def pre_tool_use(
         if verdict.decision != Decision.ALLOW:
             ctx.denials.append({"tool": tool_name, "reason": verdict.reason})
             return GateResult(allowed=False, args=raw, verdict=verdict)
+
+    # A scoped pipeline dispatcher is not a grant to administer the shared
+    # graph. L1 still writes legacy JobPortrait/Skill/Person nodes without an
+    # owner partition; neither a plan allowlist nor student_id rewriting makes
+    # those writes safe. Confirmed personal graph publication has its own path.
+    if tool_name == "pipeline_run" and raw.get("pipeline") == "L1_build_graph":
+        reason = "Agent 不可执行管理性图谱构建；个人图谱须走已确认资料发布流程。"
+        verdict = PermissionVerdict(Decision.DENY, reason=reason)
+        ctx.denials.append({"tool": tool_name, "reason": reason})
+        return GateResult(allowed=False, args=raw, verdict=verdict)
 
     bound, rewritten, deny_reason = ToolScopeNormalizer(
         tool_name,

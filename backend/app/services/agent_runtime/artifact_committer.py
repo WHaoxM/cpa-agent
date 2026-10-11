@@ -126,7 +126,10 @@ class ArtifactCommitter:
         if not resource_id:
             return None
         artifact_id = str(candidate.get("artifact_id") or f"art_{uuid.uuid4().hex[:16]}")
-        status = str(candidate.get("status") or "completed")
+        # A candidate without an authoritative status is not a completed artifact.
+        status = str(candidate.get("status") or "unverified")
+        if status == "completed" and candidate.get("verified") is not True:
+            status = "unverified"
         title = str(candidate.get("title") or "")
         summary = str(candidate.get("summary") or "")
         preview = candidate.get("preview") if isinstance(candidate.get("preview"), dict) else {}

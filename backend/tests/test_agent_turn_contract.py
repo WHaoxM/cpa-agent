@@ -59,3 +59,17 @@ def test_project_session_messages_parts_fallback_and_metadata_parts():
     assert public[1]["id"] == "msg_1"
     assert public[1]["turn_id"] == "turn_1"
     assert public[1]["parts"][0]["type"] == "notice"
+
+
+def test_missing_slots_progress_summary_lists_items_not_list_characters():
+    turn = project_turn({
+        "reply": "请补充必要信息。",
+        "orchestration": {
+            "supervisor_view": {
+                "missing_slots": ["目标岗位", "期望城市", "毕业时间", "工作年限", "第五项"],
+            },
+        },
+    }).to_dict()
+
+    progress = next(part for part in turn["parts"] if part["type"] == "progress")
+    assert progress["summary"] == "还需要补充：目标岗位、期望城市、毕业时间、工作年限"

@@ -5,6 +5,7 @@
 
 import json
 import uuid
+from copy import deepcopy
 from datetime import datetime
 from enum import Enum
 from typing import Optional, Dict, Any, List
@@ -77,6 +78,10 @@ class SessionState:
     status: SessionStatus
     created_at: str
     updated_at: str
+    # Server-generated lifetime identity.  ``session_id`` is caller-visible
+    # and can be deleted/recreated; durable request admission must distinguish
+    # those incarnations without exposing this token to clients.
+    incarnation_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     messages: List[Dict[str, Any]] = field(default_factory=list)
     context: Dict[str, Any] = field(default_factory=dict)
     conversation_summary: str = ""
@@ -89,6 +94,7 @@ class SessionState:
             "status": self.status.value,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "incarnation_id": self.incarnation_id,
             "messages": self.messages,
             "context": self.context,
             "conversation_summary": self.conversation_summary,
@@ -97,12 +103,25 @@ class SessionState:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SessionState":
+        created_at = data.get("created_at", datetime.now().isoformat())
+        incarnation_id = data.get("incarnation_id")
+        if not incarnation_id:
+            # Stable compatibility identity for sessions serialized before
+            # incarnation_id existed.  It remains constant across workers and
+            # changes when a deleted caller-visible ID is recreated.
+            incarnation_id = uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                "cpa-agent-session:"
+                f"{data.get('student_id') or ''}:"
+                f"{data.get('session_id') or ''}:{created_at}",
+            ).hex
         return cls(
             session_id=data.get("session_id", ""),
             student_id=data.get("student_id"),
             status=SessionStatus(data.get("status", "created")),
-            created_at=data.get("created_at", datetime.now().isoformat()),
+            created_at=created_at,
             updated_at=data.get("updated_at", datetime.now().isoformat()),
+            incarnation_id=str(incarnation_id),
             messages=data.get("messages", []),
             context=data.get("context", {}),
             conversation_summary=data.get("conversation_summary", "") or "",
@@ -128,27 +147,29 @@ class SessionManager:
     def _get_redis_key(self, session_id: str) -> str:
         return f"{self.SESSION_PREFIX}{session_id}"
 
-    def _save_to_redis(self, state: SessionState):
+    def _save_to_redis(self, state: SessionState, *, strict: bool = False):
         """保存到 Redis"""
         key = self._get_redis_key(state.session_id)
-        self._redis.set(
-            key,
-            json.dumps(state.to_dict(), ensure_ascii=False),
-            ex=SESSION_EXPIRE_SECONDS,
-        )
+        encoded = json.dumps(state.to_dict(), ensure_ascii=False)
+        if strict:
+            self._redis.set_strict(key, encoded, ex=SESSION_EXPIRE_SECONDS)
+        else:
+            self._redis.set(key, encoded, ex=SESSION_EXPIRE_SECONDS)
         self._redis.hset(self.SESSION_LIST_KEY, state.session_id, json.dumps({
             "student_id": state.student_id,
             "updated_at": state.updated_at,
         }))
 
-    def _load_from_redis(self, session_id: str) -> Optional[SessionState]:
+    def _load_from_redis(self, session_id: str, *, strict: bool = False) -> Optional[SessionState]:
         """从 Redis 加载"""
         key = self._get_redis_key(session_id)
-        data = self._redis.get(key)
+        data = self._redis.get_strict(key) if strict else self._redis.get(key)
         if data:
             try:
                 return SessionState.from_dict(data)
             except Exception as e:
+                if strict:
+                    raise ValueError("权威会话状态无法解析") from e
                 logger.error(f"加载会话失败: {e}")
                 return None
         return None
@@ -303,6 +324,24 @@ class SessionManager:
 
         return state
 
+    def refresh_session(self, session_id: str, *, require_authoritative: bool = False) -> Optional[SessionState]:
+        """Reload the authoritative Redis session after cross-worker admission.
+
+        A worker-local cache is useful for ordinary reads, but another worker
+        may have settled a turn while this worker waited on the Redis turn
+        lease.  Do not let that stale cache become the next model history or
+        context write.  If Redis is unavailable in deliberate local-only
+        development, preserve the existing local state rather than deleting it.
+        """
+        state = self._load_from_redis(session_id, strict=require_authoritative)
+        if state is not None:
+            self._cache[session_id] = state
+            return state
+        if require_authoritative:
+            self._cache.pop(session_id, None)
+            return None
+        return self._cache.get(session_id)
+
     def update_session(self, session_id: str, **kwargs) -> Optional[SessionState]:
         """更新会话"""
         state = self.get_session(session_id)
@@ -337,12 +376,21 @@ class SessionManager:
         role: str,
         content: str,
         metadata: Optional[Dict[str, Any]] = None,
+        *,
+        require_authoritative: bool = False,
+        context_update: Optional[Dict[str, Any]] = None,
     ) -> Optional[SessionState]:
         """添加消息"""
         state = self.get_session(session_id)
         if not state:
             logger.warning(f"会话不存在: {session_id}")
             return None
+        if require_authoritative:
+            # Avoid poisoning this worker's cached object if the authoritative
+            # Redis SET fails after an in-memory append.
+            state = SessionState.from_dict(deepcopy(state.to_dict()))
+        if context_update is not None:
+            state.context = deepcopy(context_update)
 
         message = SessionMessage(
             role=role,
@@ -360,11 +408,20 @@ class SessionManager:
                 ctx = dict(state.context) if isinstance(state.context, dict) else {}
                 ctx["conversation_title"] = title
                 state.context = ctx
-                self._update_mysql_title(session_id, title)
+                # MySQL title is a projection; update after session persistence.
         state.updated_at = datetime.now().isoformat()
 
+        if require_authoritative:
+            try:
+                self._save_to_redis(state, strict=True)
+            except Exception as exc:
+                from .agent_runtime.session_coordinator import SessionCoordinationUnavailable
+                raise SessionCoordinationUnavailable("权威会话状态写入失败") from exc
+        else:
+            self._save_to_redis(state)
         self._cache[session_id] = state
-        self._save_to_redis(state)
+        if role == "user" and user_turns == 1:
+            self._update_mysql_title(session_id, title)
         self._save_message_to_mysql(
             session_id,
             role,
@@ -498,6 +555,11 @@ class SessionManager:
                 return summary.strip()
         except Exception as e:
             logger.warning(f"滚动摘要失败: {e}")
+            from .agent_runtime.budget import current_usage_ledger
+            if (current_usage_ledger() or {}).get("stop_reason"):
+                # Keep the source cursor intact; a later turn can retry these
+                # messages. Never label a budget fallback as a full summary.
+                raise
             # deterministic fallback without LLM
             fallback = (prev + "\n" + blob)[-1500:]
             state.conversation_summary = fallback

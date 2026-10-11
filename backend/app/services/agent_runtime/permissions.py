@@ -17,6 +17,7 @@ from .tool_policy import tools_for
 
 # Tools that must never appear in Ask
 ASK_DENY_TOOLS = frozenset({
+    "career_data_read",
     "pipeline_run",
     "portrait_generate",
     "report_generate",
@@ -35,6 +36,7 @@ ASK_DENY_TOOLS = frozenset({
 
 # Tools that need a bound student scope when session has student_id
 STUDENT_SCOPED_TOOLS = frozenset({
+    "career_data_read",
     "db_query",
     "pipeline_run",
     "portrait_generate",
