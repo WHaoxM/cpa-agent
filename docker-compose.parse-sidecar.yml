@@ -1,6 +1,7 @@
-# Contract-only Parse Sidecar stub. NOT an OCR service.
+# Contract-only Parse Sidecar stub. NOT an OCR service and NOT used as the
+# durable task queue. It exists only for client-contract/health testing.
 # Usage:
-#   docker compose -f docker-compose.yml -f docker-compose.parse-sidecar.yml --profile parse-sidecar up -d
+#   docker compose -f docker-compose.yml -f docker-compose.parse-sidecar.yml --profile parse-sidecar-contract up -d parse-sidecar
 #
 # Point backend at:
 #   CPA_L0_PDF_ENGINE=auto
@@ -8,14 +9,15 @@
 #   CPA_L0_PARSE_SIDECAR_HEALTH=http://127.0.0.1:9380/v1/health
 #   CPA_L0_PARSE_SIDECAR_PARSE_PATH=/api/cpa/parse
 #
-# This stub intentionally reports HTTP 503 and ocr_pdf=false. It cannot turn a
+# This stub intentionally reports HTTP 503, ocr_pdf=false and
+# durable_tasks=false. It cannot turn a
 # scanned resume into text. For real local OCR run backend/scripts/parse_sidecar_mineru.py
 # under the mkg environment with a complete local PDF-Extract-Kit, or provide a
 # compatible sidecar whose /v1/health advertises ocr_pdf=true.
 
 services:
   parse-sidecar:
-    profiles: ["parse-sidecar"]
+    profiles: ["parse-sidecar-contract"]
     image: ${CPA_PARSE_SIDECAR_IMAGE:-python:3.11-slim}
     working_dir: /app
     volumes:

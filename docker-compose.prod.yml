@@ -25,6 +25,7 @@ services:
       MYSQL_PASSWORD: "${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}"
       MYSQL_DATABASE: "${MYSQL_DATABASE:-cpa_agent}"
       REDIS_URL: "redis://redis:6379/0"
+      CPA_SESSION_TURN_LOCK_MODE: "redis_required"
       MILVUS_URI: "/app/milvus_data/milvus.db"
       EMBEDDING_MODEL: "${EMBEDDING_MODEL:-BAAI/bge-m3}"
       EMBEDDING_DIM: "${EMBEDDING_DIM:-1024}"

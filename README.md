@@ -123,6 +123,8 @@ cd backend
 python run.py      # http://localhost:5001
 ```
 
+仓库根目录 `.env` 的 `CPA_DEMO_MODE=false` 表示 strict 身份模式：默认不会从请求体、查询参数或内置学号自动推断用户。仅在本机开发调试且明确设置 `CPA_DEV_AUTH=1` 时，loopback 请求可通过 `X-Dev-Student-Id` 请求头注入临时 Principal；正式认证应由服务端认证适配器提供。
+
 ### 运行测试
 
 ```bash
@@ -132,7 +134,7 @@ python -B -m pytest backend/tests   # 在仓库根目录执行
 
 - 纯单元测试无需外部服务；含 DB 的集成用例依赖本机 Docker 容器（MySQL `localhost:13306`、Neo4j `localhost:17687`、Redis `localhost:16379`）。
 - 容器未启动时，`test_hybrid_retrieve_explain.py`、`test_demo_endpoints.py` 会出现连接拒绝类失败，属环境问题而非代码回归。
-- 当前基线（2026-08，容器未启动）：**249 passed / 7 failed**；其中 4 个 `test_pdf_engines.py` 用例与 ADR-0002 新模式契约不一致（旧契约假设 MinerU 参与 auto 阶梯、运行时故障一律粘性），已落后于代码行为，待对齐。
+  - 本机完整回归（2026-10-10，MySQL/Neo4j/Redis 已启动）：设置 `CPA_TEST_PIPELINE_MYSQL=1`、`CPA_TEST_LIVE_MYSQL=1`、`CPA_TEST_LIVE_PUBLIC_GRAPH=1` 后运行整个 `backend/tests`，结果 **615 passed / 0 skipped**。这是当前工作区验证结果，不代表尚未签审的真实简历 CER、可信岗位发布或生产部署验收。
 - 根目录 `.env` 当前 `CPA_DEMO_MODE=false`（strict 模式）：用户资源 API 需要认证适配器提供 Principal，否则返回 401；联调前请先启动数据库容器。
 
 ### 数据依赖

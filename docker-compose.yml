@@ -1,6 +1,8 @@
 services:
   mysql:
     image: mysql:8.0
+    ports:
+      - "13306:3306"
     environment:
       MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:-!Rootmysql123}"
       MYSQL_DATABASE: "${MYSQL_DATABASE:-cpa_agent}"
@@ -28,6 +30,9 @@ services:
 
   neo4j:
     image: neo4j:5.18-community
+    ports:
+      - "17474:7474"
+      - "17687:7687"
     environment:
       NEO4J_AUTH: "${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-neo4jpass}"
       NEO4J_dbms_memory_heap_initial__size: "${NEO4J_HEAP_INITIAL:-512m}"
@@ -47,7 +52,10 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "16379:6379"
+    # A queue message must fail publishing rather than be silently evicted.
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction"]
     volumes:
       - redis_data:/data
     healthcheck:
