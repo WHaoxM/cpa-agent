@@ -111,8 +111,12 @@ _Avoid_: 与 repo 内 `backend/config/` 混为同一目录
 ### Pipeline
 
 **L0 PDF Engine Registry（L0 PDF 引擎能力登记）**:
-PDF 解析引擎按「能力」而非「包能 import」登记：`READY | DISABLED | FAILED`。模式升级后 **auto 阶梯 = Parse Sidecar → PyMuPDF**；进程内 MinerU **退出 auto**（仅 `CPA_L0_PDF_ENGINE=mineru` 显式启用）。Sidecar 经 `CPA_L0_PARSE_SIDECAR_URL` HTTP 取 Markdown/JSON，未配置或不可达为 `DISABLED`，不阻塞启动。Compose profile：`docker-compose.parse-sidecar.yml`。策略：`CPA_L0_PDF_ENGINE=auto|sidecar|pymupdf|mineru`。
+PDF 解析引擎按「能力」而非「包能 import」登记：`READY | DISABLED | FAILED`。模式升级后 **auto 阶梯 = Parse Sidecar → PyMuPDF**；进程内 MinerU **退出 auto**（仅 `CPA_L0_PDF_ENGINE=mineru` 显式启用）。Sidecar 经 `CPA_L0_PARSE_SIDECAR_URL` HTTP 取 Markdown/JSON，未配置或不可达为 `DISABLED`，不阻塞启动。`docker-compose.parse-sidecar.yml` 的 `parse-sidecar-contract` profile 只是明确返回 503 的契约桩，不是 OCR；真实本机服务仍由 `mkg` 中的 `parse_sidecar_mineru.py` 提供。策略：`CPA_L0_PDF_ENGINE=auto|sidecar|pymupdf|mineru`。
 _Avoid_: 把整仓 RAGFlow 当业务核心；auto 仍加载进程内 MinerU；Sidecar 不可达时启动失败
+
+**Durable Media Job（持久媒体任务）**:
+PDF/DOCX ingest 与 OCR repair 经 Celery 5.3 + Redis AOF 的专用 `cpa.media` 队列投递；`agent_file` 磁盘/MySQL 记录是权威状态，Celery task id 只做可追踪投递。任务使用 late ack、worker-lost redelivery 和幂等完成边界，Flask 重启不得把持久排队任务改写成失败。`ingest_meta.events` 与同一权威记录原子提交 `queued → ingesting → ready|failed`，通过整数序号 cursor 重放；它只覆盖媒体解析，不是全平台事件总线或 AG-UI。通用摘要/Reflection `fork_jobs` 仍是进程内旁路，不能据此宣称所有后台任务均可恢复。
+_Avoid_: Redis/Celery 未启动时回退到请求线程跑 OCR；把 Celery result backend 当业务完成真值；把 MinerU 3.0.7 进程内 `/tasks` 当作重启后持久队列
 
 **Retrieve Not Score（检索不计分）**:
 Hybrid 召回（Milvus 向量 + MySQL 关键词 RRF + Neo4j 能力 hop）只产候选与 `retrieve_score` / explain 证据，**不得**改写 `match_result.total_score`。
@@ -139,8 +143,16 @@ _Avoid_: 把简历原文/联系方式/长片段塞进 `q`；用 explore 代替�
 _Avoid_: 用简历原文调 explore；taxonomy 投票当唯一 scorer；把 BE 目录角色压成「前端/后端/…」五枚举再当预测结果
 
 **Career Report（职业报告）**:
-面向学生的可保存职业规划输出，整合画像、匹配、技能差距和学习路径建议。
-_Avoid_: Pipeline 任务状态、单次 Agent 回复、未保存的页面临时分析
+面向学生的可保存**岗位专项**规划输出，整合可信岗位来源、画像、匹配、技能差距和学习路径建议；没有已发布岗位与可验证匹配时保持 `partial`，不得填入模拟市场结论。
+_Avoid_: Pipeline 任务状态、单次 Agent 回复、未保存的页面临时分析；把仅有简历的诊断报告伪装为岗位专项报告
+
+**Resume Diagnostic Report（简历诊断报告）**:
+仅依赖当前由用户确认的 L0 简历及页块证据，独立于 L2 画像分数和 L3/L4 岗位目录；结构化呈现所有非空业务事实，并把模型语义综合单独标记为待核验解读。生成链路 `completed` 只在简历范围内成立，引用合法不等于建议事实性签审。
+_Avoid_: 因可信岗位目录为空就不出简历报告；给简历范围报告填岗位匹配分、市场薪资或录用概率
+
+**Entity Linking Proposal（实体对齐建议）**:
+保留简历原文 mention 和逐字引句，在服务端可验证的公开实体候选中由模型判 `equivalent/related/unresolved`；这是建议而非归一化真值，不自动改写用户技能或发布公共图谱。候选检索溢出、模型截断或证据不足必须显式 unresolved。
+_Avoid_: 把相似度直接视为等价、把 related 误写为同一实体、把模型提议当作用户已确认事实
 
 **Honest Career Stance（诚实职评立场）**:
 Agent 的评价身份：像懂校园招聘的资深 HR / 职业教练——结合人才市场筛选逻辑、真实招聘心理、学生认知负荷，而不是「简历关键词打高分机器」。
@@ -253,7 +265,7 @@ _Avoid_: 刷新后只恢复 `role/content`；从 Markdown 或工具摘要里正�
 _Avoid_: 复制完整画像/报告 JSON 到聊天消息；让模型生成任意 HTML/React 作为成果物
 
 **Artifact Commit（成果物签发）**:
-工具结果中的候选成果物必须经后端按 `student_id/session_id/turn_id` 写入 `agent_artifact` 索引后，才能成为公开 `artifact_ref`。Artifact 查询必须复用 owner guard。
+工具结果中的候选成果物，或服务端基于本轮 planner 正文生成的行动计划，必须先有同 owner 的权威领域记录，再按 `student_id/session_id/turn_id` 写入 `agent_artifact` 索引，才能成为公开 `artifact_ref`。行动计划正文在 `agent_action_plan`，索引与正文同事务提交；Artifact 查询必须复用 owner guard。
 _Avoid_: LLM 自称“已生成”就展示完成卡；opaque artifact_id 绕过学生归属校验
 
 **Business Completion（业务完成）**:
@@ -432,6 +444,9 @@ _Avoid_: 把构造测试数据写成线上真实运营数据，或写出无法�
 
 ## Resolved decisions
 
+- **平台级 AI Native 范围（2026-10-09，用户纠偏）**：同时覆盖 AI 助手会话与画像、匹配、简历、图谱、报告、成长分析、推荐等功能页内的 Agent/LLM 能力；不以给每页增加聊天框代替 AI Native。两种表面应共享身份、能力调用、证据、任务状态、成果物与预算，领域确定性工作流仍是评分/持久化权威。平台级工作方案见 `docs/architecture/platform-agent-capability-architecture.md`，尚非全部实现。
+- **图谱是同一主 Agent 的领域能力（2026-10-09，用户确认）**：知识图谱通过当前主 Agent 的受控工具接口提供有来源及归属的证据，不新增独立 graph subagent 或第二套会话。旧共享 `Skill`/`JobPortrait` 混有用户简历/JD，仍不得当公共图读；与旧标签隔离的审核 `PublicSkill` 读面已在本机真实 Neo4j 发布 11 节点/4 边。已确认技能可经 owner-private 个人图快照读取；新的人审 `accept + equivalent` 还可由同一 `graph_query` 读取独立 revision 的私有实体关系，`related/reject/defer` 不提升为等价。未发布或版本不符返回 unavailable，不回退旧图；岗位关联仍未恢复。详见 `docs/runbooks/public-skill-partition.md`、`docs/guides/reviewed-entity-graph-projection.md`。“只读 Cypher”不等于可跨用户读取。遵守既有 Agent 拓扑冻结与 Retrieve Not Score。
+- **Agent 通用能力开源优先（2026-10-09）**：Agent 数据流、工具、文件/多模态解析、异步状态、上下文与 token 预算优先复用成熟开源实现及库，以一个主模型和薄适配层接入职业规划业务；不再并行自造通用轮子。参考实现须固定仓库/commit/模块并用运行链路验证；业务规则、许可和本项目边界仍由项目自身决定。执行硬规则见 `AGENTS.md`。
 - **ContextAssembler 收束（2026-07）**: 上下文注入从 ModeRuntime / prefix / SessionManager / scoped_invoke 的分散拼装收束到 `ContextAssembler` + `ContextBudget`；`RequestScope` 只判 owner，ContextAssembler 只判字节进入哪个模型调用。Ask 使用摘要 + 最近 K=8 轮 + 当前轮；Agent Router / Experts Lead 使用最小 router_context 和 ≤800 字 memory digest；子 Agent 不继承完整历史或 LTM，长任务正文走 user 通道。
 - **业务规则存放策略（2026-06）**: 采用双层 — repo `config/defaults/` 为权威默认，workspace 仅白名单覆盖可调参数，不可改规则语义。选项 C。
 - **Prompt 存放策略（2026-06）**: 采用双层 — repo 放基座 + 默认语气；workspace 仅覆盖语气层。选项 C。
@@ -490,6 +505,12 @@ _Avoid_: 把构造测试数据写成线上真实运营数据，或写出无法�
   - **已落地**：`cpa-xingtu/public/fixtures/` 静态 JSON；`cpa-xingtu/src/api/` 下 `mockAdapter` / `httpAdapter` + 域模块；`VITE_API_MODE=mock|http`。
   - **已接线页**：登录、收藏、我的报告、AI demo chat、管理 dataset/KB、职业分析（landscape 灌气泡）、画像（4d 覆盖分数）、职途导航（http：`upload|paste` → **`nsle/resume`（LLM）** → `extract/skills(use_llm)` → `infer-role` → `portrait/student`；`explore` 仅短兴趣关键词；mock 仍本地动画）、学习中心（courses/progress）、技能自评（assessment 提交）、个人中心（4d 读）、能力图谱/角色简介（http `role-intro` + 图仍 fixture/fallback）、课程体系图（探测 API/fixture 后 fallback）、消息（http inbox）、简历编辑器（parse 智能填充）。其余 backend-gap 端点在 http 失败时回退本地/fixture。
   - 真库冒烟快照仍以 `docs/specs/frontend-api-contract-matrix.md` 为准；两者冲突时以 `docs/frontend/cpa-xingtu` + 当前后端路由为准。
+
+- **2026-10 简历确认金路径切片（进行中，覆盖上述旧 http 职途导航链路）**：真实模式职途导航改为 `/api/profile/student/upload` 的服务端任务候选 → 逐页证据和结构字段人工确认 → `/api/profile/student/confirm` 权威回读。已确认简历可独立生成、保存和重新读取 Resume Diagnostic Report；L2 画像即使因分数证据不足仍为 `partial`，也不阻断简历报告。真实页面保留左侧进度与全屏画像，并可切换简历诊断；同一成果通过 owner/version 约束的资源 URI 供主 Agent 读取。L3/L4 岗位专项仍依赖可信岗位发布，本机岗位目录为空，未有真实匹配和岗位专项报告。实体对齐仅为 L0 新候选的可审阅提议，旧已确认简历未自动重解析；完整反馈、可扩展 RAG 索引、模型建议事实性及 Agent 生产 checkpoint/interrupt 恢复仍未验收，不能称完整循环。以当前代码与 `docs/architecture/platform-agent-capability-architecture.md` 的本轮状态表为准。
+
+- **2026-10 模型调用预算切片（进行中）**：复用现有 LangChain/LangGraph 模型调用边界和 `ContextWindowStatus`；最终消息与工具 schema 在 dispatch 前预检，未知/超窗拒发；同步 LLMClient/LangGraph 每次已完成的 provider 调用进入 request-local usage 账本。缺失 provider usage、失败请求的未知成本、fork 后台任务、绕过这两个客户端的直连 SDK 尚未闭合，不宣称 Agent/Experts 全链预算已验收。详见 `docs/guides/agent-call-budget-ledger.md`。
+
+- **2026-10 Ask/Agent 共享证据边界（分阶段实施）**：Ask 不开放 `graph_query`/`career_data_read` 等通用 Agent 业务工具；已改为服务端 Principal 约束的 EvidencePack 检索→回答，复用权威资源 URI/section/版本/覆盖/分页合同。Agent/Experts 仍按现有工具权限执行，尚未把全部模式和附件长文路径收束到同一证据入口。`completed` 回合不等于证据完整或业务成果已发布；检索计划失败必须显式 `partial`，不能推断用户没有资料。决策见 [ADR-0005](docs/adr/0005-shared-evidence-and-interaction-policy.md)。
 
 - **网挑第七版章节修订规则（2026-06）**:
   - 从 `网挑文档第七版.docx` 或用户确认过的最新章节稿继续，不从旧版或未确认中间稿继续。

@@ -54,9 +54,57 @@ For open-source runnable hardening, keep these active and maintained:
 - `README.md`
 - `adr/0001-config-and-workspace-layers.md`
 - `adr/0002-pattern-upgrade-retrieve-parse.md`
+- `adr/0003-request-scope-runtime-isolation.md` — Principal、会话 owner 与 strict/demo 身份隔离边界
+- `adr/0004-graph-as-main-agent-capability.md` — 用户确认图谱接同一主 Agent；公共图谱证据工具与用户图谱隔离要求
+- `adr/0005-shared-evidence-and-interaction-policy.md` — Ask/Agent/Experts 共用权威证据层，以检索上下文与执行权限区分交互模式；实施及真实验收仍需逐项核对
 - `guides/open-source-hardening.md`
 - `guides/documentation-governance.md`
 - `guides/windows-powershell-encoding.md` — Windows/PS 5.1 下乱码是解码假象，文件均为 UTF-8；读写姿势与真损坏判定
+- `guides/attachment-completeness.md` — 上传附件到 Ask/Agent 的完整性标记、OCR 运行边界和回归步骤
+- `guides/agent-http-acceptance.md` — 真实 socket HTTP 的 Agent 多轮/附件旅程、替身边界与失败后回放；不等同于真实模型质量验收
+- `reports/2026-10-10-http-agent-acceptance-review.md` — PDF 架构能力与 HTTP/test_client/未验证证据分层，含 SSE 连接红灯定位及验收缺口
+- `guides/docx-ocr-and-human-cer.md` — DOCX 嵌图真实 Sidecar OCR 与扫描简历逐页人工 CER 审阅包；未签审不产生准确率
+- `guides/semantic-skill-extraction.md` — L1 技能抽取去除词典/关键词伪回退后的结构化模型候选、原文证据门禁及残余语义硬编码清单
+- `guides/resume-entity-linking.md` — L0 简历技能 mention 原文门禁、已发布公共技能有界全文召回与模型 equivalent/related/unresolved 提议；不是跨语言向量召回或自动确认归一化
+- `guides/resume-diagnostic-report.md` — 与可信岗位专项 L4 分离的已确认简历诊断报告，事实章节、逐页引用、模型解读质量标记和真实回读验收
+- `guides/agent-entity-review-feedback.md` — 人工审阅 revision 如何经主 Agent 资源与 EvidencePack 实时读取，及跨页版本变化拒绝
+- `guides/agent-business-resources.md` — 主 Agent 的跨功能只读 URI 目录：已确认简历/画像、匹配/报告、学习计划及个人记录；含 owner、状态、分页、开源复用与未覆盖边界
+- `guides/ask-evidence-continuation.md` — Ask 共享 EvidencePack 的 Redis 会话游标、跨轮版本校验、过期/来源失败恢复及真实 HTTP 验收
+- `guides/ask-grounding-experiment.md` — Ask 单章节计数的权威直答、真实 HTTP 对照，以及语义双审默认禁用/复杂分析未验收边界
+- `guides/domain-semantic-evidence.md` — 简历结构化、D1/D3/D4 事实证据与未知分数停机边界
+- `guides/portrait-behavior-assessment.md` — D1 客观学校类型与评分层级分离、D3 带来源的候选行为评价及确认门禁；缺证据仍保持 partial
+- `guides/semantic-routing-hardcode-audit.md` — Ask/Agent 语义路由移除关键词/正则快捷判定后的模型结构化决策及未验收项
+- `guides/experts-structured-evidence.md` — Experts 意图/计划去语义关键词捷径，以本轮工具引用及 owner+业务行回读判成果
+- `runbooks/public-skill-partition.md` — 审核种子 `PublicSkill` 的发布、可用性核验与安全降级；公共图与个人图继续隔离
+- `guides/personal-graph-owner-scope.md` — 当前已确认资料到私有技能快照的 owner/source 分区发布、幂等回读、撤回与主 Agent 固定模板；旧混存 Person/Skill 不认领
+- `guides/reviewed-entity-graph-projection.md` — 人工审阅的 equivalent 实体在独立 revision、Celery 重放与 Neo4j 事务下投影到 owner-private 个人图；related/reject/defer 不提升为公共真值
+- `guides/durable-media-jobs.md` — Celery/Redis 媒体队列、worker 启停、重启恢复验证与 MinerU Sidecar 的真实边界
+- `guides/pipeline-event-journal.md` — Pipeline MySQL 事务事件游标、确认原子性及 LangGraph checkpoint 的独立恢复试验
+- `guides/durable-resume-confirmation.md` — 生产 L0 候选确认的 LangGraph MySQL interrupt/resume、跨进程幂等与边界
+- `guides/p0-identity-and-result-truth.md` — 主 Agent 与部分用户 API 的 Principal 归属、真实结果 ID 和失败状态收束边界
+- `guides/historical-favorites-tool-state.md` — 历史收藏权威 ID/删除状态与工具公开状态结构化契约
+- `guides/resume-confirmation-golden-slice.md` — L0 候选/逐页证据→用户确认→L2 有证据画像；事实不足不落零分成果
+- `guides/match-report-source-gate.md` — L3/L4 发布仓库、匹配/报告持久化快照与来源/质量不满足时的 partial 门禁；当前真实岗位目录为空
+- `guides/job-catalog-model-review.md` — 官方岗位源的真实模型逐字段审查、引文与评分门禁、独立 MySQL 审计；blocked 审查不自动发布
+- `guides/page-agent-task-reference-handoff.md` — 功能页与主 Agent 的服务端 task 引用交接，拒绝客户端自报成果
+- `guides/agent-call-budget-ledger.md` — LangGraph 调用前窗口预检与 Agent/Experts request-local provider usage 账本的已接边界和未覆盖路径
+- `guides/agent-observability-privacy.md` — Langfuse 默认只导出调用账本元数据；含简历/回复的追踪内容须部署方显式 opt-in
+- `guides/agent-session-turn-coordination.md` — Supervisor 同会话回合的 Redis 跨 worker 租约、开发降级与 fail-closed 部署边界
+- `guides/agent-turn-idempotency.md` — 显式 `Idempotency-Key` 的 MySQL 准入、JSON/SSE 终态重放、unknown/过期墓碑及真实跨进程 HTTP 验收
+- `guides/agent-prompt-first-draft.md` — OpenCode/Codex 与 Trace 协作判断转译到 Agent 路由、planner、QA 的“先给初稿”契约和本轮状态回放
+- `guides/agent-plan-persistence.md` — planner 正文落库、成果索引同事务提交、owner 读取与学习页交接回放
+- `guides/plan-handoff-context.md` — Experts 后续步骤保留本轮有界目标摘要；含真实 socket HTTP 交接与伪造业务结果阻断验收
+- `architecture/agent-upstream-adaptation.md` — OpenCode/Codex 快照、许可证、参考模块与 Python 薄适配边界
+- `architecture/platform-agent-capability-architecture.md` — 平台级 AI Native：会话与功能页共用能力运行契约、模块实况、开源选型和迁移金路径
+- `reports/2026-10-09-resume-page-extraction-audit.md` — 本地两份简历的脱敏逐页提取核验；覆盖证据与 OCR 准确率边界
+- `reports/2026-10-09-agent-document-context-evaluation.md` — 多附件、提示词路由、模型窗口与职业问题的契约验证及未验收范围
+- `reports/2026-10-09-agent-runtime-architecture.md` — 实际 Agent 主链、迭代上限修复与平行未接线模块
+- `reports/2026-10-09-graph-agent-runtime-audit.md` — 图谱工具运行链、Skill/JobPortrait 公共读降级及残余数据作用域风险
+- `reports/2026-10-09-agent-user-interaction-audit.md` — 引用、进度、澄清与失败恢复的公开交互契约审计
+- `reports/2026-10-09-platform-acceptance-baseline.md` — DOCX、OCR CER、全链预算及 Ask 事实/来源/跨轮连续性的专项验收基线与未通过项
+- `reports/2026-10-10-general-agent-guide-architecture-audit.md` — 用户通用 Agent 指南的逐页架构映射、三模型交叉核验、本轮 JSON/SSE 输入边界改造与后续缺口
+- `reports/2026-10-10-agent-guide-core-decisions.md` — 指南 14 页的必须做/值得做/已有/不适用取舍、两个 worktree 的选择性接收与拒绝、规划 HTTP 实测及请求幂等实施合同
+- `specs/ai-native-agent-platform.md` — 主 Agent + 受控领域能力的目标数据流、开源选型与阶段验收
 - `specs/runnable-demo-hardening.md`
 - `specs/pending-code-quality.md`
 - `specs/frontend-api-contract-matrix.md` — 真库冒烟快照（非 cpa-xingtu 产品契约权威）
