@@ -22,7 +22,16 @@ from ....utils.logger import get_logger
 logger = get_logger("cpa-agent.agent_runtime.media.jobs")
 
 MEDIA_QUEUE = "cpa.media"
+PIPELINE_QUEUE = os.environ.get("CPA_PIPELINE_QUEUE", "cpa.pipeline").strip() or "cpa.pipeline"
 _SAFE_ID = re.compile(r"[^A-Za-z0-9_.-]+")
+
+
+def _pipeline_replay_interval() -> int:
+    try:
+        seconds = int(os.environ.get("CPA_PIPELINE_REPLAY_INTERVAL_SECONDS", "60"))
+    except ValueError:
+        seconds = 60
+    return max(5, min(seconds, 3600))
 
 
 def _redis_url() -> str:
@@ -44,8 +53,14 @@ def _redis_url() -> str:
 celery_app = Celery("cpa_agent_media", broker=_redis_url())
 celery_app.conf.update(
     task_default_queue=MEDIA_QUEUE,
-    task_routes={"cpa.media.*": {"queue": MEDIA_QUEUE}, "cpa.graph.*": {"queue": "cpa.graph"}},
-    imports=("app.services.personal_graph_jobs", "app.services.personal_entity_link_jobs"),
+    task_routes={"cpa.media.*": {"queue": MEDIA_QUEUE}, "cpa.graph.*": {"queue": "cpa.graph"},
+                 "cpa.pipeline.*": {"queue": PIPELINE_QUEUE}},
+    imports=("app.services.personal_graph_jobs", "app.services.personal_entity_link_jobs",
+             "app.services.pipeline_resume_jobs"),
+    beat_schedule={"pipeline-resume-replay": {
+        "task": "cpa.pipeline.resume_replay", "schedule": _pipeline_replay_interval(),
+        "options": {"queue": PIPELINE_QUEUE},
+    }},
     task_serializer="json",
     accept_content=["json"],
     result_serializer="json",

@@ -294,6 +294,31 @@ def get_task_events(task_id: str):
         return jsonify(safe_error('Pipeline events', e, message='任务事件暂不可用，请检查迁移和数据库')), 503
 
 
+@pipeline_bp.route('/trace/<task_id>', methods=['GET'])
+def get_resume_trace(task_id: str):
+    """Owner-scoped replay of persisted L0 checkpoints and data handoffs."""
+    try:
+        scope = resolve_request_scope()
+    except ScopeError as e:
+        return scope_error_response(e)
+    try:
+        cursor = int(request.args.get('cursor', '0'))
+        limit = int(request.args.get('limit', '100'))
+        if cursor < 0 or not 1 <= limit <= 200:
+            raise ValueError()
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'cursor/limit 无效'}), 400
+    from ..services.pipeline_resume_jobs import read_resume_trace
+    try:
+        data = read_resume_trace(get_mysql_client(), student_id=scope.student_id,
+                                 task_id=task_id, cursor=cursor, limit=limit)
+        return jsonify({'success': True, 'data': data})
+    except LookupError:
+        return jsonify({'success': False, 'error': '简历任务不存在'}), 404
+    except Exception as e:
+        return jsonify(safe_error('Pipeline trace', e, message='解析轨迹暂不可用，请检查迁移和数据库')), 503
+
+
 @pipeline_bp.route('/l0/parse-resume', methods=['POST'])
 def parse_resume():
     """L0: 简历解析"""

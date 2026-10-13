@@ -6,6 +6,7 @@ CPA-Agent 数据处理管线入口
 import hashlib
 import json
 import math
+import time
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -50,30 +51,91 @@ class BasePipeline(ABC):
         pass
 
     def update_status(self, status: PipelineStatus, result: Optional[Dict] = None, error: Optional[str] = None):
-        """更新任务状态"""
+        """Advance one task only from its expected predecessor state.
+
+        A real MySQL task is the authority: a duplicate runner must not move a
+        completed/partial/failed task back to running or replace its result.
+        In-memory test repositories lack affected-row reporting and retain the
+        old execute contract; they do not model concurrent claims.
+        """
+        parameters = {"status": status.value, "task_id": self.task_id}
         if status == PipelineStatus.RUNNING:
-            self.mysql.execute(
-                "UPDATE pipeline_task SET status=:status, started_at=:started_at WHERE task_id=:task_id",
-                {"status": status.value, "started_at": datetime.now(), "task_id": self.task_id},
-                commit=True
+            expected = PipelineStatus.PENDING
+            statement = (
+                "UPDATE pipeline_task SET status=:status, started_at=:started_at "
+                "WHERE task_id=:task_id AND status=:expected_status"
             )
+            parameters["started_at"] = datetime.now()
         elif status in (PipelineStatus.COMPLETED, PipelineStatus.NEEDS_INPUT, PipelineStatus.PARTIAL):
-            self.mysql.execute(
-                "UPDATE pipeline_task SET status=:status, completed_at=:completed_at, result_json=:result_json WHERE task_id=:task_id",
-                {"status": status.value, "completed_at": datetime.now() if status == PipelineStatus.COMPLETED else None,
-                 "result_json": json.dumps(result), "task_id": self.task_id},
-                commit=True
+            expected = PipelineStatus.RUNNING
+            statement = (
+                "UPDATE pipeline_task SET status=:status, completed_at=:completed_at, "
+                "result_json=:result_json WHERE task_id=:task_id AND status=:expected_status"
             )
+            parameters.update({
+                "completed_at": datetime.now() if status == PipelineStatus.COMPLETED else None,
+                "result_json": json.dumps(result),
+            })
         elif status == PipelineStatus.FAILED:
-            self.mysql.execute(
-                "UPDATE pipeline_task SET status=:status, error_message=:error_message WHERE task_id=:task_id",
-                {"status": status.value, "error_message": error, "task_id": self.task_id},
-                commit=True
+            expected = PipelineStatus.RUNNING
+            statement = (
+                "UPDATE pipeline_task SET status=:status, error_message=:error_message "
+                "WHERE task_id=:task_id AND status=:expected_status"
             )
+            parameters["error_message"] = error
+        else:
+            raise ValueError(f"不支持的管线状态转换目标: {status}")
+
+        parameters["expected_status"] = expected.value
+        # Durable workers are fenced by their current MySQL claim. A late
+        # worker cannot publish a terminal outcome after lease recovery.
+        claim_token = getattr(self, "claim_token", None)
+        if claim_token is not None:
+            dispatch_table = getattr(self, "dispatch_table", "pipeline_match_dispatch")
+            if dispatch_table not in {"pipeline_match_dispatch", "pipeline_resume_dispatch"}:
+                raise ValueError("invalid dispatch table")
+            statement += (
+                f" AND EXISTS (SELECT 1 FROM {dispatch_table} d "
+                "WHERE d.task_id=pipeline_task.task_id AND d.claim_token=:claim_token)"
+            )
+            parameters["claim_token"] = claim_token
+        trace_enabled = bool(getattr(self, "trace_enabled", False))
+        if trace_enabled and status in (PipelineStatus.NEEDS_INPUT, PipelineStatus.PARTIAL):
+            statement = statement.replace("SET status=:status,", "SET status=:status, progress=100,", 1)
+        if isinstance(self.mysql, MySQLClient):
+            from sqlalchemy import text
+
+            with self.mysql.engine.begin() as conn:
+                changed = conn.execute(text(statement), parameters)
+                if changed.rowcount != 1:
+                    raise RuntimeError(
+                        f"任务状态转换被拒绝: {self.task_id} "
+                        f"{expected.value}→{status.value}（任务不存在或状态已改变）"
+                    )
+                if trace_enabled and status in (PipelineStatus.NEEDS_INPUT, PipelineStatus.PARTIAL, PipelineStatus.FAILED):
+                    from .pipeline_resume_jobs import _insert_trace
+                    _insert_trace(conn, task_id=self.task_id, student_id=self.params["student_id"],
+                                  stage="failed" if status == PipelineStatus.FAILED else "candidate_saved",
+                                  state="failed" if status == PipelineStatus.FAILED else "completed",
+                                  progress=100 if status != PipelineStatus.FAILED else getattr(self, "trace_progress", 0),
+                                  facts={"candidate_status": status.value} if status != PipelineStatus.FAILED else {})
+        else:
+            self.mysql.execute(statement, parameters, commit=True)
+        self.status = status
 
 
 class L0ParseResumePipeline(BasePipeline):
     """Shared REST/Agent parser; candidates are not confirmed student profiles."""
+
+    def trace_stage(self, stage, state, progress, facts=None):
+        if not getattr(self, "trace_enabled", False):
+            return
+        from .pipeline_resume_jobs import record_resume_stage
+        record_resume_stage(self.mysql, task_id=self.task_id,
+                            student_id=self.params["student_id"],
+                            claim_token=self.claim_token, stage=stage,
+                            state=state, progress=progress, facts=facts)
+        self.trace_progress = progress
 
     def run(self) -> Dict[str, Any]:
         logger.info(f"[L0] 开始解析简历: {self.params}")
@@ -86,35 +148,120 @@ class L0ParseResumePipeline(BasePipeline):
         try:
             from ..pipeline.entity_extractor.l0_full_parser import L0FullParser
             from ..pipeline.entity_extractor.nsle_pipeline import NSLEPipeline
+            team_enabled = bool(getattr(self, "trace_enabled", False))
 
             if not student_id:
                 raise ValueError("缺少服务端身份")
-            parser = L0FullParser()
-            if file_path:
-                parse_result = parser.parse_file(file_path)
-            elif text:
-                parse_result = parser.parse_text(text)
+            self.trace_stage("source_extract", "running", 0)
+            source_started = time.perf_counter()
+            if team_enabled:
+                from .resume_agent_team import DocumentAgent
+                parse_result = DocumentAgent().run(file_path=file_path, text=text)
             else:
-                raise ValueError("缺少 file_path 或 text 参数")
-
-            if not parse_result.success:
-                raise RuntimeError(parse_result.error or "解析失败")
+                parser = L0FullParser()
+                if file_path:
+                    parse_result = parser.parse_file(file_path)
+                elif text:
+                    parse_result = parser.parse_text(text)
+                else:
+                    raise ValueError("缺少 file_path 或 text 参数")
+                if not parse_result.success:
+                    raise RuntimeError(parse_result.error or "解析失败")
 
             raw_text = parse_result.text
             if not raw_text.strip():
                 raise ValueError("未提取到简历正文")
-            structured = NSLEPipeline(use_deepseek=True).run_resume_text(raw_text)
-            if not structured.get("success"):
-                raise RuntimeError("简历结构化失败；未修改已确认资料")
+            self.trace_stage("source_extracted", "completed", 25, {
+                "block_count": len(parse_result.blocks), "engine": parse_result.engine,
+                "text_chars": len(raw_text),
+                "duration_ms": round((time.perf_counter() - source_started) * 1000),
+                "page_count": (parse_result.metadata or {}).get("pages") or
+                              (parse_result.metadata or {}).get("page_count"),
+            })
+            self.trace_stage("handoff_document", "completed", 25, {
+                "artifact": "document_text", "text_chars": len(raw_text),
+                "block_count": len(parse_result.blocks),
+            })
+            self.trace_stage("structure_extract", "running", 25)
+            structure_started = time.perf_counter()
+            if team_enabled:
+                from .resume_agent_team import StructureAgent
+                structured, llm_client = StructureAgent().run(parse_result)
+            else:
+                structured = NSLEPipeline(use_deepseek=True).run_resume_text(raw_text)
             candidate = structured.get("student_profile") or {}
             validation = structured.get("structure_validation") or {"ok": False}
-            blocks = [{"block_id": b.block_id, "text": b.text,
-                       "page": b.page + 1, "block_type": b.block_type}
-                      for b in parse_result.blocks]
-            metadata = parse_result.metadata or {}
-            page_count = metadata.get("pages") or metadata.get("page_count")
-            observed = sorted({b["page"] for b in blocks if b["text"].strip()})
-            missing = [p for p in range(1, int(page_count) + 1) if p not in observed] if page_count else []
+            if not structured.get("success") and not candidate:
+                raise RuntimeError("简历结构化失败；未修改已确认资料")
+            if getattr(self, "trace_enabled", False):
+                def model_facts(call, operation):
+                    usage = call.get("usage") if isinstance(call.get("usage"), dict) else {}
+                    return {"operation": operation, "model": call.get("model"),
+                            "provider": call.get("provider"), "status": call.get("status", "completed"),
+                            "input_chars": call.get("input_chars"),
+                            "prompt_tokens": usage.get("prompt_tokens"),
+                            "completion_tokens": usage.get("completion_tokens"),
+                            "total_tokens": usage.get("total_tokens")}
+
+                for call in candidate.get("structure_calls") or []:
+                    if isinstance(call, dict):
+                        self.trace_stage("structure_model", "completed", 25,
+                                         model_facts(call, str(call.get("stage") or "extract")))
+            self.trace_stage("structure_extracted", "completed", 50, {
+                "field_count": len(candidate), "validation_ok": validation.get("ok") is True,
+                "skill_count": len(candidate.get("skills") or []),
+                "project_count": len(candidate.get("projects") or []),
+                "duration_ms": round((time.perf_counter() - structure_started) * 1000),
+            })
+            if team_enabled:
+                from .resume_agent_team import EntityAgent, EvidenceAgent
+                from ..pipeline.entity_extractor.resume_structure import validate_structure_truth
+                self.trace_stage("handoff_structure", "completed", 50, {
+                    "artifact": "canonical_profile", "field_count": len(candidate),
+                    "skill_count": len(candidate.get("skills") or []),
+                })
+                self.trace_stage("entity_extract", "running", 50)
+                entity_started = time.perf_counter()
+                candidate = EntityAgent().run(candidate, llm_client, parse_result)
+                validation = validate_structure_truth(candidate)
+                mention = candidate.get("entity_extraction_call")
+                if isinstance(mention, dict):
+                    self.trace_stage("mention_model", "completed", 50,
+                                     model_facts(mention, "skill_mentions"))
+                linking = candidate.get("entity_linking")
+                link_call = linking.get("call") if isinstance(linking, dict) else None
+                if isinstance(link_call, dict):
+                    self.trace_stage("link_model", "completed", 50,
+                                     model_facts(link_call, "entity_linking"))
+                self.trace_stage("entity_resolved", "completed", 75, {
+                    "mention_count": len(candidate.get("skill_mentions") or []),
+                    "link_status": linking.get("status") if isinstance(linking, dict) else "not_required",
+                    "duration_ms": round((time.perf_counter() - entity_started) * 1000),
+                })
+                self.trace_stage("handoff_entity", "completed", 75, {
+                    "artifact": "linked_profile", "mention_count": len(candidate.get("skill_mentions") or []),
+                })
+                self.trace_stage("evidence_assemble", "running", 75)
+            evidence_started = time.perf_counter()
+            if team_enabled:
+                evidence = EvidenceAgent().run(parse_result, candidate)
+                blocks = evidence["blocks"]
+                page_count = evidence["page_count"]
+                observed = evidence["observed_pages"]
+                missing = evidence["missing_pages"]
+            else:
+                blocks = [{"block_id": b.block_id, "text": b.text,
+                           "page": b.page + 1, "block_type": b.block_type}
+                          for b in parse_result.blocks]
+                metadata = parse_result.metadata or {}
+                page_count = metadata.get("pages") or metadata.get("page_count")
+                observed = sorted({b["page"] for b in blocks if b["text"].strip()})
+                missing = [p for p in range(1, int(page_count) + 1) if p not in observed] if page_count else []
+            self.trace_stage("evidence_assembled", "completed", 75, {
+                "observed_page_count": len(observed), "missing_page_count": len(missing),
+                "block_count": len(blocks),
+                "duration_ms": round((time.perf_counter() - evidence_started) * 1000),
+            })
             status = PipelineStatus.NEEDS_INPUT if validation.get("ok") is True and candidate else PipelineStatus.PARTIAL
 
             result = {

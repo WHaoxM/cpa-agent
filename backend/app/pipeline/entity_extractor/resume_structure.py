@@ -371,7 +371,7 @@ def _chunk_text(text: str) -> List[Tuple[int, str]]:
     return out
 
 
-def extract_canonical_profile(llm_client, raw_text: str) -> Dict[str, Any]:
+def extract_canonical_profile(llm_client, raw_text: str, *, link_entities: bool = True) -> Dict[str, Any]:
     """
     Authoritative student_profile via LLM. No regex backfill.
     """
@@ -403,7 +403,8 @@ def extract_canonical_profile(llm_client, raw_text: str) -> Dict[str, Any]:
             profile["raw_text_chars"] = len(text)
             profile["structure_path"] = "single_shot"
             profile["structure_calls"] = calls
-            _link_profile_entities(profile, llm_client, text)
+            if link_entities:
+                _link_profile_entities(profile, llm_client, text)
             return profile
         except Exception as e:
             logger.error("canonical single-shot extract failed: %s", e)
@@ -474,7 +475,8 @@ def extract_canonical_profile(llm_client, raw_text: str) -> Dict[str, Any]:
         profile["skill_mentions"] = list({(m["name"], m["evidence"]): m
             for part in partials for m in part.get("skill_mentions", [])
             if m.get("evidence") and m["evidence"] in text}.values())
-        _link_profile_entities(profile, llm_client, text)
+        if link_entities:
+            _link_profile_entities(profile, llm_client, text)
         if failed_offsets:
             profile["error"] = "partial_chunk_extraction"
             profile["failed_offsets"] = failed_offsets
@@ -542,6 +544,12 @@ def _link_profile_entities(profile, llm_client, text):
     if profile.get("entity_extraction_status") == "partial":
         profile["entity_linking"]["extraction_partial"] = True
         profile["entity_linking"]["next_action"] = "retry_entity_extraction"
+
+
+def link_profile_entities(profile, llm_client, raw_text):
+    """Run the existing evidence-backed entity work as a distinct agent handoff."""
+    _link_profile_entities(profile, llm_client, (raw_text or "").strip())
+    return profile
 
 
 def validate_structure_truth(profile: Dict[str, Any]) -> Dict[str, Any]:

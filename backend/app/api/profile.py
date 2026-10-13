@@ -81,6 +81,25 @@ def upload_resume():
 
     logger.info(f"简历上传: student_id={student_id}, filename={filename}, saved={save_path}")
 
+    if request.args.get('async') == '1':
+        # Backend-connected Xingtu needs a task ID before the long OCR/model
+        # call, so the UI can replay real checkpoints while work is running.
+        try:
+            from ..services.pipeline_resume_jobs import persist_resume_intent, enqueue_resume_intent
+            mysql = get_mysql_client()
+            task_id = f"task_{uuid.uuid4().hex[:12]}"
+            persist_resume_intent(mysql, student_id=student_id,
+                                  file_path=save_path, task_id=task_id)
+            delivery = enqueue_resume_intent(mysql, task_id)
+        except Exception as e:
+            logger.error("L0 异步任务创建失败: %s", e)
+            return jsonify({'success': False, 'error': '简历解析任务未能保存，请检查迁移和数据库'}), 503
+        return jsonify({'success': True, 'data': {
+            'task_id': task_id, 'student_id': student_id, 'filename': filename,
+            'status': 'pending', 'progress': 0, 'delivery': delivery,
+            'message': '简历已接收；解析阶段由服务端任务记录持续更新',
+        }}), 202
+
     # ── D-06: 创建 pipeline_task 记录 + 触发 L0 管线 ──
     try:
         # 同步触发 L0 解析 (PipelineRunner 内部会创建 pipeline_task 记录)

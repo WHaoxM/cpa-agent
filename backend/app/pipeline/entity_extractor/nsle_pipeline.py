@@ -81,7 +81,7 @@ class NSLEPipeline:
                             continue
         return None
 
-    def run_resume_text(self, text: str) -> Dict[str, Any]:
+    def run_resume_text(self, text: str, *, link_entities: bool = True) -> Dict[str, Any]:
         """
         运行简历解析完整管道
 
@@ -97,7 +97,7 @@ class NSLEPipeline:
             from .resume_structure import extract_canonical_profile, validate_structure_truth
             if not self.use_deepseek:
                 raise ValueError("semantic_extractor_required")
-            profile = extract_canonical_profile(self.llm_client, text)
+            profile = extract_canonical_profile(self.llm_client, text, link_entities=link_entities)
             validation = validate_structure_truth(profile)
             return {
                 "success": validation["ok"],
