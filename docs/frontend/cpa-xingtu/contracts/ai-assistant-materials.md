@@ -50,15 +50,18 @@ Scope: 定义用户使用 AI 助手时产生的**物料**（工具证据 / 成�
 
 **零字段渲染规则**：UI 只渲染 `title`（中文标题）、`summary`（产品化摘要）、`kind` 的中文标签（见下表）、`status`（已完成等）、`actions` 的 `label`（按钮文字）。**不渲染** `artifact_id`、`kind` 底层值、`actions.id` 等技术字段。
 
-kind + action → 目标页映射（与 `ArtifactCard.vue` 对齐）：
+kind + action → 当前前端操作（与 `ArtifactCard.vue` 对齐）：
 
-| kind | action | 目标页 |
+| kind | action | 操作 |
 |------|--------|--------|
-| `portrait` | `view_portrait` | `/app/student/career-portrait` |
-| `match` | `open_match` | `/app/student/career-analysis` |
-| `action_plan` | `continue_plan` | `/app/student/learning` |
-| `file` | `open_resume` | `/app/student/resume-builder` |
-| `career_report` | `open_report` | `/app/student/career-report` |
+| `portrait` | `view_portrait` | mock：把同会话四维数据交给现有画像页可视化 |
+| `match` | `open_match` | mock：把同会话匹配分与差距交给现有职业分析页 |
+| `action_plan` | `continue_plan` | mock：在现有学习中心展示可勾选计划与课程入口 |
+| `file` | `open_resume` | mock：在现有简历制作页载入草稿与可应用建议 |
+| `file` | `open_file` | 无对应业务组件时仅查看索引，不跳到空白编辑器 |
+| `career_report` | `open_report` | mock：在现有职业报告页展示同一份章节素材 |
+
+mock 交接以 `session_id + artifact_id` 区分不同对话，目标功能页只从该产物的结构化 mock 数据驱动原组件；编辑需同步回原对话，不得只按 kind 裸跳并显示默认数据。HTTP 的 owner-scoped `GET /api/agent/artifacts/<artifact_id>` 目前只是索引，不把它冒充完整业务记录；正式跨页功能需读取权威 `resource_id` 对应业务数据。有效 `task_id` 的 `confirm_resume` / `open_pipeline_task` 继续走现有职途导航任务恢复入口。
 
 ## 6. Mock 演示人设（统一且自洽）
 
@@ -74,7 +77,7 @@ kind + action → 目标页映射（与 `ArtifactCard.vue` 对齐）：
 4. `getAIResponse` 返回 `content / thinking / category / toolCalls / artifacts`；`getAIResponseFromApi` mock 分支透传 `artifacts`。
 5. `AIAssistant.vue` mock 分支把 `artifacts` 挂到消息（`MessagePartsRenderer` 会从 `toolCalls + artifacts + content` 自动组装 parts）。
 6. `ToolCallCard.vue` 零字段渲染：只显示 `summary` + `status`，**不显示工具函数名**、`task_id`、参数。
-7. `ArtifactCard.vue` 增加 `open_resume` → `/app/student/resume-builder` 分支；UI 只渲染产品语义字段。
+7. `ArtifactCard.vue` 的 mock 成果物动作携带 `artifact_id + session_id` 进入现有功能页；简历草稿、计划步骤和报告章节使用结构化 preview，不另建演示摘要页。
 8. 工具卡渲染顺序：`tool_call` → `artifact_ref` → `text`（与 `MessagePartsRenderer` 一致）。
 9. **回复正文只能用 `renderMarkdown` 支持的语法**：标题 / 无序有序列表 / 加粗 / 引用 / 行内代码 / 代码围栏；**不要用 markdown 表格**（当前渲染器不支持，会原样显示为管道符）。
 
