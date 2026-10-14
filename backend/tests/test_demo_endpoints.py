@@ -188,7 +188,7 @@ def test_agent_chat_demo_mode_does_not_require_llm_or_session_store(monkeypatch)
     assert body["data"]["session_id"].startswith("demo_")
 
 
-def test_career_landscape_returns_demo_fallback_when_mysql_is_unavailable(monkeypatch):
+def test_career_landscape_returns_explicit_empty_partial_when_mysql_is_unavailable(monkeypatch):
     app = create_app()
     client = app.test_client()
 
@@ -203,8 +203,10 @@ def test_career_landscape_returns_demo_fallback_when_mysql_is_unavailable(monkey
     body = response.get_json()
     assert response.status_code == 200
     assert body["success"] is True
-    assert body["source"] == "demo_fallback"
-    assert body["count"] >= 1
+    assert body["source"] == "unavailable"
+    assert body["count"] == 0
+    assert body["data"] == []
+    assert body["market_data_status"] == "unavailable"
     assert body["status"] == "partial"
     assert body["source_coverage"] == {"career_insights": "unavailable"}
     assert body["failed_sources"] == ["career_insights"]

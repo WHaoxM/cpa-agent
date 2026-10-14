@@ -46,41 +46,51 @@ CACHE_TTL = {
     'assessment': 300,      # 5min
 }
 
+# career_insights is a cold-start direction catalogue, not a reviewed market
+# source. Its schema carries no source URI, observation period or geography for
+# salary/demand claims. Preserve structural fields, but withhold market facts.
+_UNVERIFIED_MARKET_FIELDS = (
+    'avg_salary_low', 'avg_salary_high', 'demand_level', 'entry_difficulty',
+    'growth_trend', 'hot_cities', 'hot_industries', 'description',
+)
+_MARKET_CACHE_VERSION = 'v2_unverified_market'
 
-def _demo_landscape_response(reason: str = "") -> dict:
-    """Stable career landscape used when external storage is unavailable."""
+
+def _unverified_market_meta() -> dict:
+    return {
+        'status': 'partial',
+        'market_data_status': 'unverified_seed',
+        'source_coverage': {
+            'career_direction_structure': 'seed_available',
+            'market_claims': 'unverified_seed',
+        },
+        'unavailable_fields': list(_UNVERIFIED_MARKET_FIELDS),
+        'next_action': 'await_verified_market_source',
+    }
+
+
+def _structural_career_row(row: dict) -> dict:
+    projected = dict(row)
+    for field in _UNVERIFIED_MARKET_FIELDS:
+        projected[field] = None
+    return projected
+
+
+def _unavailable_landscape_response(reason: str = "") -> dict:
+    """Never substitute unsourced market cards when the catalogue is down."""
     return {
         "success": True,
-        "data": [
-            {
-                "category": "人工智能与数据",
-                "role_count": 4,
-                "avg_salary_range": "18K-35K",
-                "roles": ["大模型算法工程师", "AI智能体工程师", "RAG工程师", "数据分析师"],
-            },
-            {
-                "category": "软件工程与云原生",
-                "role_count": 4,
-                "avg_salary_range": "15K-30K",
-                "roles": ["后端开发", "全栈开发", "DevOps工程师", "AI Infra工程师"],
-            },
-            {
-                "category": "产品与安全",
-                "role_count": 3,
-                "avg_salary_range": "12K-26K",
-                "roles": ["AI产品经理", "网络安全工程师", "AI安全工程师"],
-            },
-        ],
-        "count": 3,
-        "source": "demo_fallback",
-        # The payload is displayable, but it is not backed by the requested
-        # career catalog. Keep success for backwards compatibility while
-        # making the degraded completeness machine-readable.
+        "data": [],
+        "count": 0,
+        "source": "unavailable",
+        "market_data_status": "unavailable",
+        "unavailable_fields": list(_UNVERIFIED_MARKET_FIELDS),
+        # Keep the legacy HTTP 200 contract, but not substitute fake facts.
         "status": "partial",
         "source_coverage": {"career_insights": "unavailable"},
         "failed_sources": ["career_insights"],
         "next_action": "retry_when_sources_available",
-        "warning": "外部职业库不可用，已返回内置演示职业全景。",
+        "warning": "职业方向目录暂不可用，未展示未经核验的替代内容。",
         "reason": reason,
     }
 
@@ -132,7 +142,7 @@ def get_landscape():
     """获取职业全景图 — 按大类聚合, 返回每个大类的方向列表和统计"""
     try:
         # Redis缓存
-        cache_key = "cache:career:landscape"
+        cache_key = f"cache:career:landscape:{_MARKET_CACHE_VERSION}"
         cached = _cache_get(cache_key)
         if cached:
             return jsonify(cached)
@@ -143,9 +153,7 @@ def get_landscape():
         SELECT
             category,
             COUNT(*) as role_count,
-            AVG(avg_salary_low) as avg_salary_low,
-            AVG(avg_salary_high) as avg_salary_high,
-            GROUP_CONCAT(role_name ORDER BY demand_level DESC SEPARATOR '||') as roles
+            GROUP_CONCAT(role_name ORDER BY role_name SEPARATOR '||') as roles
         FROM career_insights
         GROUP BY category
         ORDER BY role_count DESC
@@ -158,17 +166,18 @@ def get_landscape():
             landscape.append({
                 "category": row['category'],
                 "role_count": row['role_count'],
-                "avg_salary_range": f"{int(row['avg_salary_low'] or 0)}K-{int(row['avg_salary_high'] or 0)}K",
+                "avg_salary_range": "",
                 "roles": roles[:8],  # 每类最多展示8个
             })
 
-        resp = {"success": True, "data": landscape, "count": len(landscape)}
+        resp = {"success": True, "data": landscape, "count": len(landscape),
+                **_unverified_market_meta()}
         _cache_set(cache_key, resp, CACHE_TTL['landscape'])
         return jsonify(resp)
 
     except Exception as e:
         logger.error(f"获取职业全景失败: {e}")
-        return jsonify(_demo_landscape_response(str(e)))
+        return jsonify(_unavailable_landscape_response(str(e)))
 
 
 # ──────────────────────────────────────────
@@ -189,9 +198,17 @@ def list_insights():
             default_limit=20,
         )
 
+        if demand_level:
+            return jsonify({
+                "success": False,
+                "reason": "market_filter_unverified",
+                "message": "需求等级暂无可核验的市场来源，不能据此筛选职业方向。",
+                **_unverified_market_meta(),
+            }), 409
+
         # Redis缓存 (仅无keyword时缓存, keyword查询太分散)
         if not keyword:
-            cache_key = _cache_key("insights", category=category, sub_category=sub_category,
+            cache_key = _cache_key(f"insights-{_MARKET_CACHE_VERSION}", category=category, sub_category=sub_category,
                                    demand_level=demand_level, limit=limit, offset=offset)
             cached = _cache_get(cache_key)
             if cached:
@@ -208,11 +225,8 @@ def list_insights():
         if sub_category:
             conditions.append("sub_category = :sub_category")
             params["sub_category"] = sub_category
-        if demand_level:
-            conditions.append("demand_level = :demand_level")
-            params["demand_level"] = demand_level
         if keyword:
-            conditions.append("(role_name LIKE :keyword OR description LIKE :keyword)")
+            conditions.append("role_name LIKE :keyword")
             params["keyword"] = f"%{keyword}%"
 
         where = " AND ".join(conditions) if conditions else "1=1"
@@ -220,23 +234,18 @@ def list_insights():
         sql = f"""
         SELECT
             role_name, category, sub_category,
-            avg_salary_low, avg_salary_high,
-            demand_level, entry_difficulty, growth_trend,
-            hot_cities, hot_industries,
-            core_skills, skill_count,
-            description
+            core_skills, skill_count
         FROM career_insights
         WHERE {where}
-        ORDER BY
-            FIELD(demand_level, '极高','高','中','低'),
-            avg_salary_high DESC
+        ORDER BY role_name ASC
         LIMIT :limit OFFSET :offset
         """
         results = mysql.execute(sql, params)
 
         # 解析 JSON 字段
         for row in results:
-            _parse_json_fields(row, ('hot_cities', 'hot_industries', 'core_skills'))
+            _parse_json_fields(row, ('core_skills',))
+        results = [_structural_career_row(row) for row in results]
 
         count_sql = f"SELECT COUNT(*) as total FROM career_insights WHERE {where}"
         count_params = {k: v for k, v in params.items() if k not in ('limit', 'offset')}
@@ -249,7 +258,8 @@ def list_insights():
             "count": len(results),
             "total": total,
             "limit": limit,
-            "offset": offset
+            "offset": offset,
+            **_unverified_market_meta(),
         }
         if not keyword:
             _cache_set(cache_key, resp, CACHE_TTL['insights'])
@@ -263,7 +273,7 @@ def list_insights():
 def get_insight_detail(role_name: str):
     """获取单个职业方向的完整洞察 (含 day_in_life)"""
     try:
-        cache_key = _cache_key("detail", role_name=role_name)
+        cache_key = _cache_key(f"detail-{_MARKET_CACHE_VERSION}", role_name=role_name)
         cached = _cache_get(cache_key)
         if cached:
             return jsonify(cached)
@@ -271,7 +281,9 @@ def get_insight_detail(role_name: str):
         mysql = get_mysql_client()
 
         sql = """
-        SELECT * FROM career_insights WHERE role_name = :role_name
+        SELECT id, role_name, category, sub_category, core_skills,
+               skill_count, day_in_life, updated_at
+        FROM career_insights WHERE role_name = :role_name
         """
         results = mysql.execute(sql, {"role_name": role_name})
 
@@ -279,9 +291,10 @@ def get_insight_detail(role_name: str):
             return jsonify({"success": False, "error": f"未找到方向: {role_name}"}), 404
 
         row = results[0]
-        _parse_json_fields(row, ('hot_cities', 'hot_industries', 'core_skills'))
+        _parse_json_fields(row, ('core_skills',))
 
-        resp = {"success": True, "data": row}
+        resp = {"success": True, "data": _structural_career_row(row),
+                **_unverified_market_meta()}
         _cache_set(cache_key, resp, CACHE_TTL['detail'])
         return jsonify(resp)
 
@@ -302,39 +315,17 @@ def _split_day_in_life(text: str) -> list:
 
 
 def _build_role_intro(row: dict) -> dict:
-    """career_insights 行 → FE RoleIntro；缺字段给空，不写业务兜底句。"""
-    hot_cities = parse_json_field(row.get("hot_cities")) or []
+    """Only stable seed structure may enter formal RoleIntro presentation."""
     core_skills = parse_json_field(row.get("core_skills")) or []
-    demand = str(row.get("demand_level") or "")
-    if isinstance(hot_cities, list):
-        top_regions = [
-            {"name": str(c), "demand": demand} if isinstance(c, str)
-            else {"name": str(c.get("name") or c), "demand": str(c.get("demand") or demand)}
-            for c in hot_cities
-        ]
-    else:
-        top_regions = []
-
-    requirements = []
-    if row.get("entry_difficulty"):
-        requirements.append(str(row["entry_difficulty"]))
-    if row.get("category"):
-        requirements.append(str(row["category"]))
-
-    outlook_parts = []
-    if row.get("growth_trend"):
-        outlook_parts.append(str(row["growth_trend"]))
-    if row.get("description"):
-        outlook_parts.append(str(row["description"]))
 
     return {
         "title": str(row.get("role_name") or ""),
-        "summary": str(row.get("description") or ""),
+        "summary": "",
         "responsibilities": _split_day_in_life(row.get("day_in_life") or ""),
-        "requirements": requirements,
+        "requirements": [],
         "skills": core_skills if isinstance(core_skills, list) else [],
-        "topRegions": top_regions,
-        "outlook": " ".join(outlook_parts).strip(),
+        "topRegions": [],
+        "outlook": "",
     }
 
 
@@ -361,8 +352,7 @@ def get_role_intro():
         for key in lookup_roles:
             rows = mysql.execute(
                 """
-                SELECT role_name, category, demand_level, hot_cities, core_skills,
-                       description, day_in_life, entry_difficulty, growth_trend
+                SELECT role_name, category, core_skills, day_in_life
                 FROM career_insights
                 WHERE role_name = :role OR role_name LIKE :role_like
                 LIMIT 1
@@ -379,7 +369,8 @@ def get_role_intro():
                 "message": f"role not found: {role}",
             })
 
-        return jsonify({"success": True, "data": _build_role_intro(rows[0])})
+        return jsonify({"success": True, "data": _build_role_intro(rows[0]),
+                        **_unverified_market_meta()})
     except Exception as e:
         return jsonify(safe_error("获取角色简介", e)), 500
 
@@ -549,12 +540,9 @@ def _mysql_fuzzy_match(query: str, top_k: int) -> list:
     sql = """
     SELECT
         role_name, category, sub_category,
-        avg_salary_low, avg_salary_high,
-        demand_level, entry_difficulty, growth_trend,
-        core_skills, description
+        core_skills, skill_count
     FROM career_insights
     WHERE role_name LIKE :q
-       OR description LIKE :q
        OR JSON_CONTAINS(core_skills, :q_json)
     ORDER BY skill_count DESC
     LIMIT :limit
@@ -566,7 +554,7 @@ def _mysql_fuzzy_match(query: str, top_k: int) -> list:
     })
     for row in results:
         row['core_skills'] = parse_json_field(row.get('core_skills'))
-    return results
+    return [_structural_career_row(row) for row in results]
 
 
 def _skill_name_from_hit(hit: dict) -> str:
@@ -724,7 +712,7 @@ def semantic_explore():
 
         # Redis缓存 (query hash)
         qhash = hashlib.md5(query.encode()).hexdigest()[:8]
-        cache_key = _cache_key("explore", qhash=qhash, top_k=top_k)
+        cache_key = _cache_key(f"explore-{_MARKET_CACHE_VERSION}", qhash=qhash, top_k=top_k)
         cached = _cache_get(cache_key)
         if cached:
             return jsonify(cached)
@@ -740,7 +728,8 @@ def semantic_explore():
                 "fuzzy_matches": fuzzy_results,
                 "semantic_matches": semantic_results,
                 "total": len(fuzzy_results) + len(semantic_results)
-            }
+            },
+            **_unverified_market_meta(),
         }
         _cache_set(cache_key, resp, CACHE_TTL['explore'])
         return jsonify(resp)
