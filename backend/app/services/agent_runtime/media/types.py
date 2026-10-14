@@ -53,6 +53,6 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
 ALLOWED_UPLOAD_EXT = frozenset({
     "pdf", "docx", "doc", "txt", "md", "markdown", "json", "csv",
-    "png", "jpg", "jpeg", "webp", "bmp", "tiff",
+    "png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif",
     "wav", "mp3", "m4a", "webm", "ogg",
 })

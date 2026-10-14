@@ -18,8 +18,10 @@ from app.services.agent_runtime.media.ingest import (
     _fallback_pdf,
     build_artifacts,
     extract_text_from_path,
+    ingest_succeeded,
     purpose_allows_heavy,
 )
+from app.services.agent_runtime.media.types import ALLOWED_UPLOAD_EXT
 from app.services.agent_runtime.media.session_resources import mount_resources, list_resources
 from app.services.agent_runtime.media.voice_turn import VoiceTurnService
 from app.services.agent_runtime.permissions import visible_tools_for
@@ -59,6 +61,66 @@ def test_full_text_artifact_keeps_content_after_80k():
     full = next(a for a in artifacts if a["kind"] == "full_text")
     assert full["body_text"].endswith("文末关键结论")
     assert full["meta"]["truncated"] is False
+
+
+def test_tif_attachment_upload_uses_l0_instead_of_false_ready(tmp_path, monkeypatch):
+    import app.services.agent_runtime.media.file_store as store
+    from flask import Flask, g
+    from app.api import agent_bp
+    from app.api._helpers import Principal
+    from app.config import Config
+
+    class FakeParser:
+        def parse_file(self, path):
+            assert path.endswith(".tif")
+            return SimpleNamespace(success=True, text="合成图片简历正文", blocks=[
+                SimpleNamespace(block_id="b1", block_type="text", text="合成图片简历正文", page=1),
+            ], engine="sidecar", metadata={"source_coverage": "complete"})
+
+    class NoMysql:
+        def execute(self, *args, **kwargs):
+            raise RuntimeError("no mysql")
+
+        def fetch_one(self, *args, **kwargs):
+            return None
+
+        def fetch_all(self, *args, **kwargs):
+            return []
+
+    monkeypatch.setattr(store, "_upload_root", lambda: tmp_path)
+    monkeypatch.setattr(store, "ensure_media_schema", lambda _mysql: False)
+    monkeypatch.setattr(
+        "app.pipeline.entity_extractor.l0_full_parser.L0FullParser", FakeParser,
+    )
+    svc = AgentFileService(mysql_client=NoMysql())
+    monkeypatch.setattr(store, "get_agent_file_service", lambda: svc)
+    monkeypatch.setattr(Config, "DEMO_MODE", False)
+    app = Flask(__name__)
+    app.register_blueprint(agent_bp, url_prefix="/api/agent")
+
+    @app.before_request
+    def authenticate_test_owner():
+        g.cpa_principal = Principal("stu_media", "stu_media", source="test")
+
+    assert "tif" in ALLOWED_UPLOAD_EXT
+    response = app.test_client().post(
+        "/api/agent/files",
+        data={"file": (io.BytesIO(b"synthetic image bytes"), "scan.tif", "image/tiff")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 200
+    uploaded = response.get_json()["data"]
+    assert uploaded["status"] == "ready"
+    assert uploaded["student_id"] == "stu_media"
+    assert svc.get_artifact(uploaded["file_id"], "full_text") == "合成图片简历正文"
+    assert [event["status"] for event in svc.list_events(uploaded["file_id"])["events"]] == [
+        "queued", "ingesting", "ready",
+    ]
+
+
+def test_unsupported_media_cannot_claim_success_without_text():
+    assert ingest_succeeded("", {"engine": "unsupported"}, "scan.tif") is False
+    assert ingest_succeeded("", {"engine": "unsupported"}, "extensionless") is False
 
 
 def test_light_pdf_fallback_reads_page_after_40(monkeypatch):

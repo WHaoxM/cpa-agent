@@ -21,7 +21,7 @@ from .types import ArtifactKind, CHARS_EXCERPT
 logger = get_logger("cpa-agent.agent_runtime.media.ingest")
 
 TEXT_EXTS = frozenset({"txt", "md", "markdown", "json", "csv", "log", "yml", "yaml"})
-DOC_EXTS = frozenset({"pdf", "docx", "doc", "png", "jpg", "jpeg", "bmp", "webp", "tiff"})
+DOC_EXTS = frozenset({"pdf", "docx", "doc", "png", "jpg", "jpeg", "bmp", "webp", "tiff", "tif"})
 AUDIO_EXTS = frozenset({"wav", "mp3", "m4a", "webm", "ogg"})
 # Types that must yield text for chat use; empty extract → ingest failed
 REQUIRE_TEXT_EXTS = frozenset({"pdf", "docx", "doc", "txt", "md", "markdown", "json", "csv"})
@@ -404,6 +404,8 @@ def _smart_chunk_text(text: str, meta: Dict[str, Any]) -> List[Tuple[int, str]]:
 def ingest_succeeded(text: str, meta: Dict[str, Any], filename: str) -> bool:
     """Audio pending STT counts as ok; docs that require text must have body."""
     ext = _ext(filename)
+    if meta.get("engine") in {"unsupported", "utf8_failed", "extract_failed", "missing_file"}:
+        return False
     if meta.get("engine") == "audio_pending_stt":
         return True
     if ext in REQUIRE_TEXT_EXTS:

@@ -31,6 +31,12 @@
 
 正式 `:5001` Flask 与 `cpa.pipeline` worker 已在无待处理任务时重启加载本补丁。随后用唯一临时学生账号、无隐私合成 `.tif`（原样 `image/tiff`）登录并调用正式 `POST /api/profile/student/upload?async=1`：返回任务 ID，真 Sidecar OCR 后由四个 Agent 实际交接，Trace 依次记录 `source_extracted=25`、`structure_extracted=50`、`entity_resolved=75`、`candidate_saved=100`，最终权威任务 `needs_input/100%/attempt=1`，候选中的来源引擎为 `sidecar`。精确清理后独立回查该任务、Trace 和 `trace_live_%` 临时账号均为 0 行。重放探针位于忽略的 `output/probe_live_agent_trace.py`，使用该测试生成的合成 TIFF 路径作为唯一参数；勿改用真实学生文件。真实简历 OCR 逐字准确率仍无人工 CER 签审。
 
+### Agent 附件入口的同格式对齐
+
+`POST /api/agent/files` 是另一条后端入口，不与职途导航 L0 上传共用格式白名单。检查发现它先前拒绝 `.tif`，而媒体解析器对同字节 `.tif` 返回 `engine=unsupported`、空正文，`ingest_succeeded` 却给出 `ok=true`；这属于内部假成功，不等于当前 AI 助手页面已经接受该扩展名。修复只扩展该入口的 `.tif` 别名到既有 L0/OCR 引擎，并使明确的 `unsupported` / `extract_failed` 等引擎状态不能落成 READY；不改前端文件选择或解析前画面。
+
+本次沿用上文已核对的 OpenCode `388406238bd5ca15564a762840a2362c3a45bd9c` `packages/opencode/src/tool/read.ts`：它先辨认图片/PDF，再对其他二进制文件显式失败；也核对 `session/message-v2.ts` 的不支持媒体显式错误原则。其模型输入协议不适合直接搬到本项目；这里复用现有 `AgentFileService` 持久状态、Celery 媒体任务与 `L0FullParser`，仅补薄格式适配和失败判定。差分测试先见两项失败：`.tif` 不在上传白名单、`unsupported` 错判成功；修复后 Agent 媒体、异步、HTTP、鉴权及报告相关五个测试文件合计 **60 passed**。无隐私合成 TIFF 经 `ingest_file(..., purpose='chat_attachment')` 走真实 MinerU Sidecar，得到 `ok=true,engine=sidecar,block_count=5,full_text_chars=87`；隔离 Flask HTTP 测试另验证 `POST /api/agent/files` 上传→queued/ingesting/ready 三个状态、全文工件和归属字段。当前 AI 助手前端自身仍不在选择列表中提供 `.tif`；后端能力不能冒称前端操作已验收。
+
 ## 本机真实 OCR 验收
 
 在独立终端/隐藏进程启动真实 Sidecar 前，先确认 `D:` 有足够空间、可用内存与模型完整，强制把 `TEMP/TMP/TMPDIR` 指到 `D:/AGeneral Workspace/cpa-agent/output`，`MODELSCOPE_CACHE` 指到 `D:/AGeneral Workspace/cpa-agent/models/mineru`。运行 `D:/Miniconda/miniconda3/envs/mkg/python.exe -B backend/scripts/parse_sidecar_mineru.py`；先看 `http://127.0.0.1:9380/v1/health` 是否 `status=ready,ocr_pdf=true`。Flask 和 `cpa.pipeline` worker 均须以 `CPA_L0_PARSE_SIDECAR_URL=http://127.0.0.1:9380` 启动新进程；只启动 Sidecar 而未重启 worker，不会改变已缓存的 disabled 能力状态。不要修改账号密钥 `.env`，也不要在用户现有任务上试跑。
