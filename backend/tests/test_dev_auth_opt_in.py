@@ -25,7 +25,9 @@ def test_strict_mode_dev_auth_is_off_by_default(monkeypatch):
     monkeypatch.setattr(Config, "DEMO_MODE", False)
     monkeypatch.delenv("CPA_DEV_AUTH", raising=False)
     client = _app().test_client()
-    assert client.get("/whoami").status_code == 401
+    unauthenticated = client.get("/whoami")
+    assert unauthenticated.status_code == 401
+    assert unauthenticated.get_json()["error"] == "请先登录，再查看或处理你的资料"
     assert client.get("/whoami?student_id=someone_else").status_code == 401
     assert client.get("/whoami", headers={"X-Dev-Student-Id": "someone_else"}).status_code == 401
 

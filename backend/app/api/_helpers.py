@@ -112,7 +112,7 @@ def resolve_request_scope(*, session_id: Optional[str] = None) -> RequestScope:
         principal = _principal_from_auth_adapter()
         if principal is None:
             raise ScopeError(
-                "未认证：生产/strict 模式需要服务端认证适配器提供 Principal",
+                "请先登录，再查看或处理你的资料",
                 status_code=401,
                 code=ErrorCode.AUTH_ERROR,
             )
