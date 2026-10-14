@@ -438,6 +438,17 @@ def get_student_4d(student_id: str):
 
         import json
         portrait['portrait_json'] = parse_json_field(portrait.get('portrait_json'))
+        from ..services.pipeline import require_confirmed_profile
+        from ..services.school_tier_review import portrait_review_current
+        current_profile = require_confirmed_profile(mysql, student_id)
+        current_confirmation = current_profile['_resume_confirmation']['task_id']
+        payload = portrait['portrait_json']
+        if (not isinstance(payload, dict)
+                or payload.get('source_confirmation_task_id') != current_confirmation
+                or not portrait_review_current(
+                    mysql, student_id=student_id,
+                    confirmation_task_id=current_confirmation, portrait=payload)):
+            return jsonify({"success": False, "error": "画像来源已变化，请重新生成"}), 409
 
         return jsonify({
             "success": True,
@@ -465,6 +476,8 @@ def get_student_4d(student_id: str):
 
     except ScopeError as e:
         return scope_error_response(e)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 409
     except Exception as e:
         return jsonify(safe_error("获取学生四维评分", e)), 500
 

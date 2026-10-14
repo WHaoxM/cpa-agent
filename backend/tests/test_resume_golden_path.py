@@ -31,6 +31,8 @@ class MemoryDB:
         return []
 
     def fetch_all(self, sql, params=None):
+        if "FROM school_tier_review" in sql:
+            return []
         if "JSON_UNQUOTE(JSON_EXTRACT(result_json" in sql:
             matched = []
             for row in reversed(list(self.tasks.values())):

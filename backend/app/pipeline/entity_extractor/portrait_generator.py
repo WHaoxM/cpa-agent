@@ -178,8 +178,12 @@ class PortraitGenerator:
         match_job_id: Optional[str] = None,
         student_profile: Optional[Dict] = None,
         target_job_skills: Optional[List[Dict]] = None,
+        official_school_tier_review: Optional[Dict] = None,
+        school_tier_review_revoked: bool = False,
     ) -> Dict:
-        d1 = self._calc_d1_basic(skills, student_profile)
+        d1 = self._calc_d1_basic(skills, student_profile,
+                                 official_school_tier_review=official_school_tier_review,
+                                 school_tier_review_revoked=school_tier_review_revoked)
         d2 = self._calc_d2_skill(skills, student_profile, target_job_skills)
         d3 = self._calc_d3_quality(skills, student_profile)
         d4 = self._calc_d4_potential(skills, student_profile)
@@ -199,6 +203,7 @@ class PortraitGenerator:
             "student_id": student_id,
             "name": (student_profile or {}).get("name", ""),
             "D1_basic": d1,
+            "school_tier_review": d1.get("school_tier_review"),
             "D2_skill": d2,
             "D3_quality": d3,
             "D4_potential": d4,
@@ -240,7 +245,9 @@ class PortraitGenerator:
 
     # ═══ D1 基础要求 (冻结: sub_degree 0-30, sub_school 0-15, sub_major 0-25, sub_cert 0-15, sub_language 0-15) ═══
 
-    def _calc_d1_basic(self, skills: List[Dict], profile: Optional[Dict] = None) -> Dict:
+    def _calc_d1_basic(self, skills: List[Dict], profile: Optional[Dict] = None,
+                       official_school_tier_review: Optional[Dict] = None,
+                       school_tier_review_revoked: bool = False) -> Dict:
         profile = profile or {}
         degree = profile.get("degree", "")
         school = profile.get("school", "")
@@ -253,6 +260,20 @@ class PortraitGenerator:
         # from a school/major name or from its apparent subject family.
         from .resume_structure import confirmed_semantic_fact
         school_tier = confirmed_semantic_fact(profile, "school_tier")
+        if school_tier_review_revoked:
+            school_tier = None
+        reviewed = official_school_tier_review
+        reviewed_ref = None
+        if (isinstance(reviewed, dict) and reviewed.get("status") == "approved"
+                and reviewed.get("school_name") == school
+                and reviewed.get("school_tier") in self._scoring["school_tier_score"]
+                and isinstance(reviewed.get("id"), int)
+                and isinstance(reviewed.get("evidence_sha256"), str)):
+            # This is a separate administrator-reviewed source, not a rewritten
+            # student L0 quote or a model confirmation.
+            school_tier = reviewed["school_tier"]
+            reviewed_ref = {"id": reviewed["id"],
+                            "evidence_sha256": reviewed["evidence_sha256"]}
         assessment, assessed = self._assessment_state(profile)
         school_type = assessment["assessment"]["school_type"] if assessment else None
         major_category = confirmed_semantic_fact(profile, "major_category")
@@ -279,7 +300,10 @@ class PortraitGenerator:
             "school_type": school_type,
             "school_type_provenance": assessment["provenance"] if school_type else None,
             "school_type_status": ("reviewed_observation" if assessed else "candidate") if school_type else "unknown",
-            "school_score_basis": "confirmed_school_tier" if sub_school is not None else "no_tier_mapping",
+            "school_score_basis": ("review_revoked" if school_tier_review_revoked else
+                                   "reviewed_official_school_tier" if reviewed_ref else
+                                   "confirmed_school_tier" if sub_school is not None else "no_tier_mapping"),
+            "school_tier_review": reviewed_ref,
             "major_category": major_category,
             "sub_degree": sub_degree,
             "sub_school": sub_school,

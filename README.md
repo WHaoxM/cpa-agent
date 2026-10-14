@@ -134,6 +134,7 @@ python run.py      # http://localhost:5001
 岗位发布的正式账号管理端提供 `/api/admin/job-publications` 的预检、精确摘要确认、版本回读与撤回；见 [HTTP 发布契约](docs/specs/admin-job-publication-http.md)。这不是原网页真实性或招聘有效期的自动证明。旧本机 `backend/scripts/mysql/publish_job_catalog.py` 仍可直接发布，但 `reviewed_by/reviewed_at` 来自其 JSON 输入，**不经过账号审核或新的原子审计**；只限可信运维环境与独立人工核对，不能与正式 HTTP 审核记录等价。
 正式管理员还可经只读 `/api/admin/job-reviews` 查看模型岗位审查的来源、阻断原因和候选摘要；它不授予发布权，不自动核实当前招聘是否仍开放，见 [岗位模型审查](docs/guides/job-catalog-model-review.md)。
 管理员 dataset/KB 上传现可用受限 multipart 将 JSON 岗位列表或 UTF-8 文本**私有暂存**并回读摘要；不创建可信岗位行、不公开也不建图，既有 MySQL volume 须先迁移，见 [管理员来源暂存](docs/specs/admin-source-staging.md)。
+学校档位人工修正仅接受可核验的教育部或已登记学校官网原文；首期只支持有明确原文的 985、211、双一流，并绑定正式管理员审核、当前已确认简历版本及可撤回证据。当前 live 数据库尚未迁移到 `0005`，审核入口不可用；旧无审核画像路径保持可用。正式启用需维护窗口迁移与业务验收，见 [学校档位审核](docs/specs/school-tier-review.md)。
 经正式管理员核对固定官方原文、精确摘要及截止时间后，评分器暂不支持的岗位可通过独立 `/api/admin/job-source-listings` 作为**仅供查看来源**的条目展示于公开岗位目录；此类 `source_csb_` 岗位明确标为不可评分/匹配，L3/L4 在建任务前拒绝，且不自动转成可评分岗位。公共读取使用最长 5 分钟的 Redis 后台来源核验缓存；上游/缓存故障会隐藏这类岗位，仍保留平台已发布岗位并标记部分结果。后台核验复用上文的 Beat 和 `cpa.pipeline` worker；缺任一进程不会刷新。既有 MySQL volume 必须先执行加表迁移，见 [来源专用岗位规格](docs/specs/source-only-job-catalog.md)。
 
 既有 Docker MySQL volume **不会重跑初始化 SQL**。首次启用新后端或升级现有库时，先备份、停写，再在 `backend/` 目录以 `mkg` 环境执行 `python -B -m alembic -c alembic.ini upgrade head` 并核对 `current` 与 `heads`；新建 volume 初始化后也执行同一命令。它集中接管账号 `auth_epoch`、管理员来源、Pipeline 与投影等结构变更；不再反复修改初始化 SQL 或逐个运行旧迁移脚本。缺账号列/触发器时认证仍返回 503，不降级为开发头身份。操作与失败恢复见 [MySQL 统一迁移](docs/runbooks/mysql-migrations.md) 与 [自建账号规格](docs/specs/self-managed-account-auth.md)。

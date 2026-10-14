@@ -13,6 +13,8 @@ class FakeMysql:
         self.portraits = portraits or {}
 
     def fetch_all(self, query, params):
+        if "FROM school_tier_review" in query:
+            return []
         if "FROM pipeline_task" in query:
             row = self.tasks.get(params["tid"])
             return [row] if row and row["student_id"] == params["sid"] else []

@@ -37,6 +37,8 @@ class SourceDB:
                         "portrait_json": {"required_skills": ["Python"], "published": True}}
 
     def fetch_all(self, sql, params=None):
+        if "FROM school_tier_review" in sql:
+            return []
         if "FROM job_catalog_publication" in sql:
             return []
         if "FROM student_profile" in sql:

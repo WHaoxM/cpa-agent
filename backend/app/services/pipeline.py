@@ -357,11 +357,17 @@ def require_authoritative_match_sources(mysql, student_id: str, job_portrait_id:
              and task.get("status") == "completed" and isinstance(payload, dict)
              and str(payload.get("portrait_id")) == str(row["id"])
              and payload.get("portrait") == portrait)
+    if valid:
+        from .school_tier_review import portrait_review_current
+        valid = portrait_review_current(
+            mysql, student_id=student_id, confirmation_task_id=confirmation_id,
+            portrait=portrait)
     if not valid:
         raise PipelineSourceUnavailable("confirmed_portrait_unavailable", "generate_portrait",
             "缺少与当前已确认简历一致的已落库 L2 画像，请先生成画像", sources)
     sources.update({"source_portrait_id": str(row["id"]),
                     "source_portrait_task_id": source_task_id,
+                    "source_school_tier_review": portrait.get("school_tier_review"),
                     "source_portrait_sha256": hashlib.sha256(json.dumps(
                         portrait, ensure_ascii=False, sort_keys=True, separators=(",", ":")
                     ).encode("utf-8")).hexdigest()})
@@ -613,6 +619,15 @@ class L2GeneratePortraitPipeline(BasePipeline):
 
         try:
             confirmed_profile = require_confirmed_profile(self.mysql, student_id)
+            from .school_tier_review import latest_review
+            from .pipeline_events import ConfirmationTransaction
+            current_school_review = latest_review(
+                self.mysql, student_id=student_id,
+                confirmation_task_id=confirmed_profile["_resume_confirmation"]["task_id"],
+                allow_unmigrated=True)
+            approved_school_review = (current_school_review
+                if current_school_review and current_school_review["status"] == "approved"
+                and current_school_review["school_name"] == confirmed_profile.get("school") else None)
             from ..pipeline.entity_extractor.portrait_generator import PortraitGenerator
             from ..pipeline.entity_extractor.graph_storage import GraphStorage
 
@@ -632,6 +647,8 @@ class L2GeneratePortraitPipeline(BasePipeline):
                 skills=skills,
                 match_job_id=job_id,
                 student_profile=student_profile,
+                official_school_tier_review=approved_school_review,
+                school_tier_review_revoked=bool(current_school_review and not approved_school_review),
             )
             portrait["source_confirmation_task_id"] = confirmed_profile["_resume_confirmation"]["task_id"]
             portrait["source_portrait_task_id"] = self.task_id
@@ -725,6 +742,20 @@ class L2GeneratePortraitPipeline(BasePipeline):
                     current_confirmation = (current_profile or {}).get("_resume_confirmation") if isinstance(current_profile, dict) else None
                     if not isinstance(current_confirmation, dict) or current_confirmation.get("task_id") != portrait["source_confirmation_task_id"]:
                         raise ValueError("已确认简历在画像生成期间发生变化，请重新生成")
+                    latest_school_review = latest_review(
+                        ConfirmationTransaction(conn), student_id=student_id,
+                        confirmation_task_id=portrait["source_confirmation_task_id"], lock=True,
+                        allow_unmigrated=True)
+                    prior_review_ref = ({"id": current_school_review["id"],
+                                         "evidence_sha256": current_school_review["evidence_sha256"],
+                                         "status": current_school_review["status"]}
+                                        if current_school_review else None)
+                    locked_review_ref = ({"id": latest_school_review["id"],
+                                          "evidence_sha256": latest_school_review["evidence_sha256"],
+                                          "status": latest_school_review["status"]}
+                                         if latest_school_review else None)
+                    if prior_review_ref != locked_review_ref:
+                        raise ValueError("学校档位审核在画像生成期间发生变化，请重新生成")
                     existing = conn.execute(text(
                         "SELECT id FROM student_portrait_4d "
                         "WHERE student_id=:sid AND target_job_id <=> :jid "

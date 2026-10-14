@@ -86,6 +86,12 @@ def verify_plan_updates(mysql, student_id, packet, out):
                 value = _json(rows[0].get("portrait_json")) if rows else None
                 valid = (isinstance(value, dict) and value == result.get("portrait")
                          and value.get("source_portrait_task_id") == tid)
+                if valid:
+                    from ..school_tier_review import portrait_review_current
+                    valid = portrait_review_current(
+                        mysql, student_id=student_id,
+                        confirmation_task_id=value.get("source_confirmation_task_id"),
+                        portrait=value)
             elif packet.subagent == "match":
                 rows = mysql.fetch_all("SELECT result_json FROM match_result WHERE id=:rid AND student_id=:sid",
                                        {"rid": rid, "sid": student_id})

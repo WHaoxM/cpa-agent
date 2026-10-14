@@ -67,7 +67,7 @@ def test_clean_and_legacy_upgrade_on_disposable_mysql_database():
             alembic("upgrade", "head")
             with database.cursor() as cursor:
                 cursor.execute("SELECT version_num FROM alembic_version")
-                assert cursor.fetchone() == ("0004_resume_trace_schema",)
+                assert cursor.fetchone() == ("0005_school_tier_review",)
                 cursor.execute("SELECT username, auth_epoch FROM user_account "
                                "WHERE id='migration_probe'")
                 assert cursor.fetchone() == ("migration_probe", 0)
@@ -95,6 +95,8 @@ def test_clean_and_legacy_upgrade_on_disposable_mysql_database():
                 cursor.execute("SHOW TABLES LIKE 'pipeline_resume_dispatch'")
                 assert cursor.fetchone() is not None
                 cursor.execute("SHOW TABLES LIKE 'pipeline_task_trace'")
+                assert cursor.fetchone() is not None
+                cursor.execute("SHOW TABLES LIKE 'school_tier_review'")
                 assert cursor.fetchone() is not None
         finally:
             database.close()

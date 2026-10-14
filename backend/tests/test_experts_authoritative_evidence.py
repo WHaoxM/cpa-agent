@@ -168,6 +168,8 @@ class DB:
     def fetch_all(self, sql, params):
         self.calls.append((sql, params))
         assert params["sid"] == "owner"
+        if "FROM school_tier_review" in sql:
+            return []
         if "FROM pipeline_task" in sql:
             return [self.task]
         if "FROM student_portrait_4d" in sql:

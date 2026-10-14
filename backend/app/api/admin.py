@@ -886,6 +886,100 @@ def revoke_admin_source_only_job(listing_id):
     return jsonify({"success": True, **result})
 
 
+# ========== 学校档位：教育部原文人工审核（不改学生 L0 简历） ==========
+
+@admin_bp.route('/school-tier-reviews', methods=['POST'])
+def approve_admin_school_tier():
+    from ..services.school_tier_review import (
+        approve_school_tier, SchoolTierReviewConflict, SchoolTierReviewForbidden,
+        SchoolTierSourceUnavailable,
+    )
+
+    actor_id = _job_publication_admin()
+    if actor_id is None:
+        return jsonify({"success": False, "error": "需要正式登录的管理员账号"}), 403
+    body = _publication_body()
+    if body is None:
+        return jsonify(safe_bad_request("请求体必须是至多 256 KB 的 JSON 对象")), 400
+    try:
+        result = approve_school_tier(get_mysql_client(), body=body,
+                                     actor_id=actor_id, ip=request.remote_addr)
+    except SchoolTierReviewForbidden:
+        return jsonify({"success": False, "error": "管理员账号不再有效"}), 403
+    except SchoolTierReviewConflict as exc:
+        return jsonify({"success": False, "error": str(exc)}), 409
+    except (SchoolTierSourceUnavailable, SQLAlchemyError):
+        logger.exception("学校档位官方来源审核暂不可用")
+        return jsonify({"success": False, "error": "官方来源或审核数据库暂不可用"}), 503
+    except ValueError as exc:
+        return jsonify(safe_bad_request(str(exc))), 400
+    response = jsonify({"success": True, "data": result})
+    response.headers["Cache-Control"] = "no-store"
+    return response, 200 if result["idempotent"] else 201
+
+
+@admin_bp.route('/school-tier-reviews/current', methods=['GET'])
+def current_admin_school_tier():
+    from ..services.school_tier_review import latest_review, SchoolTierSourceUnavailable
+
+    if _job_publication_admin() is None:
+        return jsonify({"success": False, "error": "需要正式登录的管理员账号"}), 403
+    student_id = request.args.get("student_id", "")
+    task_id = request.args.get("confirmation_task_id", "")
+    if (not student_id or len(student_id) > 64 or not task_id or len(task_id) > 64):
+        return jsonify(safe_bad_request("需要 student_id 与 confirmation_task_id")), 400
+    try:
+        row = latest_review(get_mysql_client(), student_id=student_id,
+                            confirmation_task_id=task_id)
+    except (SchoolTierSourceUnavailable, SQLAlchemyError):
+        logger.exception("学校档位审核回读暂不可用")
+        return jsonify({"success": False, "error": "学校档位审核数据库暂不可用"}), 503
+    if row is None:
+        return jsonify(safe_not_found("当前确认简历尚无学校档位审核")), 404
+    public = {key: row[key] for key in (
+        "id", "student_id", "confirmation_task_id", "school_name", "school_tier",
+        "source_kind", "source_uri", "source_sha256", "source_quote", "quote_sha256",
+        "evidence_sha256", "source_checked_at", "status", "reviewed_by", "reviewed_at",
+        "revoked_by", "revoked_at", "revoke_reason")}
+    response = jsonify({"success": True, "data": public})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@admin_bp.route('/school-tier-reviews/<int:review_id>/revoke', methods=['POST'])
+def revoke_admin_school_tier(review_id):
+    from ..services.school_tier_review import (
+        revoke_school_tier, SchoolTierReviewConflict, SchoolTierReviewForbidden,
+        SchoolTierSourceUnavailable,
+    )
+
+    actor_id = _job_publication_admin()
+    if actor_id is None:
+        return jsonify({"success": False, "error": "需要正式登录的管理员账号"}), 403
+    body = _publication_body()
+    if body is None:
+        return jsonify(safe_bad_request("请求体必须是至多 256 KB 的 JSON 对象")), 400
+    try:
+        result = revoke_school_tier(
+            get_mysql_client(), review_id=review_id,
+            expected_digest=body.get("expected_evidence_sha256"),
+            reason=body.get("reason"), actor_id=actor_id, ip=request.remote_addr)
+    except SchoolTierReviewForbidden:
+        return jsonify({"success": False, "error": "管理员账号不再有效"}), 403
+    except SchoolTierReviewConflict as exc:
+        return jsonify({"success": False, "error": str(exc)}), 409
+    except (SchoolTierSourceUnavailable, SQLAlchemyError):
+        logger.exception("学校档位审核撤回暂不可用")
+        return jsonify({"success": False, "error": "学校档位审核数据库暂不可用"}), 503
+    except ValueError as exc:
+        return jsonify(safe_bad_request(str(exc))), 400
+    if result is None:
+        return jsonify(safe_not_found("学校档位审核版本不存在")), 404
+    response = jsonify({"success": True, "data": result})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @admin_bp.route('/job-publications', methods=['GET'])
 def list_admin_job_publications():
     from ..services.admin_job_publication import list_admin_publications, PublicationConflict
