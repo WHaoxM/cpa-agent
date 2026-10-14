@@ -198,6 +198,17 @@ def test_dataset_preview_and_publish_recheck_exact_staged_record(monkeypatch, tm
         assert audit_detail["dataset_reference"]["expected_record_sha256"] == record_digest
         assert db.execute_single("SELECT count FROM job_dataset WHERE id=:id",
                                  {"id": dataset_id})["count"] == 0
+        content = admin.get(f"{base}/api/admin/dataset/{dataset_id}/content", timeout=5)
+        assert content.status_code == 200, content.text
+        assert content.json()["data"]["published"] is True
+        assert content.json()["data"]["publication_count"] == 1
+        assert content.json()["data"]["active_publication_count"] == 1
+        retained = admin.delete(f"{base}/api/admin/dataset/{dataset_id}",
+                                headers=headers, timeout=5)
+        assert retained.status_code == 409, retained.text
+        assert path.read_bytes() == raw
+        assert db.execute_single("SELECT id FROM job_dataset WHERE id=:id",
+                                 {"id": dataset_id}) is not None
     finally:
         admin.close()
         student.close()

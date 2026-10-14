@@ -76,6 +76,10 @@ class PipelineSourceType(str, Enum):
     UPLOAD = "upload"
 
 
+class AdminSourceReferenced(ValueError):
+    """A staged source is still needed to audit an immutable publication."""
+
+
 # ========== 知识库管理 API ==========
 
 @admin_bp.route('/knowledge-base', methods=['GET'])
@@ -203,7 +207,10 @@ def delete_dataset(ds_id: str):
     existing = mysql.execute("SELECT id, file_path FROM job_dataset WHERE id = :ds_id LIMIT 1", {"ds_id": ds_id})
     if not existing:
         return jsonify(safe_not_found(f"数据集不存在: {ds_id}")), 404
-    _delete_admin_source(mysql, 'dataset', ds_id, existing[0].get('file_path'))
+    try:
+        _delete_admin_source(mysql, 'dataset', ds_id, existing[0].get('file_path'))
+    except AdminSourceReferenced:
+        return jsonify({"success": False, "error": "数据集已被岗位发布引用，原文须保留供审核"}), 409
 
     remaining = mysql.execute("SELECT id FROM job_dataset WHERE id = :ds_id LIMIT 1", {"ds_id": ds_id})
     if remaining:
@@ -308,23 +315,57 @@ def _read_admin_content(kind: str, source_id: str):
         logger.error("admin source content unavailable: %s: %s", source_id, exc)
         return jsonify({"success": False, "code": "admin_source_unavailable",
                         "error": "暂存来源文件不可用或完整性校验失败"}), 503
+    publication_count = 0
+    active_publication_count = 0
+    if kind == 'dataset':
+        references = mysql.execute(
+            "SELECT COUNT(*) AS total, "
+            "SUM(CASE WHEN status='published' THEN 1 ELSE 0 END) AS active "
+            "FROM job_catalog_publication "
+            "WHERE JSON_UNQUOTE(JSON_EXTRACT(snapshot_json, '$.staged_dataset_id'))=:id",
+            {"id": source_id},
+        )[0]
+        publication_count = int(references['total'] or 0)
+        active_publication_count = int(references['active'] or 0)
     return {"id": source_id, "content": content,
             "file_size": row['file_size'], "content_sha256": row['content_sha256'],
             "staged_record_count": row.get('staged_record_count', 0),
-            "published": False, "graph_built": False}
+            "published": active_publication_count > 0,
+            "publication_count": publication_count,
+            "active_publication_count": active_publication_count,
+            "graph_built": False}
 
 
 def _delete_admin_source(mysql, kind: str, source_id: str, file_path):
     table = 'job_dataset' if kind == 'dataset' else 'knowledge_base'
     tombstone = None
     path = None
-    if file_path:
-        path = checked_path(source_id, kind, file_path)
-        if path.exists():
-            tombstone = path.with_name(f".{path.name}.{uuid.uuid4().hex}.deleting")
-            path.replace(tombstone)
     try:
         with mysql.engine.begin() as conn:
+            # Publication locks this same dataset row before its final source
+            # read. Holding it through the reference check and delete avoids
+            # a publish/delete race that would lose the reviewed original.
+            current = conn.execute(text(
+                f"SELECT file_path FROM {table} WHERE id=:id FOR UPDATE"
+            ), {"id": source_id}).mappings().first()
+            if not current:
+                raise RuntimeError("管理员来源在删除前已变化")
+            if kind == 'dataset':
+                referenced = conn.execute(text(
+                    "SELECT id FROM job_catalog_publication "
+                    "WHERE JSON_UNQUOTE(JSON_EXTRACT(snapshot_json, '$.staged_dataset_id'))=:id "
+                    "LIMIT 1"
+                ), {"id": source_id}).first()
+                if referenced:
+                    raise AdminSourceReferenced("暂存数据集已被正式岗位发布引用")
+            current_path = current['file_path']
+            if current_path != file_path:
+                raise RuntimeError("管理员来源文件路径在删除前已变化")
+            if current_path:
+                path = checked_path(source_id, kind, current_path)
+                if path.exists():
+                    tombstone = path.with_name(f".{path.name}.{uuid.uuid4().hex}.deleting")
+                    path.replace(tombstone)
             deleted = conn.execute(text(f"DELETE FROM {table} WHERE id=:id"), {"id": source_id})
             if deleted.rowcount != 1:
                 raise RuntimeError("管理员来源删除未影响唯一记录")
