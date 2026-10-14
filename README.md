@@ -127,7 +127,7 @@ python run.py      # http://localhost:5001
 
 职途导航的真实简历导入另有专用 `POST /api/profile/student/upload?async=1`：文件或粘贴文字经同一 L0 持久任务进入 `cpa.pipeline` worker，由文档、结构、实体、证据四个实际职责接力；`GET /api/pipeline/trace/<task_id>` 提供归属校验后的交接轨迹和四个已完成检查点百分比。解析前沿用演示版页面布局，处理中在原预览/仪表盘位置动态呈现；候选仍须人工核对，轨迹/百分比不代表已评分。首次启用须完成 Alembic 迁移，详见 [L0 多 Agent 轨迹](docs/guides/resume-agent-team-trace.md)。
 
-仓库根目录 `.env` 的 `CPA_DEMO_MODE=false` 表示 strict 身份模式：默认不会从请求体、查询参数或内置学号自动推断用户。平台自建账号的 `/api/auth/csrf`、`/register`、`/login`、`/change-password`、`/logout`、`/me` 使用 MySQL `user_account` 与 Redis 服务端会话；已登录改密须提供当前密码，成功后所有设备重新登录。启用前须设置随机、至少 32 字符的 `SECRET_KEY`，生产须使用 HTTPS、`FLASK_DEBUG=false`、`CPA_AUTH_COOKIE_SECURE=true`（默认）。仅本机 HTTP 调试时才将 `CPA_AUTH_COOKIE_SECURE=false`；管理员使用可信本机 CLI `flask --app app provision-admin --username <name>` 开户，不提供公开管理员注册。详情和未覆盖边界见 [自建账号规格](docs/specs/self-managed-account-auth.md)。仅在本机开发调试且明确设置 `CPA_DEV_AUTH=1` 时，loopback 请求可通过 `X-Dev-Student-Id` 请求头注入临时学生 Principal，不能获得管理员权限。
+仓库根目录 `.env` 的 `CPA_DEMO_MODE=false` 表示 strict 身份模式：默认不会从请求体、查询参数或内置学号自动推断用户。平台自建账号的 `/api/auth/csrf`、`/register`、`/login`、`/change-password`、`/logout`、`/me` 使用 MySQL `user_account` 与 Redis 服务端会话；已登录改密须提供当前密码，成功后所有设备重新登录。启用前须设置随机、至少 32 字符的 `SECRET_KEY`，生产须使用 HTTPS、`FLASK_DEBUG=false`、`CPA_AUTH_COOKIE_SECURE=true`（默认）。仅本机 HTTP 调试时才将 `CPA_AUTH_COOKIE_SECURE=false`；管理员使用可信本机 CLI `flask --app app provision-admin --username <name>` 开户，不提供公开管理员注册。详情和未覆盖边界见 [自建账号规格](docs/specs/self-managed-account-auth.md)。只有**未配置正式账号认证适配器**的本机调试环境，显式设置 `CPA_DEV_AUTH=1` 后，loopback 请求才可通过 `X-Dev-Student-Id` 注入临时学生 Principal；账号适配器一旦启用，该开发头无效，不能获得管理员权限。
 
 岗位发布的正式账号管理端提供 `/api/admin/job-publications` 的预检、精确摘要确认、版本回读与撤回；见 [HTTP 发布契约](docs/specs/admin-job-publication-http.md)。这不是原网页真实性或招聘有效期的自动证明。旧本机 `backend/scripts/mysql/publish_job_catalog.py` 仍可直接发布，但 `reviewed_by/reviewed_at` 来自其 JSON 输入，**不经过账号审核或新的原子审计**；只限可信运维环境与独立人工核对，不能与正式 HTTP 审核记录等价。
 正式管理员还可经只读 `/api/admin/job-reviews` 查看模型岗位审查的来源、阻断原因和候选摘要；它不授予发布权，不自动核实当前招聘是否仍开放，见 [岗位模型审查](docs/guides/job-catalog-model-review.md)。
@@ -145,7 +145,7 @@ python -B -m pytest backend/tests   # 在仓库根目录执行
 
 - 纯单元测试无需外部服务；含 DB 的集成用例依赖本机 Docker 容器（MySQL `localhost:13306`、Neo4j `localhost:17687`、Redis `localhost:16379`）。
 - 容器未启动时，`test_hybrid_retrieve_explain.py`、`test_demo_endpoints.py` 会出现连接拒绝类失败，属环境问题而非代码回归。
-  - 本机完整回归（2026-10-10，MySQL/Neo4j/Redis 已启动）：设置 `CPA_TEST_PIPELINE_MYSQL=1`、`CPA_TEST_LIVE_MYSQL=1`、`CPA_TEST_LIVE_PUBLIC_GRAPH=1` 后运行整个 `backend/tests`，结果 **615 passed / 0 skipped**。这是当前工作区验证结果，不代表尚未签审的真实简历 CER、可信岗位发布或生产部署验收。
+  - 本机完整回归（2026-10-14，MySQL/Neo4j/Redis 已启动）：设置 `CPA_TEST_PIPELINE_MYSQL=1`、`CPA_TEST_LIVE_MYSQL=1`、`CPA_TEST_LIVE_PUBLIC_GRAPH=1` 后运行整个 `backend/tests`，结果 **1137 passed / 23 skipped**；跳过项仍需按对应外部依赖单独验收。这不代表尚未签审的真实简历 CER、可信岗位发布或生产部署验收。
 - 根目录 `.env` 当前 `CPA_DEMO_MODE=false`（strict 模式）：用户资源 API 需要认证适配器提供 Principal，否则返回 401；联调前请先启动数据库容器。
 
 ### 数据依赖

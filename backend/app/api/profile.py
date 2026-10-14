@@ -90,16 +90,58 @@ def upload_resume():
     if request.args.get('async') == '1':
         # Backend-connected Xingtu needs a task ID before the long OCR/model
         # call, so the UI can replay real checkpoints while work is running.
+        task_id = f"task_{uuid.uuid4().hex[:12]}"
         try:
             from ..services.pipeline_resume_jobs import persist_resume_intent, enqueue_resume_intent
             mysql = get_mysql_client()
-            task_id = f"task_{uuid.uuid4().hex[:12]}"
             persist_resume_intent(mysql, student_id=student_id,
                                   file_path=save_path, task_id=task_id)
-            delivery = enqueue_resume_intent(mysql, task_id)
         except Exception as e:
             logger.error("L0 异步任务创建失败: %s", e)
-            return jsonify({'success': False, 'error': '简历解析任务未能保存，请检查迁移和数据库'}), 503
+            # A COMMIT can succeed even if its acknowledgement fails. Confirm
+            # the durable state before deleting a file the worker may need.
+            intent_state = "unknown"
+            try:
+                import json
+                row = get_mysql_client().fetch_one(
+                    "SELECT t.params_json,d.task_id AS dispatch_task_id "
+                    "FROM pipeline_task t LEFT JOIN pipeline_resume_dispatch d "
+                    "ON d.task_id=t.task_id WHERE t.task_id=:tid "
+                    "AND t.student_id=:sid AND t.pipeline='L0_parse_resume'",
+                    {"tid": task_id, "sid": student_id},
+                )
+                if row is None:
+                    intent_state = "absent"
+                else:
+                    params = row["params_json"]
+                    if isinstance(params, str):
+                        params = json.loads(params)
+                    if (isinstance(params, dict) and params.get("student_id") == student_id
+                            and params.get("file_path") == save_path
+                            and row["dispatch_task_id"] == task_id):
+                        intent_state = "committed"
+            except Exception as verification_error:
+                logger.warning("L0 异步任务提交状态暂不可核查: %s", verification_error)
+            if intent_state == "committed":
+                delivery = "retry_pending"
+            elif intent_state == "absent":
+                try:
+                    os.remove(save_path)
+                except OSError as cleanup_error:
+                    logger.warning("L0 失败上传文件清理失败: %s", cleanup_error)
+                return jsonify({'success': False, 'error': '简历解析任务未能保存，请检查迁移和数据库'}), 503
+            else:
+                return jsonify({'success': False,
+                                'error': '简历任务提交状态暂不可确认，请凭任务编号查询，勿重复上传',
+                                'data': {'task_id': task_id, 'delivery': 'verify_pending'}}), 503
+        else:
+            try:
+                delivery = enqueue_resume_intent(mysql, task_id)
+            except Exception as e:
+                # The MySQL intent already exists. Keep the file and task ID so
+                # Beat can replay it; never turn a durable task into a false 503.
+                logger.error("L0 异步任务派发失败，等待恢复扫描: %s", e)
+                delivery = "retry_pending"
         return jsonify({'success': True, 'data': {
             'task_id': task_id, 'student_id': student_id, 'filename': filename,
             'status': 'pending', 'progress': 0, 'delivery': delivery,
@@ -469,7 +511,9 @@ def patch_student_profile(student_id: str):
     try:
         scope = resolve_request_scope()
         require_student_path(student_id, scope)
-        data = request.get_json() or {}
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"success": False, "error": "请求体必须是 JSON 对象"}), 400
         # whitelist only
         name = data.get("name") if "name" in data else data.get("nickname")
         email = data.get("email")

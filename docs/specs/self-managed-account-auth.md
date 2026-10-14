@@ -15,6 +15,7 @@
 - 账号适配器启用后，即使 `CPA_DEV_AUTH=1` 且请求来自 loopback，`X-Dev-Student-Id` 也不能注入身份；开发头只适用于正式认证未配置的本地调试。
 - 禁止已有 session 用户使用公开注册；登录前后轮换 Redis session ID；登出清空 session；管理端仍经 `admin_bp.before_request` 复核。
 - `RequestScope` 当前读取全局 `Config.DEMO_MODE`。部署必须由根 `.env` 的 `CPA_DEMO_MODE=false` 同时驱动全局与 app 配置；若自定义 `create_app(config_class)` 与全局 Config 的 demo 值分叉，账号适配器故障关闭为 503，不把登录身份绑定到 demo 资源。
+- 新注册账号尚无简历或画像时，本人 `/api/profile/student/<id>/basic` 和 `/4d` 返回 404，`/api/report/list` 返回成功的空列表，`/api/report/resume-diagnostic` 返回 `409 needs_input`；这不表示登录失败，也不能从旧 `student_001` 借用成果。本人资料 `PATCH /api/profile/student/<id>` 只接受 JSON 对象；数组、标量或无效 JSON 在写入账号前返回 400。
 
 ## 验收
 
@@ -50,4 +51,4 @@
 
 ## 非目标与遗留风险
 
-此切片不证明前端已接入、生产域名/HTTPS 已配置、账号恢复/审计/多因子已经完成。账号与旧简历不能仅凭同名自动合并。
+本机 `backend-dev` 前端现已使用真实账号 Cookie/CSRF；浏览器注册、登录、刷新恢复、已登录上传请求与退出已回放，演示版 Pages 仍使用 Mock。此切片不证明所有功能页都已完成真实后端接线，也不证明生产域名/HTTPS、账号恢复/审计/多因子已完成。账号与旧简历不能仅凭同名自动合并。

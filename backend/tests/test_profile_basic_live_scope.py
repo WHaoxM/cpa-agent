@@ -65,6 +65,28 @@ def test_profile_patch_rejects_string_boolean_without_mutating_owner_rows(monkey
         mysql.execute_write("DELETE FROM user_account WHERE id=:id", {"id": owner})
 
 
+def test_profile_patch_rejects_non_object_json_without_mutating_account(monkeypatch):
+    monkeypatch.setattr(Config, "DEMO_MODE", False)
+    mysql = get_mysql_client()
+    owner = "profile_body_" + uuid.uuid4().hex
+    try:
+        mysql.execute_write(
+            "INSERT INTO user_account (id, username, password_hash, name, role) "
+            "VALUES (:id, :username, 'test-hash', 'Original', 'student')",
+            {"id": owner, "username": owner},
+        )
+        response = _client(owner).patch(
+            f"/api/profile/student/{owner}", json=[{"name": "Unexpected"}],
+        )
+        assert response.status_code == 400
+        assert response.get_json()["error"] == "请求体必须是 JSON 对象"
+        assert mysql.execute(
+            "SELECT name FROM user_account WHERE id=:id", {"id": owner}
+        )[0]["name"] == "Original"
+    finally:
+        mysql.execute_write("DELETE FROM user_account WHERE id=:id", {"id": owner})
+
+
 def test_profile_read_and_patch_are_principal_owner_scoped(monkeypatch):
     monkeypatch.setattr(Config, "DEMO_MODE", False)
     mysql = get_mysql_client()
