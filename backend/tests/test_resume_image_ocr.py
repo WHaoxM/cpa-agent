@@ -24,7 +24,7 @@ def _synthetic_multipage_resume(path: Path) -> None:
     first.save(path, save_all=True, append_images=[second], duration=100, loop=0)
 
 
-@pytest.mark.parametrize("extension", ["png", "jpg", "webp", "tiff"])
+@pytest.mark.parametrize("extension", ["png", "jpg", "webp", "tiff", "tif"])
 def test_declared_raster_upload_formats_reach_image_parser(tmp_path, monkeypatch, extension):
     path = tmp_path / f"fictional-resume.{extension}"
     _synthetic_resume(path)
@@ -39,7 +39,7 @@ def test_declared_raster_upload_formats_reach_image_parser(tmp_path, monkeypatch
     assert seen == [str(path)]
 
 
-@pytest.mark.parametrize("extension", ["png", "jpg", "webp", "tiff"])
+@pytest.mark.parametrize("extension", ["png", "jpg", "webp", "tiff", "tif"])
 def test_raster_to_pdf_sidecar_uses_real_ocr_result_and_cleans_derived_pdf(
     tmp_path, monkeypatch, extension,
 ):
@@ -72,6 +72,39 @@ def test_raster_to_pdf_sidecar_uses_real_ocr_result_and_cleans_derived_pdf(
     assert result.engine == "sidecar"
     assert result.metadata["source_format"] == extension
     assert captured and not Path(captured[0]).exists()
+
+
+def test_tiff_alias_uses_same_ocr_path_for_identical_bytes(tmp_path, monkeypatch):
+    from app.pipeline.entity_extractor import l0_full_parser, pdf_sidecar
+    from app.pipeline.entity_extractor.pdf_engines import EngineState, EngineStatus
+
+    original = tmp_path / "fictional-resume.tiff"
+    _synthetic_resume(original)
+    alias = tmp_path / "fictional-resume.tif"
+    alias.write_bytes(original.read_bytes())
+    assert alias.read_bytes() == original.read_bytes()
+    monkeypatch.setattr(l0_full_parser, "get_sidecar_state", lambda: EngineState(
+        "sidecar", EngineStatus.READY, "synthetic OCR service"))
+    calls = []
+
+    def fake_ocr(pdf_path):
+        import pymupdf
+
+        with pymupdf.open(pdf_path) as pdf:
+            assert len(pdf) == 1 and pdf[0].get_images()
+        calls.append(pdf_path)
+        return {"success": True, "text": "EDUCATION PROJECT PYTHON",
+                "blocks": [{"text": "EDUCATION PROJECT PYTHON", "page": 0}],
+                "engine": "mineru", "metadata": {"pages": 1}}
+
+    monkeypatch.setattr(pdf_sidecar, "parse_pdf_via_sidecar", fake_ocr)
+    results = [L0FullParser().parse_file(path) for path in (original, alias)]
+
+    assert [result.success for result in results] == [True, True]
+    assert [result.engine for result in results] == ["sidecar", "sidecar"]
+    assert [result.text for result in results] == ["EDUCATION PROJECT PYTHON"] * 2
+    assert [result.metadata["source_format"] for result in results] == ["tiff", "tif"]
+    assert len(calls) == 2 and all(not Path(path).exists() for path in calls)
 
 
 def test_missing_raster_ocr_is_explicit_failure_not_empty_success(tmp_path, monkeypatch):
@@ -147,7 +180,7 @@ def test_oversized_raster_rejected_before_ocr_memory_allocation(monkeypatch, siz
     assert "OCR 上限" in result.error
 
 
-@pytest.mark.parametrize("extension", ["webp", "tiff"])
+@pytest.mark.parametrize("extension", ["webp", "tiff", "tif"])
 def test_multipage_image_sidecar_does_not_drop_later_frame(tmp_path, monkeypatch, extension):
     from app.pipeline.entity_extractor import l0_full_parser, pdf_sidecar
     from app.pipeline.entity_extractor.pdf_engines import EngineState, EngineStatus
@@ -176,7 +209,7 @@ def test_multipage_image_sidecar_does_not_drop_later_frame(tmp_path, monkeypatch
     assert [block.page for block in result.blocks] == [0, 1]
 
 
-@pytest.mark.parametrize("extension", ["webp", "tiff"])
+@pytest.mark.parametrize("extension", ["webp", "tiff", "tif"])
 def test_multipage_image_without_sidecar_cannot_claim_first_frame_as_complete(
     tmp_path, monkeypatch, extension,
 ):
@@ -199,7 +232,8 @@ def test_multipage_image_without_sidecar_cannot_claim_first_frame_as_complete(
 
 
 @pytest.mark.skipif(os.getenv("CPA_TEST_REAL_IMAGE_OCR") != "1", reason="opt-in real MinerU Sidecar")
-def test_real_sidecar_reads_synthetic_chinese_english_image(tmp_path, monkeypatch):
+@pytest.mark.parametrize("extension", ["png", "tiff", "tif"])
+def test_real_sidecar_reads_synthetic_chinese_english_image(tmp_path, monkeypatch, extension):
     from PIL import ImageFont
     from app.pipeline.entity_extractor.pdf_engines import reset_engine_states
 
@@ -211,7 +245,7 @@ def test_real_sidecar_reads_synthetic_chinese_english_image(tmp_path, monkeypatc
         "Python SQL Vue Docker", "2024 2025 Internship Project",
     )):
         draw.text((65, 100 + index * 160), line, fill="black", font=font)
-    path = tmp_path / "synthetic-no-personal-data.png"
+    path = tmp_path / f"synthetic-no-personal-data.{extension}"
     image.save(path)
     monkeypatch.setenv("CPA_L0_PARSE_SIDECAR_URL", "http://127.0.0.1:9380")
     reset_engine_states()

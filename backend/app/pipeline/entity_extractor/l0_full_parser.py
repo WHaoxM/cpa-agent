@@ -103,7 +103,7 @@ class L0FullParser:
                 return self._parse_doc(str(file_path))
             elif suffix == ".txt":
                 return self._parse_txt(str(file_path))
-            elif suffix in [".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff"]:
+            elif suffix in [".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff", ".tif"]:
                 return self._parse_image(str(file_path))
             else:
                 return L0Result(

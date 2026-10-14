@@ -24,7 +24,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _resume_png():
+def _resume_image(image_format="PNG"):
     image = Image.new("RGB", (1100, 1500), "white")
     draw = ImageDraw.Draw(image)
     font_path = Path("C:/Windows/Fonts/msyh.ttc")
@@ -35,7 +35,7 @@ def _resume_png():
     )):
         draw.text((65, 100 + index * 160), line, fill="black", font=font)
     stream = BytesIO()
-    image.save(stream, format="PNG")
+    image.save(stream, format=image_format)
     return stream.getvalue()
 
 
@@ -84,10 +84,11 @@ def test_registered_image_upload_reaches_ocr_candidate_or_explicit_error(monkeyp
         initial_profile = db.fetch_one("SELECT profile_json FROM student_profile WHERE student_id=:sid",
                                        {"sid": student_id})
 
-        def upload():
+        def upload(filename="fictional-resume.png", payload=None):
             response = session.post(
                 f"{base}/api/profile/student/upload?async=1",
-                files={"file": ("fictional-resume.png", _resume_png(), "image/png")},
+                files={"file": (filename, payload if payload is not None else _resume_image(),
+                                "image/tiff" if filename.endswith((".tif", ".tiff")) else "image/png")},
                 headers={"X-CSRFToken": csrf}, timeout=10,
             )
             assert response.status_code == 202, response.text
@@ -141,6 +142,35 @@ def test_registered_image_upload_reaches_ocr_candidate_or_explicit_error(monkeyp
         extracted = next(event for event in trace["events"] if event["stage"] == "source_extracted")
         assert extracted["facts"]["engine"] == "sidecar"
 
+        # Both names advertise image/tiff and contain exactly the same bytes.
+        # The independent HTTP route, owner-bound MySQL intent, parser, and
+        # candidate/Trace must all agree rather than accepting only .tiff.
+        tiff_bytes = _resume_image("TIFF")
+        tiff_results = []
+        for extension in ("tiff", "tif"):
+            tiff_task = upload(f"fictional-resume.{extension}", tiff_bytes)
+            tiff_result = jobs.execute_resume_intent(tiff_task, mysql=db)
+            assert tiff_result["status"] == "needs_input"
+            assert tiff_result["source_evidence"]["engine"] == "sidecar"
+            assert tiff_result["source_evidence"]["page_count"] == 1
+            tiff_results.append(tiff_result)
+            candidate = session.get(f"{base}/api/profile/student/candidate/{tiff_task}", timeout=5)
+            assert candidate.status_code == 200, candidate.text
+            assert candidate.json()["data"]["source_evidence"]["page_count"] == 1
+            tiff_trace = session.get(f"{base}/api/pipeline/trace/{tiff_task}", timeout=5)
+            assert tiff_trace.status_code == 200, tiff_trace.text
+            assert tiff_trace.json()["data"]["task"]["progress"] == 100
+        assert (tiff_results[0]["source_evidence"]["blocks"] ==
+                tiff_results[1]["source_evidence"]["blocks"])
+
+        legacy = session.post(
+            f"{base}/api/pipeline/ext/parse/upload/resume",
+            files={"file": ("fictional-resume.tif", tiff_bytes, "image/tiff")},
+            headers={"X-CSRFToken": csrf}, timeout=10,
+        )
+        assert legacy.status_code == 200, legacy.text
+        assert legacy.json()["data"]["metadata"]["source_format"] == "tif"
+
         other_csrf = other.get(f"{base}/api/auth/csrf", timeout=5).json()["csrfToken"]
         other_credentials = {"username": other_username, "password": password}
         assert other.post(f"{base}/api/auth/register", json=other_credentials,
@@ -149,6 +179,8 @@ def test_registered_image_upload_reaches_ocr_candidate_or_explicit_error(monkeyp
                           headers={"X-CSRFToken": other_csrf}, timeout=5).status_code == 200
         denied = other.get(f"{base}/api/pipeline/trace/{successful_task}", timeout=5)
         assert denied.status_code == 404, denied.text
+        denied_tiff = other.get(f"{base}/api/pipeline/trace/{task_ids[-1]}", timeout=5)
+        assert denied_tiff.status_code == 404, denied_tiff.text
 
         # Same owner, same image, but no actual OCR capability: no candidate or
         # fake checkpoint, and the status route preserves a retryable reason.

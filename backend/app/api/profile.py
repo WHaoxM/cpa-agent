@@ -73,7 +73,7 @@ def upload_resume():
     file_ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else 'pdf'
 
     # ── 文件类型白名单校验 ──
-    ALLOWED_EXTENSIONS = {'pdf', 'docx', 'doc', 'txt', 'png', 'jpg', 'jpeg', 'bmp', 'webp', 'tiff'}
+    ALLOWED_EXTENSIONS = {'pdf', 'docx', 'doc', 'txt', 'png', 'jpg', 'jpeg', 'bmp', 'webp', 'tiff', 'tif'}
     if file_ext not in ALLOWED_EXTENSIONS:
         return jsonify({"success": False, "error": f"不支持的文件格式: {file_ext}，仅支持 {', '.join(sorted(ALLOWED_EXTENSIONS))}"}), 400
 

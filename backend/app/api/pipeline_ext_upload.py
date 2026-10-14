@@ -19,7 +19,7 @@ from ._helpers import ScopeError, resolve_request_scope, safe_error, scope_error
 from .pipeline_ext_common import pipeline_ext_bp, logger
 
 # 文件类型白名单
-_ALLOWED_EXT = {'pdf', 'docx', 'doc', 'txt', 'png', 'jpg', 'jpeg', 'bmp', 'webp', 'tiff'}
+_ALLOWED_EXT = {'pdf', 'docx', 'doc', 'txt', 'png', 'jpg', 'jpeg', 'bmp', 'webp', 'tiff', 'tif'}
 
 
 @pipeline_ext_bp.route('/parse/upload/resume', methods=['POST'])

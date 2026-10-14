@@ -2,7 +2,7 @@
 
 ## 当前路径
 
-`POST /api/profile/student/upload?async=1` 接受 PNG/JPG/JPEG/BMP/WebP/TIFF，并先把 owner-bound 原文件、MySQL 任务与派发意图持久化。`DocumentAgent` 再由 `L0FullParser` 解析；只有提取到非空正文和块，才提交 `source_extracted=25%`，后续结构、实体、证据 Agent 才能接力。候选只到 `needs_input`，**不会自动覆盖已确认学生资料**。失败任务为 `failed`、保留 0% 和 `failed` Trace，`GET /api/pipeline/status/<task_id>` 提供错误；修好 OCR 后应重新上传，不把同一失败任务伪装成已完成。
+`POST /api/profile/student/upload?async=1` 接受 PNG/JPG/JPEG/BMP/WebP/TIFF（`.tiff` 与 `.tif`），并先把 owner-bound 原文件、MySQL 任务与派发意图持久化。`DocumentAgent` 再由 `L0FullParser` 解析；只有提取到非空正文和块，才提交 `source_extracted=25%`，后续结构、实体、证据 Agent 才能接力。候选只到 `needs_input`，**不会自动覆盖已确认学生资料**。失败任务为 `failed`、保留 0% 和 `failed` Trace，`GET /api/pipeline/status/<task_id>` 提供错误；修好 OCR 后应重新上传，不把同一失败任务伪装成已完成。
 
 图片首先走已配置且 `/v1/health` 实际宣称 `ocr_pdf=true` 的 PDF OCR Sidecar：
 
@@ -18,6 +18,18 @@
 
 - OpenCode 本机快照 `388406238bd5ca15564a762840a2362c3a45bd9c` 的 `packages/opencode/src/image/image.ts`、`session/message-v2.ts` 显式解码/规范化图片并区分 provider 可接收的格式；Codex 快照 `a06545b311fe01e51ce855c7aa5d8da21e9e7aaf` 的 `codex-rs/core/src/image_preparation.rs` 把图片准备失败视为显式状态。它们处理**模型图片输入**，不是简历逐页 OCR，不能直接移植其会话/图片状态机到 Flask。
 - 本项目已有 `backend/app/utils/docx_text.py::_ocr_embedded_image` 的“Pillow/PyMuPDF 图片→PDF→真实 MinerU Sidecar”同类薄适配，以及 `backend/app/pipeline/entity_extractor/pdf_sidecar.py` 的 OCR 引擎来源/空结果校验；本改动复用同一服务契约，不引入第二套 OCR 队列、模型或通用多模态运行时。MinerU 3.0.7 与模型/许可边界见 `docs/architecture/agent-upstream-adaptation.md`。
+
+2026-10-14 的 `.tif` 补丁沿用上述图像解码与 OCR 路径，只补上传和解析路由遗漏的 TIFF 扩展名别名。复查本地 OpenCode `388406238bd5ca15564a762840a2362c3a45bd9c` 的 `packages/opencode/src/image/image.ts`、`session/message-v2.ts`：其格式门禁是**发送给模型/provider 的图片 MIME**，不是 OCR 文件格式，不能直接套用其仅 PNG/JPEG/WebP 的 provider 白名单。本地 Codex `a06545b311fe01e51ce855c7aa5d8da21e9e7aaf` 的 `codex-rs/core/src/image_preparation.rs` 处理模型图片预备与显式失败，也不处理 TIFF 简历逐页 OCR。这里不引入两者的图片/会话状态机，仅保留显式失败原则；实际 TIFF 解码仍由已有 Pillow/PyMuPDF 1.24.14 和 MinerU Sidecar 承担。
+
+### `.tif` 别名复现与回归
+
+当前正式职途导航 `http` 模式从同一页面调用异步上传，`image/tiff` 在文件选择范围中。修复前把同一合成 TIFF 字节分别命名为 `.tiff`、`.tif`：真实 Sidecar 直接解析前者成功、后者得到 `不支持格式: .tif`；独立 socket HTTP 账号上传前者返回 202 并形成候选，后者在 `profile` 白名单返回 400，既不创建任务也不进入 DocumentAgent。先增加差分测试得到 `test_resume_image_ocr.py` **5 failed / 16 passed / 3 skipped** 与 `test_resume_image_http_mysql.py` **1 failed**，再仅补 `profile.py`、仍注册的 `pipeline_ext_upload.py`、`l0_full_parser.py` 三处格式白名单。修复后：
+
+- `test_resume_image_ocr.py` 常规运行 **21 passed / 3 skipped**；同字节差分、单/多页、OCR 不可用均覆盖 `.tif`。
+- `CPA_TEST_LIVE_MYSQL=1` 的 `test_resume_image_http_mysql.py` **1 passed**：独立 HTTP 服务与隔离账号、真实 MySQL/Redis、owner 范围、候选和 Trace；OCR/结构模型为测试替身，结束后精确清理账号、任务、上传文件和隔离队列。
+- `CPA_TEST_LIVE_MYSQL=1 CPA_TEST_REAL_IMAGE_OCR=1` 联跑上述两文件 **25 passed**：真实 MinerU Sidecar 解析 PNG、`.tiff`、`.tif`，HTTP 的图片转 PDF/OCR 为真服务，结构/实体模型仍是替身。HTTP 上传的 owner-bound 文件在测试清理；pytest 的无隐私合成图片仍位于忽略的 `output/pytest-tif-green-realocr/`，下一次使用同名 `--basetemp` 会覆盖它。
+
+正式 `:5001` Flask 与 `cpa.pipeline` worker 已在无待处理任务时重启加载本补丁。随后用唯一临时学生账号、无隐私合成 `.tif`（原样 `image/tiff`）登录并调用正式 `POST /api/profile/student/upload?async=1`：返回任务 ID，真 Sidecar OCR 后由四个 Agent 实际交接，Trace 依次记录 `source_extracted=25`、`structure_extracted=50`、`entity_resolved=75`、`candidate_saved=100`，最终权威任务 `needs_input/100%/attempt=1`，候选中的来源引擎为 `sidecar`。精确清理后独立回查该任务、Trace 和 `trace_live_%` 临时账号均为 0 行。重放探针位于忽略的 `output/probe_live_agent_trace.py`，使用该测试生成的合成 TIFF 路径作为唯一参数；勿改用真实学生文件。真实简历 OCR 逐字准确率仍无人工 CER 签审。
 
 ## 本机真实 OCR 验收
 
