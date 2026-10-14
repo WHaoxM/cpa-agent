@@ -145,7 +145,7 @@ python -B -m pytest backend/tests   # 在仓库根目录执行
 
 - 纯单元测试无需外部服务；含 DB 的集成用例依赖本机 Docker 容器（MySQL `localhost:13306`、Neo4j `localhost:17687`、Redis `localhost:16379`）。
 - 容器未启动时，`test_hybrid_retrieve_explain.py`、`test_demo_endpoints.py` 会出现连接拒绝类失败，属环境问题而非代码回归。
-  - 本机完整回归（2026-10-14，MySQL/Neo4j/Redis 已启动）：设置 `CPA_TEST_PIPELINE_MYSQL=1`、`CPA_TEST_LIVE_MYSQL=1`、`CPA_TEST_LIVE_PUBLIC_GRAPH=1` 后运行整个 `backend/tests`，结果 **1139 passed / 23 skipped**；跳过项仍需按对应外部依赖单独验收。这不代表尚未签审的真实简历 CER、可信岗位发布或生产部署验收。
+  - 本机完整回归（2026-10-14，MySQL/Neo4j/Redis 已启动）：设置 `CPA_TEST_PIPELINE_MYSQL=1`、`CPA_TEST_LIVE_MYSQL=1`、`CPA_TEST_LIVE_PUBLIC_GRAPH=1` 后运行整个 `backend/tests`，结果 **1156 passed / 24 skipped**；跳过项仍需按对应外部依赖单独验收。这不代表尚未签审的真实简历 CER、可信岗位发布或生产部署验收。
 - 根目录 `.env` 当前 `CPA_DEMO_MODE=false`（strict 模式）：用户资源 API 需要认证适配器提供 Principal，否则返回 401；联调前请先启动数据库容器。
 
 ### 数据依赖

@@ -39,6 +39,8 @@ logging.getLogger('modelscope').setLevel(logging.WARNING)
 logging.getLogger('modelscope.hub').setLevel(logging.WARNING)
 
 _mineru_cache = {}
+MAX_IMAGE_OCR_PAGES = 32
+MAX_IMAGE_OCR_PIXELS = 40_000_000
 
 
 @dataclass
@@ -78,6 +80,7 @@ class L0FullParser:
     def __init__(self, use_gpu: bool = False):
         self.use_gpu = use_gpu
         self._yolo_available = None
+        self._yolo_detector = None
 
     def parse_file(self, file_path: Union[str, Path]) -> L0Result:
         """解析文件"""
@@ -98,7 +101,7 @@ class L0FullParser:
                 return self._parse_docx(str(file_path))
             elif suffix == ".txt":
                 return self._parse_txt(str(file_path))
-            elif suffix in [".jpg", ".jpeg", ".png", ".bmp"]:
+            elif suffix in [".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff"]:
                 return self._parse_image(str(file_path))
             else:
                 return L0Result(
@@ -345,23 +348,115 @@ class L0FullParser:
 
     def _parse_image(self, file_path: str) -> L0Result:
         """解析图片 (使用 OCR)"""
+        try:
+            from PIL import Image
+
+            with Image.open(file_path) as image:
+                frame_count = int(getattr(image, "n_frames", 1))
+                total_pixels = image.width * image.height * frame_count
+        except Exception:
+            return L0Result(success=False, text="", blocks=[], metadata={},
+                            engine="image", error="图片无法解码，请换用有效的 PNG/JPG/WebP/TIFF")
+        if not 1 <= frame_count <= MAX_IMAGE_OCR_PAGES or total_pixels > MAX_IMAGE_OCR_PIXELS:
+            return L0Result(success=False, text="", blocks=[],
+                            metadata={"page_count": frame_count}, engine="image",
+                            error="图片页数或总像素超出 OCR 上限，请压缩或拆分后重试")
+        sidecar_error = None
+        # The existing PDF OCR Sidecar is the only configured, independently
+        # verifiable OCR capability on machines without Tesseract. Convert the
+        # raster to a one-/multi-page PDF; never treat PDF text-layer fallback
+        # as image OCR.
+        if get_sidecar_state().status == EngineStatus.READY:
+            sidecar_result = self._parse_image_sidecar(file_path)
+            if sidecar_result.success:
+                return sidecar_result
+            sidecar_error = sidecar_result.error
+        if frame_count > 1:
+            return L0Result(success=False, text="", blocks=[],
+                            metadata={"page_count": frame_count}, engine="image",
+                            error="多页图片需要可用的 OCR Sidecar；当前未完整提取，请配置后重试")
+        if not self._tesseract_ready():
+            reason = "图片 OCR 不可用：请启动 OCR Sidecar，或安装 Tesseract 及 chi_sim/eng 语言包后重试"
+            if sidecar_error:
+                reason = f"图片 OCR 未完成：Sidecar: {sidecar_error}；本机: {reason}"
+            return L0Result(success=False, text="", blocks=[], metadata={},
+                            engine="tesseract", error=reason)
         if self._check_yolo():
-            return self._parse_image_yolo_ocr(file_path)
-        else:
-            return self._parse_image_pytesseract(file_path)
+            yolo_result = self._parse_image_yolo_ocr(file_path)
+            if yolo_result.success:
+                return yolo_result
+        result = self._parse_image_pytesseract(file_path)
+        if not result.success and sidecar_error:
+            result.error = f"图片 OCR 未完成：Sidecar: {sidecar_error}；本机: {result.error}"
+        return result
+
+    @staticmethod
+    def _tesseract_ready() -> bool:
+        """Do not load the large layout model when no real OCR binary exists."""
+        try:
+            import pytesseract
+
+            languages = set(pytesseract.get_languages(config=""))
+            return {"chi_sim", "eng"}.issubset(languages)
+        except Exception:
+            return False
+
+    def _parse_image_sidecar(self, file_path: str) -> L0Result:
+        """Reuse the proven PDF OCR contract for a raster source."""
+        try:
+            import pymupdf
+            from tempfile import TemporaryDirectory
+
+            source = Path(file_path)
+            # Keep derived pages on the same volume as the owner-bound upload.
+            # TemporaryDirectory removes the PDF even if OCR raises/fails.
+            with TemporaryDirectory(prefix=".cpa-image-ocr-", dir=source.parent) as directory:
+                pdf_path = Path(directory) / "resume.pdf"
+                if source.suffix.lower() == ".webp":
+                    # MuPDF 1.24 cannot decode WebP on this runtime. Pillow is
+                    # already the image decoder for Tesseract; keep every frame
+                    # rather than silently reading only the first one.
+                    from PIL import Image, ImageSequence
+
+                    with Image.open(file_path) as image:
+                        frames = []
+                        for frame in ImageSequence.Iterator(image):
+                            canvas = Image.new("RGBA", frame.size, "white")
+                            canvas.alpha_composite(frame.convert("RGBA"))
+                            frames.append(canvas.convert("RGB"))
+                        page_count = len(frames)
+                        if not frames:
+                            raise ValueError("WebP 图片没有可读取画面")
+                        frames[0].save(pdf_path, "PDF", save_all=True,
+                                       append_images=frames[1:])
+                else:
+                    with pymupdf.open(file_path) as image:
+                        page_count = len(image)
+                        pdf_path.write_bytes(image.convert_to_pdf())
+                result = self._parse_pdf_sidecar(str(pdf_path))
+            if not result.success:
+                return result
+            result.metadata = {**result.metadata, "file": file_path,
+                               "source_format": source.suffix.lower().lstrip("."),
+                               "pages": page_count}
+            return result
+        except Exception as exc:
+            logger.warning("图片转 PDF OCR 失败: %s", exc)
+            return L0Result(success=False, text="", blocks=[], metadata={},
+                            engine="sidecar", error=f"图片 OCR 转换失败: {type(exc).__name__}")
 
     def _parse_image_yolo_ocr(self, file_path: str) -> L0Result:
         """使用 YOLOv10 + OCR 解析图片"""
         try:
-            from layout.yolo_layout_detector import YOLOLayoutDetector
+            from .layout.yolo_layout_detector import YOLOLayoutDetector
             import numpy as np
             from PIL import Image
 
             model_path = _YOLO_MODEL_PATH
-            detector = YOLOLayoutDetector(str(model_path))
+            detector = self._yolo_detector or YOLOLayoutDetector(str(model_path))
 
-            image = Image.open(file_path)
-            regions = detector.detect(image)
+            image = Image.open(file_path).convert("RGB")
+            regions = detector.detect(np.asarray(image))
 
             ocr_texts = []
             for region in regions:
@@ -373,6 +468,10 @@ class L0FullParser:
             full_text = "\n".join([t[1] for t in ocr_texts])
             blocks = self._text_to_blocks(full_text, "resume")
 
+            if not full_text.strip() or not blocks:
+                return L0Result(success=False, text="", blocks=[], metadata={"file": file_path},
+                                engine="yolo+ocr", error="YOLO 版面未提取到可用 OCR 正文")
+
             return L0Result(
                 success=True,
                 text=full_text,
@@ -383,16 +482,26 @@ class L0FullParser:
 
         except Exception as e:
             logger.error(f"YOLOv10 OCR 失败: {e}")
-            return self._parse_image_pytesseract(file_path)
+            return L0Result(success=False, text="", blocks=[], metadata={"file": file_path},
+                            engine="yolo+ocr", error=f"YOLO 图片 OCR 失败: {type(e).__name__}")
 
     def _parse_image_pytesseract(self, file_path: str) -> L0Result:
         """使用 pytesseract OCR 解析图片"""
         try:
             import pytesseract
             from PIL import Image
+        except ImportError:
+            return L0Result(
+                success=False, text="", blocks=[], metadata={},
+                engine="tesseract", error="图片 OCR 不可用：请启动 OCR Sidecar 或安装 pytesseract 后重试"
+            )
 
-            image = Image.open(file_path)
-            text = pytesseract.image_to_string(image, lang='chi+eng')
+        try:
+            with Image.open(file_path) as image:
+                text = pytesseract.image_to_string(image, lang='chi_sim+eng')
+            if not text.strip():
+                return L0Result(success=False, text="", blocks=[], metadata={"file": file_path},
+                                engine="tesseract", error="图片 OCR 未提取到正文，请检查图片清晰度后重试")
 
             blocks = self._text_to_blocks(text, "resume")
 
@@ -404,17 +513,18 @@ class L0FullParser:
                 engine="tesseract"
             )
 
-        except ImportError:
+        except (pytesseract.TesseractNotFoundError, pytesseract.TesseractError):
             return L0Result(
                 success=False, text="", blocks=[], metadata={},
-                engine="tesseract", error="需要安装 pytesseract"
+                engine="tesseract",
+                error="图片 OCR 不可用：请启动 OCR Sidecar，或安装 Tesseract 及 chi_sim/eng 语言包后重试"
             )
 
     def _ocr_image(self, image) -> str:
         """OCR 单张图片"""
         try:
             import pytesseract
-            return pytesseract.image_to_string(image, lang='chi+eng')
+            return pytesseract.image_to_string(image, lang='chi_sim+eng')
         except:
             return ""
 
@@ -588,8 +698,10 @@ class L0FullParser:
                     self._yolo_available = False
                     return False
 
-                import onnxruntime as ort
-                sess = ort.InferenceSession(str(model_path))
+                from .layout.yolo_layout_detector import YOLOLayoutDetector
+                detector = YOLOLayoutDetector(str(model_path))
+                _ = detector.session
+                self._yolo_detector = detector
                 self._yolo_available = True
                 logger.info("YOLOv10 可用")
                 return True

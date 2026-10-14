@@ -4,6 +4,8 @@
 
 `POST /api/profile/student/upload?async=1`（multipart `file`，可信 Principal）先在 MySQL 同一事务创建 `pipeline_task`、`pipeline_resume_dispatch` 和 `file_received`；返回 202 与可刷新回放的 `task_id`。Celery `cpa.pipeline.resume` 按租约/claim token 执行，Beat `cpa.pipeline.resume_replay` 负责有界恢复；旧同步上传合同保持不变。正式部署在维护窗口执行 Alembic `upgrade head`，由 `0004_resume_trace_schema` 接管两张表；已有数据库 volume 不会重放初始化 SQL。先前单独发布的 `migration_resume_trace.sql` 保留为历史兼容脚本，不再作为统一部署入口。
 
+PNG/JPG/WebP/TIFF 图片简历需真实 OCR 能力，不能把上传 202 或 PyMuPDF 图片转 PDF 当成解析成功；格式适配、无 OCR 失败状态与验收方式见 [图片简历 OCR](resume-image-ocr.md)。
+
 上传文件落盘后若 MySQL 回读确认意图未提交，接口返回 503 并删除该次新文件；若意图已提交但提交应答或 Redis 派发失败，保留文件与 `task_id`，返回 202、`delivery=retry_pending`，由恢复扫描重试。若数据库故障导致提交状态无法回读，接口返回 503 和 `data.task_id`、`delivery=verify_pending`，保留文件待核查；不能贸然删掉可能已被持久任务引用的文件，也不能伪报任务已创建。
 
 异步 L0 是**按简历业务职责分工的串行协作**，并非四个模型同时投票：
