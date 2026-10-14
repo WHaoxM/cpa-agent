@@ -167,4 +167,5 @@ def test_live_resource_reads_share_pipeline_records_and_revocation(monkeypatch):
 
     monkeypatch.setattr(pipeline.PipelineRunner, "run", run)
     test_live_publication_match_report_roundtrip(monkeypatch)
-    assert observed == ["matches", "reports", "revoked"]
+    # The roundtrip rejects both L3 and L4 after publication revocation.
+    assert observed == ["matches", "reports", "revoked", "revoked"]

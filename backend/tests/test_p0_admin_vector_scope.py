@@ -65,10 +65,24 @@ def test_python_diagnostic_requires_server_admin_claim(monkeypatch):
     assert allowed.json["python_executable"]
 
 
-def test_python_diagnostic_rejects_public_socket_requests(monkeypatch):
+@pytest.mark.parametrize(
+    ("account_configured", "dev_header_status"),
+    [(True, 401), (False, 403)],
+)
+def test_python_diagnostic_rejects_public_socket_requests(
+    monkeypatch, account_configured, dev_header_status,
+):
     monkeypatch.setattr(Config, "DEMO_MODE", False)
     monkeypatch.setenv("CPA_DEV_AUTH", "1")
-    app = create_app()
+    # The trusted account adapter blocks dev headers altogether. Without it,
+    # the loopback dev student identity exists but still has no admin claim.
+    AccountAuthTestConfig = type("AccountAuthTestConfig", (Config,), {
+        "SECRET_KEY": ("test-admin-socket-account-secret-long-enough-12345"
+                       if account_configured else None),
+        "DEMO_MODE": False,
+    })
+    app = create_app(AccountAuthTestConfig)
+    assert app.extensions["cpa_account_auth_enabled"] is account_configured
     server = make_server("127.0.0.1", 0, app)
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
@@ -76,7 +90,7 @@ def test_python_diagnostic_rejects_public_socket_requests(monkeypatch):
         url = f"http://127.0.0.1:{server.server_port}/api/admin/python-info"
         for headers, expected in (
             ({}, 401),
-            ({"X-Dev-Student-Id": "secondary_acceptance"}, 403),
+            ({"X-Dev-Student-Id": "secondary_acceptance"}, dev_header_status),
         ):
             with pytest.raises(HTTPError) as error:
                 urlopen(Request(url, headers=headers), timeout=5)

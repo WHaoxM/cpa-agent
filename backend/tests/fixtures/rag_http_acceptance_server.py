@@ -174,7 +174,15 @@ def main():
 
     from app.api import agent
     agent.get_session_coordinator = lambda: SessionCoordinator()
-    app = create_app()
+    class DevHeaderAcceptanceConfig(Config):
+        # This host deliberately substitutes MySQL and has no account rows.
+        # In strict mode, use the loopback-only development Principal rather
+        # than inheriting a real account SECRET_KEY from the developer's .env.
+        SECRET_KEY = None
+        DEMO_MODE = False
+
+    app = create_app(DevHeaderAcceptanceConfig)
+    assert not app.extensions["cpa_account_auth_enabled"]
     server = make_server("127.0.0.1", args.port, app, threaded=True)
     (root / "ready.json").write_text(json.dumps({
         "pid": os.getpid(),

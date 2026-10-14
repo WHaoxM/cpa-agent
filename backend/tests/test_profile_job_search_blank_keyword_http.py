@@ -80,9 +80,11 @@ def test_search_can_page_into_source_only_tier(monkeypatch):
 def test_live_search_paginates_published_and_source_only(monkeypatch):
     """Replay the combined directory over a real HTTP socket and persisted rows."""
     from app import create_app
-    from app.services import job_catalog_review
+    from app.config import Config
+    from app.services import job_catalog_review, job_source_verification
     from app.services.db import get_mysql_client
     from app.services.job_publication import content_sha256
+    from redis import Redis
 
     nonce = uuid.uuid4().hex[:12]
     name = f"Search Pagination QA {nonce}"
@@ -120,8 +122,11 @@ def test_live_search_paginates_published_and_source_only(monkeypatch):
         "scoring_status": "not_supported",
     }
     mysql = get_mysql_client()
+    redis = Redis.from_url(Config.REDIS_URL)
+    verification_key = f"cpa:catalog:source:csb:verification:v1:test:{nonce}"
+    monkeypatch.setattr(job_source_verification, "_KEY", verification_key)
     monkeypatch.setattr(job_catalog_review, "fetch_official_feed",
-                        lambda: ([record], "f" * 64, datetime.now(timezone.utc).isoformat()))
+                        lambda: pytest.fail("public search must not fetch the upstream feed"))
     app = create_app()
     server = make_server("127.0.0.1", 0, app, threaded=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -139,6 +144,11 @@ def test_live_search_paginates_published_and_source_only(monkeypatch):
             {"rid": record_id, "snapshot": json.dumps(source_snapshot, ensure_ascii=False),
              "digest": content_sha256(source_snapshot)},
         )
+        job_source_verification.cache_verified_feed(
+            [record], "f" * 64, datetime.now(timezone.utc).isoformat(), redis_client=redis,
+        )
+        assert job_source_verification.read_verified_feed(redis_client=redis)[
+            "record_digests"][record_id] == content_sha256(record)
         response = requests.get(f"http://127.0.0.1:{server.server_port}/api/profile/job/search",
                                 params={"keyword": name, "limit": 1, "offset": 1}, timeout=10)
         assert response.status_code == 200, response.text
@@ -158,7 +168,9 @@ def test_live_search_paginates_published_and_source_only(monkeypatch):
                             {"id": job_id})
         mysql.execute_write("DELETE FROM job_catalog_source_listing WHERE source_record_id=:rid",
                             {"rid": record_id})
+        redis.delete(verification_key)
     assert mysql.execute_single("SELECT COUNT(*) AS n FROM job_catalog_publication "
                                 "WHERE job_portrait_id=:id", {"id": job_id})["n"] == 0
     assert mysql.execute_single("SELECT COUNT(*) AS n FROM job_catalog_source_listing "
                                 "WHERE source_record_id=:rid", {"rid": record_id})["n"] == 0
+    assert redis.get(verification_key) is None

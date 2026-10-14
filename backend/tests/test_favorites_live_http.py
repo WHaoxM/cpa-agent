@@ -25,8 +25,15 @@ def test_saved_job_and_target_role_authoritative_http_round_trip(monkeypatch):
     job_id = f"job_{suffix}"
     role_name = f"Role_{suffix}"
     mysql = get_mysql_client()
-    app = create_app()
-    server = make_server("127.0.0.1", 0, app)
+    class DevHeaderAcceptanceConfig(Config):
+        # This test deliberately exercises the strict, loopback-only dev
+        # identity; the developer's real account SECRET_KEY must not override it.
+        SECRET_KEY = None
+        DEMO_MODE = False
+
+    app = create_app(DevHeaderAcceptanceConfig)
+    assert not app.extensions["cpa_account_auth_enabled"]
+    server = make_server("127.0.0.1", 0, app, threaded=True)
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
     base_url = f"http://127.0.0.1:{server.server_port}"
@@ -100,3 +107,4 @@ def test_saved_job_and_target_role_authoritative_http_round_trip(monkeypatch):
         )
         server.shutdown()
         worker.join(timeout=5)
+        server.server_close()

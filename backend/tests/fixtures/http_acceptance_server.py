@@ -90,7 +90,16 @@ def main():
     from app.api import agent
     coordinator = SessionCoordinator()  # Deliberately single-worker; no Redis claim.
     agent.get_session_coordinator = lambda: coordinator
-    app = create_app()
+    class DevHeaderAcceptanceConfig(Config):
+        # This isolated host has a fake MySQL adapter and no account rows.
+        # Deliberately leave account auth unconfigured so the existing
+        # loopback-only development identity contract is exercised instead.
+        # Never change the production app config or disable its auth middleware.
+        SECRET_KEY = None
+        DEMO_MODE = False
+
+    app = create_app(DevHeaderAcceptanceConfig)
+    assert not app.extensions["cpa_account_auth_enabled"]
     server = make_server("127.0.0.1", args.port, app, threaded=True)
     # Publish readiness only after imports, app creation and bind succeeded.
     (root / "ready.json").write_text(json.dumps({

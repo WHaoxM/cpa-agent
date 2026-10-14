@@ -158,7 +158,15 @@ def main():
     langgraph_agent._build_llm_with_tools = lambda *_a: StepModel()
     from app.api import agent
     agent.get_session_coordinator = lambda: SessionCoordinator()
-    app = create_app()
+    class DevHeaderAcceptanceConfig(Config):
+        # MySQL and Redis are substitutes in this isolated host. Keep strict
+        # owner checks, but do not inherit a real account key from .env: this
+        # journey intentionally uses the loopback-only development Principal.
+        SECRET_KEY = None
+        DEMO_MODE = False
+
+    app = create_app(DevHeaderAcceptanceConfig)
+    assert not app.extensions["cpa_account_auth_enabled"]
     server = make_server("127.0.0.1", 0, app, threaded=True)
     (root / "ready.json").write_text(json.dumps({
         "pid": os.getpid(), "base_url": f"http://127.0.0.1:{server.server_port}",
