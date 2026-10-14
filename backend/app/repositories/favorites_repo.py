@@ -111,33 +111,11 @@ class FavoritesRepository:
             {"role": role_name, "user_id": user_id},
         )
 
-    # ── 岗位市场统计 (跨表查询 job_posting) ──
-
-    def get_role_market_stats(self, role: str) -> Optional[Dict[str, Any]]:
-        """查询岗位市场统计 (薪资/需求数), 无匹配返回 None
-
-        返回: {role, avg_salary_min, avg_salary_max, demand_count} 或 None
-        """
-        mysql = get_mysql_client()
-        sql = """
-        SELECT
-            position_name as role,
-            AVG(salary_min) as avg_salary_min,
-            AVG(salary_max) as avg_salary_max,
-            COUNT(*) as demand_count
-        FROM job_posting
-        WHERE position_name LIKE :role AND is_it_position = 1
-        GROUP BY position_name
-        """
-        results = mysql.execute(sql, {"role": f"%{role}%"})
-        return results[0] if results else None
-
     def get_role_insight(self, role: str) -> Optional[Dict[str, Any]]:
-        """从 career_insights 取热门城市/技能等，补齐市场卡片。"""
+        """Read only cold-start direction identity/skills, not market claims."""
         mysql = get_mysql_client()
         sql = """
-        SELECT role_name, avg_salary_low, avg_salary_high, demand_level,
-               hot_cities, hot_industries, core_skills, description
+        SELECT role_name, core_skills
         FROM career_insights
         WHERE role_name = :role OR role_name LIKE :role_like
         LIMIT 1

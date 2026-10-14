@@ -50,14 +50,6 @@ _SKILL_ALIASES = {
     "ai agent": "LangChain",
 }
 
-_DEMAND_PRIOR = {
-    "极高": 1.08,
-    "高": 1.05,
-    "中": 1.0,
-    "低": 0.95,
-}
-
-
 def normalize_skill_inputs(skills: Sequence[SkillInput]) -> List[Tuple[str, float]]:
     """Return [(raw_name, weight)] de-duped (max weight)."""
     best: Dict[str, float] = {}
@@ -152,7 +144,6 @@ def _slot(
     role: str,
     *,
     category: Optional[str] = None,
-    demand_level: Optional[str] = None,
 ) -> Dict[str, Any]:
     if role not in acc:
         acc[role] = {
@@ -163,15 +154,14 @@ def _slot(
             "missing_core_skills": [],
             "sources": set(),
             "category": category,
-            "demand_level": demand_level,
+            # Preserve the response shape, but never expose a seed market claim.
+            "demand_level": None,
             "_hit_mass": 0.0,
             "_req_mass": 0.0,
         }
     slot = acc[role]
     if category and not slot.get("category"):
         slot["category"] = category
-    if demand_level and not slot.get("demand_level"):
-        slot["demand_level"] = demand_level
     return slot
 
 
@@ -304,7 +294,7 @@ def score_insights_coverage(
     insight_rows: Sequence[Dict[str, Any]],
     skill_weights: Dict[str, float],
 ) -> None:
-    """Secondary: coverage vs career_insights.core_skills (+ mild demand prior)."""
+    """Secondary: skill overlap with the cold-start direction catalogue only."""
     student = {k.lower(): (k, v) for k, v in skill_weights.items()}
     for row in insight_rows or []:
         role = str(row.get("role_name") or "").strip()
@@ -327,18 +317,14 @@ def score_insights_coverage(
         if not matched:
             continue
         coverage = len(matched) / len(core)
-        demand = str(row.get("demand_level") or "中")
-        prior = _DEMAND_PRIOR.get(demand, 1.0)
-        # Honest Career Stance: do not inflate hard-entry roles just because demand is high
-        entry = str(row.get("entry_difficulty") or "")
-        entry_pen = 0.92 if entry in ("难", "很难", "高") else 1.0
-        boost = coverage * (0.6 + 0.4 * (hit_w / max(len(matched), 1))) * 1.35 * prior * entry_pen
+        # demand_level and entry_difficulty have no reviewed market provenance;
+        # neither may alter a student's skill-based role ranking.
+        boost = coverage * (0.6 + 0.4 * (hit_w / max(len(matched), 1))) * 1.35
 
         slot = _slot(
             acc,
             role,
             category=row.get("category"),
-            demand_level=demand,
         )
         slot["score"] += boost
         slot["coverage"] = max(slot["coverage"], coverage)
@@ -354,18 +340,15 @@ def score_taxonomy_vote(
     taxonomy_rows: Sequence[Dict[str, Any]],
     skill_weights: Dict[str, float],
 ) -> None:
-    """Tertiary / OOV bridge: related_roles vote with heat_score, capped."""
+    """Tertiary / OOV bridge: bounded structural related_roles vote."""
     for row in taxonomy_rows or []:
         skill = str(row.get("skill_name") or "").strip()
         if not skill or skill not in skill_weights:
             continue
         w = float(skill_weights[skill])
-        try:
-            heat = float(row.get("heat_score") or 0.5)
-        except (TypeError, ValueError):
-            heat = 0.5
-        # Cap so taxonomy cannot override graph coverage
-        vote = min(0.55, w * (0.35 + 0.25 * heat))
+        # heat_score is labelled market heat in the seed schema and has no
+        # reviewed source. Keep the previous neutral baseline, not its prior.
+        vote = min(0.55, w * 0.475)
         for role in _parse_str_list(row.get("related_roles")):
             slot = _slot(acc, role)
             slot["score"] += vote
@@ -459,15 +442,41 @@ def _evidence_summary(ranked: List[Dict[str, Any]], skill_count: int) -> str:
     )
 
 
-def _with_source_coverage(result: Dict[str, Any], source_coverage: Dict[str, str]) -> Dict[str, Any]:
+def _with_source_coverage(
+    result: Dict[str, Any],
+    source_coverage: Dict[str, str],
+    *,
+    used_unverified_catalogue: bool = False,
+) -> Dict[str, Any]:
     """Do not represent a dependency outage as a healthy empty inference."""
     failed_sources = [name for name, status in source_coverage.items() if status == "unavailable"]
+    uses_unverified_catalogue = used_unverified_catalogue or any(
+        set(candidate.get("sources") or []) & {"career_insights", "skill_taxonomy"}
+        for candidate in result["candidates"]
+    )
     result["source_coverage"] = source_coverage
     result["failed_sources"] = failed_sources
-    result["status"] = "partial" if failed_sources else ("complete" if result["candidates"] else "empty")
+    seed_statuses = (source_coverage["career_insights"], source_coverage["skill_taxonomy"])
+    result["market_data_status"] = (
+        "unverified_seed" if "available" in seed_statuses
+        else "unavailable" if "unavailable" in seed_statuses else "not_queried"
+    )
+    result["unavailable_fields"] = ["demand_level", "entry_difficulty", "heat_score"]
+    result["partial_reasons"] = (
+        (["dependency_unavailable"] if failed_sources else [])
+        + (["unverified_seed_catalogue"] if uses_unverified_catalogue else [])
+    )
+    result["status"] = (
+        "partial" if result["partial_reasons"]
+        else ("complete" if result["candidates"] else "empty")
+    )
     if failed_sources:
         result["next_action"] = "retry_when_sources_available"
         result["evidence_summary"] += "; partial_sources=" + ",".join(failed_sources)
+    elif uses_unverified_catalogue:
+        result["next_action"] = "await_verified_market_source"
+    if uses_unverified_catalogue:
+        result["evidence_summary"] += "; unverified_seed_catalogue"
     return result
 
 
@@ -546,7 +555,7 @@ def infer_roles_from_skills(
         try:
             insight_rows = mysql_client.execute(
                 """
-                SELECT role_name, core_skills, category, demand_level, entry_difficulty
+                SELECT role_name, core_skills, category
                 FROM career_insights
                 ORDER BY skill_count DESC
                 LIMIT 80
@@ -568,7 +577,7 @@ def infer_roles_from_skills(
         try:
             taxonomy_rows = mysql_client.execute(
                 f"""
-                SELECT skill_name, related_roles, category, heat_score
+                SELECT skill_name, related_roles, category
                 FROM skill_taxonomy
                 WHERE skill_name IN ({placeholders})
                 """,
@@ -583,13 +592,19 @@ def infer_roles_from_skills(
     score_taxonomy_vote(acc, taxonomy_rows, skill_weights)
     apply_preferred_boost(acc, preferred_role)
 
+    # Seed-backed candidates participated in ranking even if top_k truncates
+    # them from the returned list; keep that provenance visible.
+    used_unverified_catalogue = any(
+        set(slot.get("sources") or set()) & {"career_insights", "skill_taxonomy"}
+        for slot in acc.values()
+    )
     ranked = finalize_candidates(acc, top_k=top_k)
     if not ranked:
         return _with_source_coverage(_empty_result(
             preferred_role,
             len(names),
             evidence="graph/insights empty after scoring",
-        ), source_coverage)
+        ), source_coverage, used_unverified_catalogue=used_unverified_catalogue)
 
     return _with_source_coverage({
         "predicted_role": ranked[0]["role_name"],
@@ -598,4 +613,4 @@ def infer_roles_from_skills(
         "skill_count": len(names),
         "canonical_skills": names,
         "evidence_summary": _evidence_summary(ranked, len(names)),
-    }, source_coverage)
+    }, source_coverage, used_unverified_catalogue=used_unverified_catalogue)

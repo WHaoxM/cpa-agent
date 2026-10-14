@@ -151,73 +151,61 @@ def remove_target_role(role: str):
         return jsonify(safe_error("移除目标职业", e)), 500
 
 
-def _enrich_role_market(role: str, market: dict | None) -> dict:
-    """拼出 FE TargetRoleMarket 全字段；薪资/需求来自 job_posting，技能/城市来自 career_insights。"""
-    insight = favorites_repo.get_role_insight(role) or {}
-    hot_cities = parse_json_field(insight.get('hot_cities')) or []
-    industries = parse_json_field(insight.get('hot_industries')) or []
-    skill_tags = parse_json_field(insight.get('core_skills')) or []
-    sample_jobs = []
-    if insight.get('role_name'):
-        sample_jobs = [insight['role_name']]
+_UNAVAILABLE_MARKET_FIELDS = [
+    "salaryRange", "medianSalary", "demandLevel", "demandCount", "hotCities",
+    "industries", "sampleJobs", "trendNote", "referenceMatch",
+]
 
-    if market:
-        demand_count = int(market.get('demand_count') or 0)
-        if demand_count > 100:
-            demand_level = "高"
-        elif demand_count > 30:
-            demand_level = "中"
-        else:
-            demand_level = "低"
-        salary_min = float(market.get('avg_salary_min') or 0)
-        salary_max = float(market.get('avg_salary_max') or 0)
-        median = int((salary_min + salary_max) / 2) if (salary_min or salary_max) else 0
-        salary_range = f"{int(salary_min)}K-{int(salary_max)}K"
-        trend_note = insight.get('description') or f"相关岗位约 {demand_count} 条"
-        reference = min(99, max(0, demand_count))
-    else:
-        demand_count = 0
-        demand_level = insight.get('demand_level') or "暂无数据"
-        salary_range = "—"
-        median = 0
-        if insight.get('avg_salary_low') is not None and insight.get('avg_salary_high') is not None:
-            low = int(insight['avg_salary_low'])
-            high = int(insight['avg_salary_high'])
-            salary_range = f"{low}K-{high}K"
-            median = int((low + high) / 2)
-        trend_note = insight.get('description') or f"暂无岗位 {role} 的市场统计"
-        reference = 0
+
+def _role_catalogue_card(role: str, insight: dict) -> dict:
+    """Only directory facts: neither raw jobs nor seed are reviewed market evidence."""
+    skill_tags = parse_json_field(insight.get('core_skills')) or []
 
     return {
         "role": role,
-        "salaryRange": salary_range,
-        "medianSalary": median,
-        "demandLevel": demand_level,
-        "demandCount": demand_count,
-        "hotCities": hot_cities if isinstance(hot_cities, list) else [],
-        "industries": industries if isinstance(industries, list) else [],
+        "salaryRange": "—",
+        "medianSalary": None,
+        "demandLevel": None,
+        "demandCount": None,
+        "hotCities": [],
+        "industries": [],
         "skillTags": skill_tags if isinstance(skill_tags, list) else [],
-        "sampleJobs": sample_jobs,
-        "trendNote": trend_note or "",
-        "referenceMatch": reference,
+        "sampleJobs": [],
+        "trendNote": "",
+        "referenceMatch": None,
+        # The current FE mapper unwraps data, so keep the status with the card
+        # as well as on the envelope for a future no-mock-fallback adapter.
+        "marketDataStatus": "unverified_seed",
+        "unavailableFields": list(_UNAVAILABLE_MARKET_FIELDS),
     }
 
 
 @favorites_bp.route('/target-role-market/<role>', methods=['GET'])
 def get_role_market(role: str):
-    """获取职业市场信息（FE 卡片全字段）"""
+    """Return a direction card, never source-free market statistics."""
     try:
-        market = favorites_repo.get_role_market_stats(role)
         insight = favorites_repo.get_role_insight(role)
-        if not market and not insight:
+        if not insight:
             return jsonify({
                 "success": True,
+                "status": "no_result",
                 "data": None,
-                "message": f"暂无岗位 {role} 的市场数据"
+                "message": f"暂无岗位 {role} 的职业方向资料",
             })
 
-        payload = _enrich_role_market(role, market)
-        return jsonify({"success": True, "data": payload})
+        payload = _role_catalogue_card(role, insight)
+        return jsonify({
+            "success": True,
+            "status": "partial",
+            "market_data_status": "unverified_seed",
+            "source_coverage": {
+                "career_insights": "available",
+                "market_claims": "unverified_seed",
+            },
+            "unavailable_fields": list(_UNAVAILABLE_MARKET_FIELDS),
+            "next_action": "await_verified_market_source",
+            "data": payload,
+        })
 
     except Exception as e:
         return jsonify(safe_error("获取职业市场信息", e)), 500

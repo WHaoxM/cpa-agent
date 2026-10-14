@@ -960,14 +960,37 @@ def get_transfer_options():
 def submit_self_assessment():
     """提交技能自评 — 冷启动用户从自评→推荐方向→画像"""
     try:
-        body = request.get_json(force=True) or {}
         student_id = resolve_request_scope().student_id
-        assessed_skills = body.get('assessed_skills', [])  # [{skill, level}]
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"success": False, "error": "请求体必须是 JSON 对象"}), 400
+        assessed_skills = body.get('assessed_skills', [])
         assessed_abilities = body.get('assessed_abilities', {})
 
-        if not isinstance(assessed_skills, list) or not assessed_skills:
-            return jsonify({"success": False, "error": "assessed_skills 不能为空"}), 400
-        if any(
+        if not isinstance(assessed_skills, list) or len(assessed_skills) > 100:
+            return jsonify({"success": False, "error": "assessed_skills 必须是最多 100 项的数组"}), 400
+        if not isinstance(assessed_abilities, dict):
+            return jsonify({"success": False, "error": "assessed_abilities 必须是对象"}), 400
+
+        # Exams sends only gap names plus raw answer scores. A gap is not a
+        # mastery level: store it explicitly as such, never guess 了解/不会.
+        gap_only = not assessed_skills or all(isinstance(item, str) for item in assessed_skills)
+        if gap_only:
+            if not assessed_abilities or len(assessed_abilities) > 100 or any(
+                not isinstance(key, str) or not key.strip() or len(key) > 128
+                or isinstance(score, bool) or not isinstance(score, int)
+                or score < 0 or score > 100
+                for key, score in assessed_abilities.items()
+            ):
+                return jsonify({"success": False, "error": "差距式自评需要 0-100 的答题分数"}), 400
+            if any(not item.strip() or len(item) > 128 for item in assessed_skills):
+                return jsonify({"success": False, "error": "弱项名称必须是非空文本且不超过 128 字符"}), 400
+            weak_skills = [item.strip() for item in assessed_skills]
+            assessed_skills = [
+                {"skill": name, "level": None, "source": "exams_gap"}
+                for name in weak_skills
+            ]
+        elif any(
             not isinstance(item, dict)
             or not isinstance(item.get('skill'), str)
             or not item['skill'].strip()
@@ -976,14 +999,13 @@ def submit_self_assessment():
             for item in assessed_skills
         ):
             return jsonify({"success": False, "error": "assessed_skills 每项必须包含非空 skill 和 level"}), 400
+        else:
+            weak_skills = [
+                s['skill'] for s in assessed_skills
+                if s.get('level') in ('不会', '了解')
+            ]
 
         mysql = get_mysql_client()
-
-        # 计算弱技能 (不会/了解 的技能)
-        weak_skills = [
-            s['skill'] for s in assessed_skills
-            if s.get('level') in ('不会', '了解')
-        ]
 
         # 根据已有技能推荐方向
         known_skills = [
@@ -993,18 +1015,18 @@ def submit_self_assessment():
 
         recommended_roles = []
         if known_skills:
-            # 查询与已知技能最匹配的方向
+            # Only structural skill overlap is available; old salary/demand
+            # seed columns have no reviewed market provenance.
             role_sql = """
             SELECT
-                ci.role_name, ci.category, ci.avg_salary_high, ci.demand_level
+                ci.role_name, ci.category,
+                COUNT(DISTINCT st.skill_name) AS matched_skill_count
             FROM career_insights ci
-            WHERE EXISTS (
-                SELECT 1 FROM skill_taxonomy st
-                WHERE JSON_CONTAINS(st.related_roles, CONCAT('"', ci.role_name, '"'))
-                AND st.skill_name IN ({})
-            )
-            GROUP BY ci.role_name, ci.category, ci.avg_salary_high, ci.demand_level
-            ORDER BY ci.demand_level DESC, ci.avg_salary_high DESC
+            JOIN skill_taxonomy st
+              ON JSON_CONTAINS(st.related_roles, JSON_QUOTE(ci.role_name))
+            WHERE st.skill_name IN ({})
+            GROUP BY ci.role_name, ci.category
+            ORDER BY matched_skill_count DESC, ci.role_name ASC
             LIMIT 5
             """.format(", ".join([f":sk{i}" for i in range(len(known_skills))]))
 
@@ -1036,10 +1058,29 @@ def submit_self_assessment():
         )
         if not persisted or str(persisted[0].get("assessment_id")) != assessment_id:
             return jsonify({"success": False, "error": "自评写入后未能核验归属"}), 500
-        _cache_delete(_cache_key("assessment", student_id=student_id))
+        _cache_delete(_cache_key("assessment-v2", student_id=student_id))
 
         return jsonify({
             "success": True,
+            "status": "partial" if gap_only or recommended_roles else "complete",
+            "partial_reasons": (
+                ["named_mastery_levels_unavailable"] if gap_only else
+                ["unverified_seed_catalogue"] if recommended_roles else []
+            ),
+            "assessment_kind": "gap_only" if gap_only else "skill_levels",
+            "market_data_status": "not_used",
+            "source_coverage": {
+                "self_reported_answers": "available",
+                "named_mastery_levels": "unavailable" if gap_only else "available",
+                "role_recommendation": (
+                    "unavailable" if gap_only else
+                    "unverified_seed" if recommended_roles else "no_result"
+                ),
+            },
+            "next_action": (
+                "submit_named_skill_levels_for_recommendation" if gap_only else
+                "await_verified_role_skill_mapping" if recommended_roles else None
+            ),
             "data": {
                 "assessment_id": assessment_id,
                 "weak_skills": weak_skills,
@@ -1059,7 +1100,9 @@ def get_assessment(student_id: str):
     """获取学生的最新自评结果"""
     try:
         require_student_path(student_id, resolve_request_scope())
-        cache_key = _cache_key("assessment", student_id=student_id)
+        # Old cache entries may contain unsourced salary/demand values from
+        # historical recommended_roles; never serve those from Redis.
+        cache_key = _cache_key("assessment-v2", student_id=student_id)
         cached = _cache_get(cache_key)
         if cached:
             return jsonify(cached)
@@ -1081,7 +1124,44 @@ def get_assessment(student_id: str):
         row = results[0]
         _parse_json_fields(row, ('assessed_skills', 'assessed_abilities', 'weak_skills', 'recommended_roles'))
 
-        resp = {"success": True, "data": row}
+        raw_roles = row.get('recommended_roles')
+        safe_roles = []
+        legacy_market_claims = bool(raw_roles) and not isinstance(raw_roles, list)
+        safe_fields = {'role_name', 'category', 'matched_skill_count'}
+        for role in raw_roles if isinstance(raw_roles, list) else []:
+            if not isinstance(role, dict) or not isinstance(role.get('role_name'), str):
+                legacy_market_claims = True
+                continue
+            if role.get('source') == 'published_job' or set(role) & {
+                'job_portrait_id', 'publication_version', 'content_sha256',
+            }:
+                # The ext/exams path has its own live publication verifier.
+                # A generic latest-assessment read must not serve a stale
+                # publication-bound recommendation from a stored snapshot.
+                legacy_market_claims = True
+                continue
+            if set(role) - safe_fields:
+                legacy_market_claims = True
+            safe_roles.append({key: role[key] for key in
+                               ('role_name', 'category', 'matched_skill_count') if key in role})
+        row['recommended_roles'] = safe_roles
+        gap_only = all(
+            isinstance(skill, dict) and skill.get('source') == 'exams_gap'
+            for skill in row.get('assessed_skills') or []
+        ) and bool(row.get('assessed_abilities'))
+
+        resp = {
+            "success": True,
+            "status": "partial" if gap_only or legacy_market_claims or safe_roles else "complete",
+            "partial_reasons": (
+                (["named_mastery_levels_unavailable"] if gap_only else [])
+                + (["legacy_market_claims_removed"] if legacy_market_claims else [])
+                + (["unverified_seed_catalogue"] if safe_roles else [])
+            ),
+            "assessment_kind": "gap_only" if gap_only else "skill_levels",
+            "market_data_status": "legacy_unverified_removed" if legacy_market_claims else "not_used",
+            "data": row,
+        }
         _cache_set(cache_key, resp, CACHE_TTL['assessment'])
         return jsonify(resp)
 

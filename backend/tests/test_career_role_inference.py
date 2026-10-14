@@ -11,6 +11,7 @@ from app.services.career_role_inference import (
     normalize_skill_inputs,
     score_insights_coverage,
     score_neo4j_coverage,
+    score_taxonomy_vote,
     skill_document_frequency,
 )
 
@@ -98,6 +99,114 @@ def test_insights_coverage_adds_missing_skills():
     slot = acc["RAG工程师"]
     assert "向量数据库" in slot["missing_core_skills"]
     assert "career_insights" in slot["sources"]
+
+
+def test_unverified_market_fields_cannot_change_skill_score_or_leak():
+    base = {
+        "role_name": "RAG工程师",
+        "category": "AI工程",
+        "core_skills": '["RAG", "Python"]',
+        "demand_level": "高",
+        "entry_difficulty": "中",
+    }
+
+    def score(row):
+        acc = {}
+        score_insights_coverage(acc, [row], {"RAG": 0.9})
+        return finalize_candidates(acc)[0]
+
+    baseline = score(base)
+    assert score({**base, "demand_level": "低"}) == baseline
+    assert score({**base, "entry_difficulty": "高"}) == baseline
+    assert baseline["demand_level"] is None
+    assert baseline["matched_skills"] == ["RAG"]
+
+
+def test_unverified_taxonomy_heat_cannot_change_role_score():
+    base = {"skill_name": "RAG", "related_roles": '["RAG工程师"]'}
+
+    def score(heat):
+        acc = {}
+        score_taxonomy_vote(acc, [{**base, "heat_score": heat}], {"RAG": 0.9})
+        return acc["RAG工程师"]["score"]
+
+    assert score(0.0) == score(1.0) == score(999.0)
+
+
+def test_taxonomy_only_candidate_is_marked_unverified_seed():
+    class TaxonomyMySQL:
+        def execute(self, sql, _params=None):
+            if "SELECT skill_name FROM skill_taxonomy" in sql:
+                return [{"skill_name": "RAG"}, {"skill_name": "Python"}]
+            if "related_roles" in sql:
+                return [
+                    {"skill_name": name, "related_roles": '["RAG工程师"]'}
+                    for name in ("RAG", "Python")
+                ]
+            return []
+
+    class EmptyNeo4j:
+        def execute_query(self, *_args, **_kwargs):
+            return []
+
+    out = infer_roles_from_skills(
+        ["RAG", "Python"], mysql_client=TaxonomyMySQL(), neo4j_client=EmptyNeo4j(),
+    )
+    assert out["predicted_role"] == "RAG工程师"
+    assert out["status"] == "partial"
+    assert out["partial_reasons"] == ["unverified_seed_catalogue"]
+    assert "heat_score" in out["unavailable_fields"]
+
+
+def test_infer_seed_skill_candidate_is_partial_without_market_claims():
+    queries = []
+
+    class SeedMySQL:
+        def execute(self, sql, _params=None):
+            queries.append(sql)
+            if "FROM career_insights" in sql:
+                return [{
+                    "role_name": "RAG工程师",
+                    "category": "AI工程",
+                    "core_skills": '["RAG", "Python"]',
+                    "demand_level": "极高",
+                    "entry_difficulty": "高",
+                }]
+            return []
+
+    class EmptyNeo4j:
+        def execute_query(self, *_args, **_kwargs):
+            return []
+
+    out = infer_roles_from_skills(["RAG"], mysql_client=SeedMySQL(), neo4j_client=EmptyNeo4j())
+    assert out["predicted_role"] == "RAG工程师"
+    assert out["status"] == "partial"
+    assert out["failed_sources"] == []
+    assert out["source_coverage"]["career_insights"] == "available"
+    assert out["market_data_status"] == "unverified_seed"
+    assert out["next_action"] == "await_verified_market_source"
+    assert out["candidates"][0]["demand_level"] is None
+    assert "demand_level" in out["unavailable_fields"]
+    assert not any("demand_level" in query or "entry_difficulty" in query for query in queries)
+
+
+def test_truncated_seed_runner_up_still_marks_result_partial():
+    class SeedMySQL:
+        def execute(self, sql, _params=None):
+            if "FROM career_insights" in sql:
+                return [{"role_name": "种子候选", "core_skills": '["RAG"]'}]
+            return []
+
+    class GraphNeo4j:
+        def execute_query(self, *_args, **_kwargs):
+            return [{"role_name": "图谱候选", "skills": [{"name": "RAG"}]}]
+
+    out = infer_roles_from_skills(
+        ["RAG"], top_k=1, mysql_client=SeedMySQL(), neo4j_client=GraphNeo4j(),
+    )
+    assert [c["role_name"] for c in out["candidates"]] == ["图谱候选"]
+    assert out["status"] == "partial"
+    assert out["partial_reasons"] == ["unverified_seed_catalogue"]
 
 
 def test_infer_end_to_end_with_fakes():
@@ -196,6 +305,7 @@ def test_infer_distinguishes_healthy_empty_from_failed_dependencies():
     assert set(partial["failed_sources"]) == {"career_insights", "skill_taxonomy"}
     assert partial["source_coverage"]["neo4j_requires"] == "available"
     assert partial["next_action"] == "retry_when_sources_available"
+    assert partial["market_data_status"] == "unavailable"
 
 
 def test_infer_retains_fallback_candidates_but_marks_failed_graph_partial():

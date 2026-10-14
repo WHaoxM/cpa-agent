@@ -72,6 +72,7 @@ For open-source runnable hardening, keep these active and maintained:
 - `reports/2026-10-13-secondary-backend-acceptance.md` — 次要入口与 Docker 恢复后真库续验、已复现窄域修复、全量回归及尚未闭合的产品链路
 - `guides/career-role-inference-source-coverage.md` — 职业方向推断的完整、空结果、部分结果与依赖来源覆盖合同
 - `guides/career-market-seed-boundary.md` — 职业冷启动目录与正式市场断言的读侧门禁、真实 HTTP 验收及来源审核缺口
+- `guides/legacy-exams-publication-gate.md` — 旧技能自评入口只推荐当前已审核发布的岗位，回读时复核撤回与版本
 - `guides/pipeline-dispatch-boundary.md` — L3 专用持久队列/恢复与其他旧 Pipeline 启动入口的 503 边界
 - `guides/docx-ocr-and-human-cer.md` — DOCX 嵌图真实 Sidecar OCR 与扫描简历逐页人工 CER 审阅包；未签审不产生准确率
 - `guides/legacy-doc-resume.md` — 旧版二进制 DOC 的可选 Apache Tika 文本抽取、来源未核验标记与配置缺失恢复

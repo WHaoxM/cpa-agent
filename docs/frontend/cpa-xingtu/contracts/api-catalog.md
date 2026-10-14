@@ -32,7 +32,7 @@ Last updated: 2026-10-13
 | `GET /api/career/learning-path` | 学习路径列表 | `career/learning-path.list.json` | backend-ready | |
 | `GET /api/career/paths` | 晋升路径 | `career/paths.json` | backend-ready | |
 | `GET /api/career/transfer` | 转岗 | `career/transfer.json` | backend-ready | |
-| `POST /api/career/assessment` | 技能自评提交 | `career/assessment.create.json` | field-mismatch | 当前 Exams 页面传 `assessed_skills: string[]`（弱项名）；后端要求 `[{skill, level}]`，HTTP 模式会返回 400，尚未决定权威转换契约 |
+| `POST /api/career/assessment` | 技能自评提交 | `career/assessment.create.json` | backend-ready | 后端已接受当前 Exams 的弱项 `string[]` + 0–100 答题分数，按 `gap_only/partial` 保存；不伪造技能等级或方向推荐，strict HTTP 仍须正式登录 |
 | `GET /api/career/assessment/<student_id>` | 最新自评 | `career/assessment.latest.json` | backend-ready | |
 | `GET /api/career/role-intro?role=` | 能力图谱角色简介 | `ability/role-intro.frontend.json` | backend-ready | 拼 `career_insights`；无匹配 `data:null`；无 Python 业务兜底文案 |
 
@@ -186,7 +186,7 @@ Last updated: 2026-10-13
 
 1. ~~target-roles POST `role` vs `role_name`~~ → BE 兼容两者；FE 发 `role_name`
 2. ~~saved-jobs camelCase~~ → BE 接受 camelCase 别名；FE adapter 仍发 snake_case
-3. ~~target-role-market 字段过少~~ → BE 补齐 hotCities / skillTags 等；FE `mergeTargetRoleMarket` 兜底
+3. target-role-market 已由 BE 保留方向技能、显式标市场字段未核验；当前 FE `mergeTargetRoleMarket` 仍会用 mock 市场数值回填不可用字段，真实体验尚未闭合
 4. ~~report `/api/reports`~~ → FE 已改 `/api/report/list?student_id=`
 
-**未决（2026-10-13 实码核对）**：Exams 页面提交的 `assessed_skills` 是弱项名称 `string[]`，而 `/api/career/assessment` 后端需要带等级的 `{skill, level}[]`。不能凭“路由存在/测试通过”标为已接通，也不能默默把弱项推断成某个自评等级。
+**2026-10-14 后端接收边界**：Exams 页面提交的 `assessed_skills` 是弱项名称 `string[]`；后端已以 `gap_only/partial` 接收并保存，缺少逐项掌握等级时不生成“已掌握技能”或技能式职业推荐。当前页面仍需正式登录后才可在 strict 模式写入，前端本地答题与持久结果展示不是仅凭后端返回 200 就完成的全链验收。

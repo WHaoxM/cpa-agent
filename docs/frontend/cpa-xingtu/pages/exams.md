@@ -21,7 +21,7 @@
 | 加载题库 | 进入页 | （理想）本地或 `GET` 题包 | — | questions[] | `learning/exams.questions.json` | backend-gap |
 | 提交答卷 | 交卷 | `POST /api/pipeline/ext/exams` | 见下 | assessment | `pipeline/exams.create.json` | backend-ready |
 | 查结果 | 历史 | `GET /api/pipeline/ext/exams/<assessment_id>` | — | 详情 | `pipeline/exams.detail.json` | backend-ready |
-| 备选提交 | 同左 | `POST /api/career/assessment` | 当前页面送 `assessed_skills: string[]`；后端需 `{skill,level}[]` | weak/recommend | `career/assessment.create.json` | field-mismatch |
+| 当前页面提交 | 交卷 | `POST /api/career/assessment` | `assessed_skills: string[]` + `assessed_abilities: Record<string,0..100>`；后端按差距提示保存，不推断缺失等级 | `gap_only/partial`、weak | `career/assessment.create.json` | backend-ready（需正式登录） |
 | 最新自评 | 摘要 | `GET /api/career/assessment/student_001` | — | 最新行 | `career/assessment.latest.json` | backend-ready |
 
 ### 提交答卷 Request（pipeline/ext）
