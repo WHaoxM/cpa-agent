@@ -67,10 +67,12 @@ class EvidenceAgent:
 
     def run(self, document: DocumentArtifact, profile: Dict[str, Any]) -> dict:
         blocks = [{"block_id": block.block_id, "text": block.text,
-                   "page": block.page + 1, "block_type": block.block_type}
+                   "page": block.page + 1 if block.page is not None else None,
+                   "block_type": block.block_type}
                   for block in document.blocks]
         page_count = document.metadata.get("pages") or document.metadata.get("page_count")
-        observed = sorted({block["page"] for block in blocks if block["text"].strip()})
+        observed = sorted({block["page"] for block in blocks
+                           if block["text"].strip() and block["page"] is not None})
         missing = [page for page in range(1, int(page_count) + 1) if page not in observed] if page_count else []
         return {"blocks": blocks, "page_count": page_count, "observed_pages": observed,
                 "missing_pages": missing, "engine": document.engine,

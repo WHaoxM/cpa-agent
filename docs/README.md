@@ -72,6 +72,7 @@ For open-source runnable hardening, keep these active and maintained:
 - `guides/career-role-inference-source-coverage.md` — 职业方向推断的完整、空结果、部分结果与依赖来源覆盖合同
 - `guides/pipeline-dispatch-boundary.md` — L3 专用持久队列/恢复与其他旧 Pipeline 启动入口的 503 边界
 - `guides/docx-ocr-and-human-cer.md` — DOCX 嵌图真实 Sidecar OCR 与扫描简历逐页人工 CER 审阅包；未签审不产生准确率
+- `guides/legacy-doc-resume.md` — 旧版二进制 DOC 的可选 Apache Tika 文本抽取、来源未核验标记与配置缺失恢复
 - `guides/semantic-skill-extraction.md` — L1 技能抽取去除词典/关键词伪回退后的结构化模型候选、原文证据门禁及残余语义硬编码清单
 - `guides/resume-entity-linking.md` — L0 简历技能 mention 原文门禁、已发布公共技能有界全文召回与模型 equivalent/related/unresolved 提议；不是跨语言向量召回或自动确认归一化
 - `guides/skill-vector-index.md` — 从真 MySQL 技能分类结构幂等重建公共 Milvus 向量、来源标识、失败重放与本机 BGE-M3 验收边界

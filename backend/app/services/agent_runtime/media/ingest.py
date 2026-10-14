@@ -199,6 +199,9 @@ def extract_text_from_path(
                         "engine": getattr(result, "engine", "l0") or "l0",
                         "block_count": len(result.blocks or []),
                         "blocks": blocks,
+                        **{key: (result.metadata or {})[key] for key in (
+                            "source_coverage", "coverage_reason", "retryable", "reading_order",
+                        ) if key in (result.metadata or {})},
                     }
                 meta["l0_error"] = getattr(result, "error", "empty")
             except Exception as e:

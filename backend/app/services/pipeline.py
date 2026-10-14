@@ -178,6 +178,8 @@ class L0ParseResumePipeline(BasePipeline):
                 "duration_ms": round((time.perf_counter() - source_started) * 1000),
                 "page_count": (parse_result.metadata or {}).get("pages") or
                               (parse_result.metadata or {}).get("page_count"),
+                "source_coverage": (parse_result.metadata or {}).get("source_coverage"),
+                "coverage_reason": (parse_result.metadata or {}).get("coverage_reason"),
             })
             self.trace_stage("handoff_document", "completed", 25, {
                 "artifact": "document_text", "text_chars": len(raw_text),
@@ -252,11 +254,13 @@ class L0ParseResumePipeline(BasePipeline):
                 missing = evidence["missing_pages"]
             else:
                 blocks = [{"block_id": b.block_id, "text": b.text,
-                           "page": b.page + 1, "block_type": b.block_type}
+                           "page": b.page + 1 if b.page is not None else None,
+                           "block_type": b.block_type}
                           for b in parse_result.blocks]
                 metadata = parse_result.metadata or {}
                 page_count = metadata.get("pages") or metadata.get("page_count")
-                observed = sorted({b["page"] for b in blocks if b["text"].strip()})
+                observed = sorted({b["page"] for b in blocks
+                                   if b["text"].strip() and b["page"] is not None})
                 missing = [p for p in range(1, int(page_count) + 1) if p not in observed] if page_count else []
             self.trace_stage("evidence_assembled", "completed", 75, {
                 "observed_page_count": len(observed), "missing_page_count": len(missing),

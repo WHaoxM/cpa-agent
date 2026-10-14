@@ -52,7 +52,7 @@ class L0Block:
     confidence: float
     source: str
     bbox: Optional[tuple] = None
-    page: int = 0
+    page: Optional[int] = 0
 
 
 @dataclass
@@ -97,8 +97,10 @@ class L0FullParser:
         try:
             if suffix == ".pdf":
                 return self._parse_pdf(str(file_path))
-            elif suffix in [".docx", ".doc"]:
+            elif suffix == ".docx":
                 return self._parse_docx(str(file_path))
+            elif suffix == ".doc":
+                return self._parse_doc(str(file_path))
             elif suffix == ".txt":
                 return self._parse_txt(str(file_path))
             elif suffix in [".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff"]:
@@ -527,6 +529,28 @@ class L0FullParser:
             return pytesseract.image_to_string(image, lang='chi_sim+eng')
         except:
             return ""
+
+    def _parse_doc(self, file_path: str) -> L0Result:
+        """Extract legacy OLE2 Word text with a bounded external Tika process."""
+        from app.utils.legacy_doc_text import LegacyDocError, extract_legacy_doc_text
+
+        try:
+            full_text, coverage = extract_legacy_doc_text(file_path)
+        except LegacyDocError as exc:
+            return L0Result(
+                success=False, text="", blocks=[], metadata={
+                    "source_coverage": "unverified", "retryable": True,
+                }, engine="apache-tika-doc-text", error=str(exc),
+            )
+        blocks = self._text_to_blocks(full_text, "resume")
+        for block in blocks:
+            # Tika's plain-text projection has no trustworthy Word page index.
+            block.page = None
+        return L0Result(
+            success=True, text=full_text,
+            blocks=blocks,
+            metadata=coverage, engine=coverage["engine"],
+        )
 
     def _parse_docx(self, file_path: str) -> L0Result:
         """解析 DOCX 文件"""
