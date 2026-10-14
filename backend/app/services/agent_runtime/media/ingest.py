@@ -195,13 +195,14 @@ def extract_text_from_path(
                             "text": redact_text(getattr(b, "text", None) or "", max_len=None),
                             "page": getattr(b, "page", None),
                         })
+                    metadata = getattr(result, "metadata", None) or {}
                     return result.text, {
                         "engine": getattr(result, "engine", "l0") or "l0",
                         "block_count": len(result.blocks or []),
                         "blocks": blocks,
-                        **{key: (result.metadata or {})[key] for key in (
+                        **{key: metadata[key] for key in (
                             "source_coverage", "coverage_reason", "retryable", "reading_order",
-                        ) if key in (result.metadata or {})},
+                        ) if key in metadata},
                     }
                 meta["l0_error"] = getattr(result, "error", "empty")
             except Exception as e:
