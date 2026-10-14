@@ -73,6 +73,13 @@ def _demo_landscape_response(reason: str = "") -> dict:
         ],
         "count": 3,
         "source": "demo_fallback",
+        # The payload is displayable, but it is not backed by the requested
+        # career catalog. Keep success for backwards compatibility while
+        # making the degraded completeness machine-readable.
+        "status": "partial",
+        "source_coverage": {"career_insights": "unavailable"},
+        "failed_sources": ["career_insights"],
+        "next_action": "retry_when_sources_available",
         "warning": "外部职业库不可用，已返回内置演示职业全景。",
         "reason": reason,
     }

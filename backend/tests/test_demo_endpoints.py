@@ -205,6 +205,10 @@ def test_career_landscape_returns_demo_fallback_when_mysql_is_unavailable(monkey
     assert body["success"] is True
     assert body["source"] == "demo_fallback"
     assert body["count"] >= 1
+    assert body["status"] == "partial"
+    assert body["source_coverage"] == {"career_insights": "unavailable"}
+    assert body["failed_sources"] == ["career_insights"]
+    assert body["next_action"] == "retry_when_sources_available"
 
 
 def test_admin_kb_smart_upload_extracts_entities_without_mysql(monkeypatch):
