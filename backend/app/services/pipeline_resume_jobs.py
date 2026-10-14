@@ -46,6 +46,7 @@ TRACE_DDL = """CREATE TABLE IF NOT EXISTS pipeline_task_trace (
 
 STAGE_LABELS = {
     "file_received": ("Browser", "DocumentAgent"),
+    "attempt_started": ("ResumePipeline", "DocumentAgent"),
     "source_extract": ("ResumePipeline", "DocumentAgent"),
     "source_extracted": ("DocumentAgent", "ResumePipeline"),
     "handoff_document": ("DocumentAgent", "StructureAgent"),
@@ -64,7 +65,7 @@ STAGE_LABELS = {
     "failed": ("ResumePipeline", "StudentReview"),
 }
 STAGE_KIND = {
-    "file_received": "input", "source_extract": "tool_call",
+    "file_received": "input", "attempt_started": "attempt", "source_extract": "tool_call",
     "source_extracted": "tool_result", "handoff_document": "handoff",
     "structure_extract": "agent_run",
     "structure_model": "model_call", "mention_model": "model_call",
@@ -76,7 +77,8 @@ STAGE_KIND = {
     "failed": "error",
 }
 STAGE_ACTOR = {
-    "file_received": "UploadGateway", "source_extract": "DocumentAgent",
+    "file_received": "UploadGateway", "attempt_started": "ResumePipeline",
+    "source_extract": "DocumentAgent",
     "source_extracted": "DocumentAgent", "handoff_document": "DocumentAgent",
     "structure_extract": "StructureAgent", "structure_model": "StructureAgent",
     "structure_extracted": "StructureAgent", "handoff_structure": "StructureAgent",
@@ -154,7 +156,7 @@ def claim_resume_intent(mysql, task_id):
     with mysql.engine.begin() as conn:
         row = conn.execute(text(
             "SELECT t.task_id,t.pipeline,t.status,t.student_id,t.params_json,"
-            "d.claim_token,d.lease_until FROM pipeline_resume_dispatch d "
+            "d.claim_token,d.lease_until,d.attempts FROM pipeline_resume_dispatch d "
             "JOIN pipeline_task t ON t.task_id=d.task_id WHERE d.task_id=:tid FOR UPDATE"
         ), {"tid": task_id}).mappings().first()
         if not row or row["pipeline"] != "L0_parse_resume" or row["status"] not in ("pending", "running"):
@@ -176,8 +178,13 @@ def claim_resume_intent(mysql, task_id):
             "lease_until=NOW(6)+INTERVAL :seconds SECOND,attempts=attempts+1 "
             "WHERE task_id=:tid"
         ), {"tid": task_id, "token": token, "seconds": LEASE_SECONDS})
+        attempt = row["attempts"] + 1
+        _insert_trace(conn, task_id=task_id, student_id=row["student_id"],
+                      stage="attempt_started", state="running", progress=0,
+                      facts={"attempt": attempt, "recovered": attempt > 1})
         return {"task_id": task_id, "student_id": row["student_id"],
-                "file_path": params["file_path"], "claim_token": token}
+                "file_path": params["file_path"], "claim_token": token,
+                "attempt": attempt}
 
 
 def execute_resume_intent(task_id, *, mysql=None):
@@ -229,25 +236,41 @@ def read_resume_trace(mysql, *, student_id, task_id, cursor=0, limit=100):
     with mysql.engine.connect().execution_options(isolation_level="REPEATABLE READ") as conn:
         with conn.begin():
             task = conn.execute(text(
-                "SELECT task_id,pipeline,status,progress FROM pipeline_task "
-                "WHERE task_id=:tid AND student_id=:sid AND pipeline='L0_parse_resume'"
+                "SELECT t.task_id,t.pipeline,t.status,t.progress,"
+                "COALESCE(d.attempts,0) AS current_attempt "
+                "FROM pipeline_task t LEFT JOIN pipeline_resume_dispatch d ON d.task_id=t.task_id "
+                "WHERE t.task_id=:tid AND t.student_id=:sid AND t.pipeline='L0_parse_resume'"
             ), {"tid": task_id, "sid": student_id}).mappings().first()
             if task is None:
                 raise LookupError("Resume task not found")
+            # Cursor pages must retain attempt context. Older trace rows before
+            # the first marker cannot be assigned to a past attempt reliably.
+            previous_marker = conn.execute(text(
+                "SELECT facts_json FROM pipeline_task_trace "
+                "WHERE task_id=:tid AND student_id=:sid AND stage='attempt_started' "
+                "AND event_id<=:cursor ORDER BY event_id DESC LIMIT 1"
+            ), {"tid": task_id, "sid": student_id, "cursor": cursor}).scalar_one_or_none()
+            previous_facts = json.loads(previous_marker) if isinstance(previous_marker, str) else previous_marker
+            attempt = previous_facts.get("attempt") if isinstance(previous_facts, dict) else None
             rows = list(conn.execute(text(
                 "SELECT event_id,stage,state,progress,source_name,target_name,facts_json,occurred_at "
                 "FROM pipeline_task_trace WHERE task_id=:tid AND student_id=:sid AND event_id>:cursor "
                 "ORDER BY event_id LIMIT :lim"
             ), {"tid": task_id, "sid": student_id, "cursor": cursor,
                 "lim": limit + 1}).mappings())
-            events = [{"event_id": row["event_id"], "stage": row["stage"],
-                       "state": row["state"], "progress": row["progress"],
-                       "kind": STAGE_KIND.get(row["stage"], "handoff"),
-                       "actor": STAGE_ACTOR.get(row["stage"], "ResumePipeline"),
-                       "source": row["source_name"], "target": row["target_name"],
-                       "facts": json.loads(row["facts_json"]) if isinstance(row["facts_json"], str)
-                       else row["facts_json"] or {}, "occurred_at": row["occurred_at"].isoformat()}
-                      for row in rows[:limit]]
+            events = []
+            for row in rows[:limit]:
+                facts = json.loads(row["facts_json"]) if isinstance(row["facts_json"], str) else row["facts_json"] or {}
+                if row["stage"] == "attempt_started":
+                    attempt = facts.get("attempt") if isinstance(facts, dict) else None
+                event_attempt = None if row["stage"] == "file_received" else attempt
+                events.append({"event_id": row["event_id"], "stage": row["stage"],
+                               "state": row["state"], "progress": row["progress"],
+                               "attempt": event_attempt,
+                               "kind": STAGE_KIND.get(row["stage"], "handoff"),
+                               "actor": STAGE_ACTOR.get(row["stage"], "ResumePipeline"),
+                               "source": row["source_name"], "target": row["target_name"],
+                               "facts": facts, "occurred_at": row["occurred_at"].isoformat()})
             return {"task": dict(task), "events": events,
                     "cursor": events[-1]["event_id"] if events else cursor,
                     "has_more": len(rows) > limit,

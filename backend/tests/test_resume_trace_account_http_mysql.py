@@ -89,8 +89,41 @@ def test_registered_student_uploads_async_and_reads_owned_trace(monkeypatch, tmp
         payload = trace.json()["data"]
         assert payload["task"]["status"] == "pending"
         assert payload["task"]["progress"] == 0
+        assert payload["task"]["current_attempt"] == 0
         assert [event["stage"] for event in payload["events"]] == ["file_received"]
+        assert payload["events"][0]["attempt"] is None
         assert payload["progress_basis"] == "4_completed_checkpoints_not_elapsed_time"
+
+        # A leased worker can crash after one real checkpoint. A new claim
+        # must keep the old audit trail without presenting it as current work.
+        first = jobs.claim_resume_intent(db, task_id)
+        assert first and first["attempt"] == 1
+        db.execute("UPDATE pipeline_task SET status='running' WHERE task_id=:tid",
+                   {"tid": task_id}, commit=True)
+        jobs.record_resume_stage(db, task_id=task_id, student_id=account_id,
+                                 claim_token=first["claim_token"], stage="source_extracted",
+                                 state="completed", progress=25)
+        first_http = student.get(f"{base}/api/pipeline/trace/{task_id}", timeout=5)
+        assert first_http.status_code == 200, first_http.text
+        assert first_http.json()["data"]["task"]["progress"] == 25
+        db.execute("UPDATE pipeline_resume_dispatch SET lease_until=NOW(6)-INTERVAL 1 SECOND "
+                   "WHERE task_id=:tid", {"tid": task_id}, commit=True)
+        second = jobs.claim_resume_intent(db, task_id)
+        assert second and second["attempt"] == 2
+        retry_http = student.get(f"{base}/api/pipeline/trace/{task_id}?limit=2", timeout=5)
+        assert retry_http.status_code == 200, retry_http.text
+        first_page = retry_http.json()["data"]
+        assert (first_page["task"]["current_attempt"], first_page["task"]["progress"]) == (2, 0)
+        assert first_page["has_more"] is True
+        assert [(e["stage"], e["attempt"]) for e in first_page["events"]] == [
+            ("file_received", None), ("attempt_started", 1)]
+        retry_tail = student.get(
+            f"{base}/api/pipeline/trace/{task_id}",
+            params={"cursor": first_page["cursor"], "limit": 2}, timeout=5)
+        assert retry_tail.status_code == 200, retry_tail.text
+        assert [(e["stage"], e["attempt"]) for e in retry_tail.json()["data"]["events"]] == [
+            ("source_extracted", 1), ("attempt_started", 2)]
+        assert retry_tail.json()["data"]["task"]["progress"] == 0
 
         other_csrf = other.get(f"{base}/api/auth/csrf", timeout=5).json()["csrfToken"]
         other_credentials = {"username": other_name, "password": password}
