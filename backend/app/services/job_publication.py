@@ -96,6 +96,8 @@ def scoring_readiness(snapshot):
 
 def publish_job(mysql, *, job_portrait_id, version, snapshot):
     """Called by a trusted operator after reviewing the source, never by an LLM."""
+    if isinstance(job_portrait_id, str) and job_portrait_id.startswith("source_csb_"):
+        raise ValueError("source_csb_ 是仅供来源展示的保留岗位 ID 前缀")
     validate_snapshot(snapshot)
     if snapshot["review_state"] != "approved":
         raise ValueError("岗位来源尚未经人工批准，不能发布为可信目录")
@@ -117,6 +119,10 @@ def publish_job(mysql, *, job_portrait_id, version, snapshot):
 
 
 def read_published_job(mysql, job_portrait_id, version=None):
+    # A source-only catalog ID can never be consumed as a scored publication,
+    # including by direct service callers that bypass the HTTP input guard.
+    if isinstance(job_portrait_id, str) and job_portrait_id.startswith("source_csb_"):
+        return None
     from sqlalchemy.exc import ProgrammingError
     try:
         rows = mysql.fetch_all(

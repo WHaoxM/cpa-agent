@@ -1,6 +1,6 @@
--- L0 asynchronous resume dispatch and owner-scoped Agent trace.
--- Run once during a maintenance window after backing up MySQL. Additive and
--- safe to re-run; it does not modify confirmed student profiles or old tasks.
+-- Historical compatibility installer for the L0 tables, released before the
+-- unified Alembic chain. New/updated deployments use `alembic upgrade head`
+-- and revision 0004_resume_trace_schema instead. Additive and idempotent.
 
 CREATE TABLE IF NOT EXISTS pipeline_resume_dispatch (
     task_id VARCHAR(64) NOT NULL PRIMARY KEY,

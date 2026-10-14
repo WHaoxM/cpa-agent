@@ -86,6 +86,27 @@ def test_latest_revoked_never_falls_back_to_old_publication():
     assert after["catalog_version"] != first["catalog_version"]
 
 
+def test_catalog_change_during_nonempty_page_is_not_returned_as_current():
+    class ConcurrentDB(_DB):
+        injected = False
+
+        def fetch_all(self, sql, params=None):
+            result = super().fetch_all(sql, params)
+            if "latest.latest_id=p.id" in sql and not self.injected:
+                self.injected = True
+                # Simulate a separate operator publishing another job after
+                # the page query but before the page has been fully verified.
+                self.add("job-2", "v1", "Concurrent role")
+            return result
+
+    db = ConcurrentDB()
+    db.add("job-1", "v1", "Initial role")
+    result = list_published_job_candidates(db)
+    assert result["status"] == "unavailable"
+    assert result["reason"] == "catalog_changed_during_read"
+    assert result["items"] == []
+
+
 def test_bounded_page_and_integrity_failure():
     db = _DB()
     db.add("job-1", "v1", "One")

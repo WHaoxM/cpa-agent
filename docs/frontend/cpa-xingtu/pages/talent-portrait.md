@@ -19,8 +19,8 @@
 | 操作 | UI 触发 | Method Path | Request 样例 | Response 样例 | Fixture | BE 状态 |
 |------|---------|-------------|--------------|---------------|---------|---------|
 | 加载学生 4D | 进入页面 | `GET /api/profile/student/student_001/4d` | 可选 `target_job_id` | 见下 | `profile/student.4d.student_001.json` | backend-ready |
-| 加载岗位画像 | 选择对照岗位 | `GET /api/profile/job/job_001` | — | 见下 | `profile/job.job_001.json` | backend-ready |
-| 岗位列表 | 下拉选择 | `GET /api/profile/job/list` | `limit` | 列表 | `profile/job.list.json` | backend-ready |
+| 加载岗位画像 | 选择对照岗位 | `GET /api/profile/job/job_001` | — | 见下 | `profile/job.job_001.json` | field-mismatch：仅已发布快照，旧四维 fixture 字段不保证 |
+| 岗位列表 | 下拉选择 | `GET /api/profile/job/list` | `limit` | 列表 | `profile/job.list.json` | field-mismatch：仅已发布摘要，真实目录当前可能为空 |
 | 流式人设解读 | 「生成解读」 | `POST /api/agent/chat` | `mode:demo` | reply | `agent/chat.demo.json` | backend-ready |
 | 真 LLM 流式 | 同左 | `POST /api/agent/chat/stream` | — | SSE | — | heavy-excluded |
 
@@ -89,6 +89,8 @@ GET /api/profile/job/job_001
 
 **Fixture:** `cpa-xingtu/public/fixtures/profile/job.job_001.json`  
 **Client 建议:** `api.profile.getJobPortrait(portraitId)`
+
+**HTTP 模式注意：**上面的 `title`、`d1_weight` 等是旧 mock fixture，不是现行后端公开发布合同。真实接口只接受当前有效发布的岗位 ID，返回来源审核后的快照；未发布或已撤回的岗位为 404。若页面仍需四维权重对照，需要先建立经审核的权重来源与明确的适配契约，不得从未发布旧画像直接回填。
 
 #### 解读（demo chat）
 

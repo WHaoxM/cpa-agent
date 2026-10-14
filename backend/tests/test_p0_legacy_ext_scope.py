@@ -74,6 +74,26 @@ def test_ext_exam_post_uses_principal_and_no_fake_id_without_readback(monkeypatc
     assert result.get_json()["success"] is False
 
 
+def test_ext_exam_rejects_malformed_answers_and_levels_before_db(monkeypatch):
+    client = _client(monkeypatch)
+    monkeypatch.setattr(
+        "app.services.db.get_mysql_client",
+        lambda: (_ for _ in ()).throw(AssertionError("DB accessed")),
+    )
+    invalid = [
+        ["not-an-answer"],
+        [{"skill": "Python", "level": "2"}],
+        [{"skill": "Python", "level": True}],
+        [{"skill": "Python", "level": -1}],
+        [{"skill": "Python", "level": 6}],
+        [{"skill": "  ", "level": 2}],
+    ]
+    for answers in invalid:
+        response = client.post("/api/pipeline/ext/exams", json={"answers": answers})
+        assert response.status_code == 400
+        assert response.get_json()["success"] is False
+
+
 def test_ext_exam_saved_record_does_not_claim_fabricated_portrait_or_roles(monkeypatch):
     client = _client(monkeypatch)
 

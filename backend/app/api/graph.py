@@ -10,7 +10,7 @@
 from flask import request, jsonify
 
 from . import graph_bp
-from ._helpers import ScopeError, resolve_request_scope, safe_error, scope_error_response
+from ._helpers import ScopeError, resolve_request_scope, safe_bad_request, safe_error, scope_error_response
 from ..services.db import get_neo4j_client
 from ..utils.logger import get_logger
 from ..services.public_skill_graph import query_public_skills
@@ -102,10 +102,14 @@ def graph_query():
     Body: {"template": "career_path", "params": {"position_name": "初级前端工程师"}}
     Other historical templates return 410 until public/private graph provenance exists.
     """
-    data = request.get_json() or {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(safe_bad_request("请求体必须是 JSON 对象")), 400
     template_name = data.get('template', '')
     params = data.get('params', {})
 
+    if not isinstance(template_name, str):
+        return jsonify(safe_bad_request("template 必须是文本")), 400
     if not template_name:
         return jsonify({
             "success": False,
@@ -129,6 +133,17 @@ def graph_query():
             "success": False,
             "error": f"未知模板: {template_name}"
         }), 400
+
+    if not isinstance(params, dict):
+        return jsonify(safe_bad_request("params 必须是对象")), 400
+    required_params = set(SAFE_CYPHER_TEMPLATES[template_name]["params"])
+    if set(params) != required_params:
+        return jsonify(safe_bad_request("params 字段与查询模板不匹配")), 400
+    if template_name == "career_path":
+        position_name = params.get("position_name")
+        if (not isinstance(position_name, str) or not position_name.strip()
+                or len(position_name) > 200):
+            return jsonify(safe_bad_request("position_name 必须是 1-200 字符的非空文本")), 400
 
     try:
         results = _execute_safe_query(template_name, params)

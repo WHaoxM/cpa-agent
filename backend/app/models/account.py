@@ -5,7 +5,7 @@
 
 from datetime import datetime
 from typing import Dict, Any, Optional
-from sqlalchemy import Column, String, Text, JSON, Integer, Float, DateTime, Index
+from sqlalchemy import Column, String, Text, JSON, Integer, BigInteger, Float, DateTime, Index
 
 from .base import Base
 
@@ -22,13 +22,14 @@ class UserAccount(Base):
 
     id = Column(String(64), primary_key=True, comment='用户唯一ID (学生场景下与 student_profile.student_id 对齐)')
     username = Column(String(50), unique=True, nullable=False, comment='登录用户名')
-    password_hash = Column(String(255), nullable=False, comment='bcrypt 哈希')
+    password_hash = Column(String(255), nullable=False, comment='Argon2id 哈希（新账号）')
     name = Column(String(100), comment='姓名')
     email = Column(String(100), comment='邮箱')
     phone = Column(String(20), comment='电话 (脱敏存储)')
     avatar = Column(String(500), comment='头像URL')
     role = Column(String(20), nullable=False, default='student', comment='student/teacher/admin')
     status = Column(String(20), nullable=False, default='active', comment='active/disabled')
+    auth_epoch = Column(BigInteger, nullable=False, default=0, comment='登录会话失效代数')
     class_id = Column(String(64), comment='→ class_info.id (学生所属班级)')
     signature = Column(String(255), comment='个性签名')
     last_login_at = Column(DateTime, comment='最近登录时间')

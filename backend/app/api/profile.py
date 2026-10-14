@@ -6,6 +6,7 @@
 import uuid
 import re
 from flask import request, jsonify
+from sqlalchemy.exc import SQLAlchemyError
 
 from . import profile_bp
 from ._helpers import (
@@ -21,6 +22,11 @@ from ._helpers import (
     sub_dimensions_from_payload,
 )
 from ..services.db import get_mysql_client
+from ..services.job_source_listing import (
+    SourceListingUnavailable, is_source_only_id, list_source_only_candidates,
+    read_source_only_candidate,
+)
+from ..services.job_source_verification import SourceVerificationUnavailable
 from ..utils.logger import get_logger
 
 logger = get_logger('cpa-agent.api.profile')
@@ -231,6 +237,8 @@ def confirm_student_resume():
     try:
         scope = resolve_request_scope()
         data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict):
+            return jsonify({"success": False, "error": "请求体必须是 JSON 对象"}), 400
         if data.get("confirmed") is not True or not isinstance(data.get("task_id"), str):
             return jsonify({"success": False, "error": "需要 task_id 和明确 confirmed=true"}), 400
         from ..services.agent_runtime.resume_confirmation import run_confirmation
@@ -253,12 +261,24 @@ def run_confirmed_student_pipeline():
     """Page adapter to the same PipelineRunner used by the main Agent."""
     try:
         scope = resolve_request_scope()
-        data = request.get_json(silent=True) or {}
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"success": False, "error": "请求体必须是 JSON 对象"}), 400
         level = data.get("pipeline")
         if level not in {"L2_generate_portrait", "L3_run_match", "L4_generate_report"}:
             return jsonify({"success": False, "error": "不支持的管线"}), 400
+        for field, max_length in (("job_id", 64), ("job_portrait_id", 64), ("title", 200)):
+            value = data.get(field)
+            if value is not None and (not isinstance(value, str) or not value.strip()
+                                      or len(value) > max_length):
+                return jsonify({"success": False, "error": f"{field} 必须是非空文本，最多 {max_length} 字符"}), 400
         # No caller-written profile, scores, skills or confirmation flags.
         params = {k: data[k] for k in ("job_id", "job_portrait_id", "title") if data.get(k)}
+        if level in {"L3_run_match", "L4_generate_report"} and any(
+            is_source_only_id(params.get(key)) for key in ("job_id", "job_portrait_id")
+        ):
+            return jsonify({"success": False, "code": "job_source_only_unscored",
+                            "error": "该岗位仅供查看官方来源，暂不可评分、匹配或生成报告"}), 409
         params["student_id"] = scope.student_id
         from ..services.pipeline import PipelineRunner
         runner = PipelineRunner()
@@ -456,7 +476,12 @@ def patch_student_profile(student_id: str):
         phone = data.get("phone")
         signature = data.get("signature")
         avatar = data.get("avatar")
-        sync_profile = bool(data.get("sync_student_profile", True))
+        sync_profile = data.get("sync_student_profile", True)
+        if not isinstance(sync_profile, bool):
+            return jsonify({
+                "success": False,
+                "error": "sync_student_profile 必须为布尔值",
+            }), 400
 
         mysql = get_mysql_client()
         account = mysql.execute(
@@ -533,59 +558,82 @@ def patch_student_profile(student_id: str):
         return jsonify(safe_error("更新学生资料", e, message="更新失败，请稍后重试")), 500
 
 
+def _load_published_job_catalog(mysql):
+    """Read the complete, validated public catalog through its canonical service."""
+    from ..services.job_catalog_listing import list_published_job_candidates
+
+    first = list_published_job_candidates(mysql, limit=50, offset=0)
+    if first.get("status") == "unavailable":
+        return first
+    items = list(first.get("items") or [])
+    version = first.get("catalog_version")
+    offset = len(items)
+    total = int(first.get("total") or 0)
+    while offset < total:
+        page = list_published_job_candidates(mysql, limit=50, offset=offset)
+        if (page.get("status") == "unavailable"
+                or page.get("catalog_version") != version
+                or not page.get("items")):
+            return {"status": "unavailable", "reason": "catalog_changed_during_read", "items": []}
+        items.extend(page["items"])
+        offset += len(page["items"])
+    return {**first, "items": items}
+
+
+def _public_job_item(item):
+    """Keep the legacy portrait id alias without adding unpublished row fields."""
+    return {"portrait_id": item["job_portrait_id"], **item}
+
+
+def _load_public_job_catalog(mysql):
+    """Keep scored and source-only trust tiers distinct in one public read."""
+    catalog = _load_published_job_catalog(mysql)
+    if catalog.get("status") == "unavailable":
+        return catalog
+    try:
+        source_only = list_source_only_candidates(mysql)
+    except SourceVerificationUnavailable as exc:
+        logger.warning("官方来源核验不可用，保留已发布岗位: %s", exc)
+        return {**catalog, "status": "partial", "items": catalog["items"],
+                "failed_sources": ["official_source_verification"],
+                "retry_after_seconds": 60}
+    except Exception as exc:
+        logger.error("来源专用岗位目录读取失败: %s", exc)
+        return {"status": "unavailable", "reason": "source_only_catalog_unavailable", "items": []}
+    items = [*catalog["items"], *source_only]
+    return {**catalog, "status": "ready" if items else "empty", "items": items,
+            "failed_sources": []}
+
+
 @profile_bp.route('/job/list', methods=['GET'])
 def list_job_portraits():
-    """获取岗位画像列表"""
+    """获取经校验的已发布岗位目录。"""
     try:
         mysql = get_mysql_client()
-
         category = request.args.get('category')
         limit, offset = clamp_pagination(
             request.args.get('limit', type=int),
             request.args.get('offset', type=int),
             default_limit=20,
         )
-
+        catalog = _load_public_job_catalog(mysql)
+        if catalog.get("status") == "unavailable":
+            return jsonify({"success": False, "status": "unavailable",
+                            "error": "岗位目录暂不可用", "data": []}), 503
+        all_items = catalog["items"]
         if category:
-            sql = """
-            SELECT
-                portrait_id, position_name, jd_count,
-                required_degree, required_skill_cnt,
-                d1_weight, d2_weight, d3_weight, d4_weight,
-                created_at
-            FROM job_portrait_4d
-            WHERE position_name LIKE :category
-            ORDER BY jd_count DESC
-            LIMIT :limit OFFSET :offset
-            """
-            results = mysql.execute(sql, {
-                "category": f"%{category}%",
-                "limit": limit,
-                "offset": offset
-            })
-
-            count_sql = "SELECT COUNT(*) as total FROM job_portrait_4d WHERE position_name LIKE :category"
-            count_result = mysql.execute(count_sql, {"category": f"%{category}%"})
-            total = count_result[0]['total'] if count_result else 0
-        else:
-            sql = """
-            SELECT
-                portrait_id, position_name, jd_count,
-                required_degree, required_skill_cnt,
-                d1_weight, d2_weight, d3_weight, d4_weight,
-                created_at
-            FROM job_portrait_4d
-            ORDER BY jd_count DESC
-            LIMIT :limit OFFSET :offset
-            """
-            results = mysql.execute(sql, {"limit": limit, "offset": offset})
-
-            count_sql = "SELECT COUNT(*) as total FROM job_portrait_4d"
-            count_result = mysql.execute(count_sql)
-            total = count_result[0]['total'] if count_result else 0
+            needle = category.strip().casefold()
+            all_items = [item for item in all_items
+                         if needle in str(item.get("position_name") or "").casefold()]
+        total = len(all_items)
+        results = [_public_job_item(item) for item in all_items[offset:offset + limit]]
 
         return jsonify({
             "success": True,
+            "status": "partial" if catalog["status"] == "partial" else
+                      ("complete" if total else "empty"),
+            "failed_sources": catalog.get("failed_sources", []),
+            "retry_after_seconds": catalog.get("retry_after_seconds"),
             "data": results,
             "count": len(results),
             "total": total,
@@ -599,50 +647,60 @@ def list_job_portraits():
 
 @profile_bp.route('/job/<portrait_id>', methods=['GET'])
 def get_job_portrait(portrait_id: str):
-    """获取岗位四维需求画像"""
+    """读取当前版本已发布岗位快照；不回显未发布的旧画像行。"""
     try:
         mysql = get_mysql_client()
+        if is_source_only_id(portrait_id):
+            source_only = read_source_only_candidate(mysql, portrait_id)
+            if source_only is None:
+                return jsonify({"success": False, "error": f"未找到岗位画像: {portrait_id}"}), 404
+            return jsonify({"success": True, "data": source_only})
+        from ..services.job_publication import read_published_job
 
-        sql = """
-        SELECT
-            portrait_id, position_name, jd_count,
-            required_degree, major_strict, required_skill_cnt,
-            d1_weight, d2_weight, d3_weight, d4_weight,
-            portrait_json, created_at
-        FROM job_portrait_4d
-        WHERE portrait_id = :portrait_id
-        """
-
-        results = mysql.execute(sql, {"portrait_id": portrait_id})
-
-        if not results:
+        publication = read_published_job(mysql, portrait_id)
+        if not publication:
             return jsonify({
                 "success": False,
                 "error": f"未找到岗位画像: {portrait_id}"
             }), 404
-
-        portrait = results[0]
-
-        import json
-        portrait['portrait_json'] = parse_json_field(portrait.get('portrait_json'))
+        snapshot = publication["snapshot_json"]
+        portrait = {
+            "portrait_id": portrait_id,
+            "job_portrait_id": portrait_id,
+            "publication_version": publication["publication_version"],
+            "content_sha256": publication["content_sha256"],
+            "publication_status": "published",
+            "vacancy_validity": "unknown",
+            "position_name": snapshot["position_name"],
+            "source_uri": snapshot["source_uri"],
+            "source_fetched_at": snapshot["source_fetched_at"],
+            "reviewed_at": snapshot["reviewed_at"],
+            "source_license": snapshot["source_license"],
+            "portrait_json": snapshot,
+        }
 
         return jsonify({
             "success": True,
             "data": portrait
         })
 
+    except (SourceListingUnavailable, SourceVerificationUnavailable, SQLAlchemyError):
+        return jsonify({"success": False, "status": "unavailable",
+                        "error": "岗位来源校验失败"}), 503
     except Exception as e:
         return jsonify(safe_error("获取岗位画像", e, message="查询失败，请稍后重试")), 500
 
 
 @profile_bp.route('/job/search', methods=['GET'])
 def search_jobs():
-    """搜索岗位 (按名称/公司)"""
+    """只按已发布目录中的岗位名称搜索，不搜索未审核公司/招聘信息。"""
     try:
-        mysql = get_mysql_client()
-
-        keyword = request.args.get('keyword', '')
-        limit, _ = clamp_pagination(request.args.get('limit', type=int), None, default_limit=20)
+        keyword = request.args.get('keyword', '').strip()
+        limit, offset = clamp_pagination(
+            request.args.get('limit', type=int),
+            request.args.get('offset', type=int),
+            default_limit=20,
+        )
 
         if not keyword:
             return jsonify({
@@ -650,30 +708,29 @@ def search_jobs():
                 "error": "keyword 不能为空"
             }), 400
 
-        sql = """
-        SELECT
-            job_id, position_name, position_normalized,
-            company_name, company_industry,
-            degree_requirement, experience_min,
-            salary_min, salary_max,
-            is_it_position,
-            created_at
-        FROM job_posting
-        WHERE (position_name LIKE :keyword OR company_name LIKE :keyword)
-              AND is_it_position = 1
-        ORDER BY created_at DESC
-        LIMIT :limit
-        """
-
-        results = mysql.execute(sql, {
-            "keyword": f"%{keyword}%",
-            "limit": limit
-        })
+        mysql = get_mysql_client()
+        catalog = _load_public_job_catalog(mysql)
+        if catalog.get("status") == "unavailable":
+            return jsonify({"success": False, "status": "unavailable",
+                            "error": "岗位目录暂不可用", "data": []}), 503
+        needle = keyword.casefold()
+        matched = [item for item in catalog["items"]
+                   if needle in str(item.get("position_name") or "").casefold()]
+        total = len(matched)
+        results = [_public_job_item(item) for item in matched[offset:offset + limit]]
 
         return jsonify({
             "success": True,
+            "status": "partial" if catalog["status"] == "partial" else
+                      ("complete" if total else "empty"),
+            "failed_sources": catalog.get("failed_sources", []),
+            "retry_after_seconds": catalog.get("retry_after_seconds"),
             "data": results,
-            "count": len(results)
+            "count": len(results),
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + len(results) < total,
         })
 
     except Exception as e:
@@ -682,28 +739,20 @@ def search_jobs():
 
 @profile_bp.route('/job/categories', methods=['GET'])
 def get_job_categories():
-    """获取岗位分类统计"""
+    """当前发布合同没有岗位分类字段；不得从未发布的 job_posting 推导分类。"""
     try:
         mysql = get_mysql_client()
-
-        sql = """
-        SELECT
-            job_category,
-            COUNT(*) as job_count,
-            AVG(salary_min) as avg_salary_min,
-            AVG(salary_max) as avg_salary_max
-        FROM job_posting
-        WHERE job_category IS NOT NULL
-        GROUP BY job_category
-        ORDER BY job_count DESC
-        """
-
-        results = mysql.execute(sql)
+        catalog = _load_published_job_catalog(mysql)
+        if catalog.get("status") == "unavailable":
+            return jsonify({"success": False, "status": "unavailable",
+                            "error": "岗位目录暂不可用", "data": []}), 503
 
         return jsonify({
             "success": True,
-            "data": results,
-            "count": len(results)
+            "data": [],
+            "count": 0,
+            "catalog_version": catalog.get("catalog_version"),
+            "reason": "published_catalog_has_no_category_field",
         })
 
     except Exception as e:

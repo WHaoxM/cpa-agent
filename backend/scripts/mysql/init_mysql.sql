@@ -184,6 +184,19 @@ CREATE TABLE IF NOT EXISTS job_catalog_review (
     INDEX idx_job_review_source (source_record_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Official-source informational jobs: visible but never L3/L4 scoring input.
+CREATE TABLE IF NOT EXISTS job_catalog_source_listing (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    source_record_id VARCHAR(64) NOT NULL,
+    listing_version VARCHAR(64) NOT NULL,
+    snapshot_json JSON NOT NULL,
+    content_sha256 CHAR(64) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'listed',
+    listed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_source_listing_version (source_record_id, listing_version),
+    INDEX idx_source_listing_latest (source_record_id, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS match_result (
     id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
     student_id          VARCHAR(64)  NOT NULL COMMENT '→ student_profile.student_id',
@@ -567,6 +580,44 @@ CREATE TABLE IF NOT EXISTS pipeline_task (
     INDEX idx_created (created_at DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='管线任务 (异步任务追踪)';
 
+-- L3 only: durable dispatch intent, lease and fencing token. For existing
+-- volumes, run the explicit pipeline_match_jobs --install migration.
+CREATE TABLE IF NOT EXISTS pipeline_match_dispatch (
+    task_id          VARCHAR(64) NOT NULL PRIMARY KEY,
+    claim_token      CHAR(32) DEFAULT NULL,
+    lease_until      DATETIME(6) DEFAULT NULL,
+    attempts         INT NOT NULL DEFAULT 0,
+    last_enqueued_at DATETIME(6) DEFAULT NULL,
+    created_at       DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    KEY idx_match_replay (lease_until, last_enqueued_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- L0 resume parsing: durable dispatch plus owner-scoped, content-free stage trace.
+-- Existing volumes: python -B -m app.services.pipeline_resume_jobs --install
+CREATE TABLE IF NOT EXISTS pipeline_resume_dispatch (
+    task_id          VARCHAR(64) NOT NULL PRIMARY KEY,
+    claim_token      CHAR(32) DEFAULT NULL,
+    lease_until      DATETIME(6) DEFAULT NULL,
+    attempts         INT NOT NULL DEFAULT 0,
+    last_enqueued_at DATETIME(6) DEFAULT NULL,
+    created_at       DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    KEY idx_resume_replay (lease_until, last_enqueued_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS pipeline_task_trace (
+    event_id         BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    task_id          VARCHAR(64) NOT NULL,
+    student_id       VARCHAR(64) NOT NULL,
+    stage            VARCHAR(40) NOT NULL,
+    state            VARCHAR(20) NOT NULL,
+    progress         TINYINT UNSIGNED NOT NULL,
+    source_name      VARCHAR(60) NOT NULL,
+    target_name      VARCHAR(60) NOT NULL,
+    facts_json       JSON DEFAULT NULL,
+    occurred_at      DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    KEY idx_resume_trace_cursor (task_id, event_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 
 -- ===========================================
 -- 三、冷启动知识表 (CS-1)
@@ -700,13 +751,14 @@ SELECT '冷启动表创建完成，种子数据见 seed_cold_start.sql' AS statu
 CREATE TABLE IF NOT EXISTS user_account (
     id              VARCHAR(64)  NOT NULL PRIMARY KEY COMMENT '用户唯一ID (学生场景下与 student_profile.student_id 对齐)',
     username        VARCHAR(50)  NOT NULL UNIQUE COMMENT '登录用户名',
-    password_hash   VARCHAR(255) NOT NULL COMMENT 'bcrypt 哈希',
+    password_hash   VARCHAR(255) NOT NULL COMMENT 'Argon2id 哈希（新账号）',
     name            VARCHAR(100) DEFAULT NULL COMMENT '姓名',
     email           VARCHAR(100) DEFAULT NULL COMMENT '邮箱',
     phone           VARCHAR(20)  DEFAULT NULL COMMENT '电话 (脱敏存储)',
     avatar          VARCHAR(500) DEFAULT NULL COMMENT '头像URL',
     role            VARCHAR(20)  NOT NULL DEFAULT 'student' COMMENT 'student/teacher/admin',
     status          VARCHAR(20)  NOT NULL DEFAULT 'active' COMMENT 'active/disabled',
+    auth_epoch      BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '登录会话失效代数',
     class_id        VARCHAR(64)  DEFAULT NULL COMMENT '→ class_info.id (学生所属班级)',
     signature       VARCHAR(255) DEFAULT NULL COMMENT '个性签名',
     last_login_at   DATETIME     DEFAULT NULL COMMENT '最近登录时间',
@@ -801,6 +853,7 @@ CREATE TABLE IF NOT EXISTS knowledge_base (
     status          VARCHAR(20)  NOT NULL DEFAULT 'pending' COMMENT 'pending/processing/completed/failed',
     file_path       VARCHAR(500) DEFAULT NULL COMMENT '上传文件路径',
     file_size       BIGINT       DEFAULT NULL COMMENT '字节',
+    content_sha256  CHAR(64)     DEFAULT NULL COMMENT '私有来源文件 SHA-256',
     content_text    LONGTEXT     DEFAULT NULL COMMENT '原始内容文本',
     parsed_entities JSON         DEFAULT NULL COMMENT '解析出的实体 (skills/roles/relations)',
     intent_json     JSON         DEFAULT NULL COMMENT '意图识别结果',
@@ -824,6 +877,8 @@ CREATE TABLE IF NOT EXISTS job_dataset (
     status          VARCHAR(20)  NOT NULL DEFAULT 'pending' COMMENT 'pending/processing/completed/failed',
     file_path       VARCHAR(500) DEFAULT NULL,
     file_size       BIGINT       DEFAULT NULL,
+    content_sha256  CHAR(64)     DEFAULT NULL COMMENT '私有来源文件 SHA-256',
+    staged_record_count INT     NOT NULL DEFAULT 0 COMMENT '暂存 JSON 条目数；不等于已发布岗位数',
     description     TEXT         DEFAULT NULL,
     uploaded_by     VARCHAR(64)  DEFAULT NULL COMMENT '→ user_account.id',
     error_message   TEXT         DEFAULT NULL,

@@ -123,8 +123,10 @@ def get_learning_progress(user_id: str):
 def update_progress():
     """更新学习进度"""
     try:
-        data = request.get_json() or {}
         user_id = resolve_request_scope().student_id
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"success": False, "error": "请求体必须是 JSON 对象"}), 400
         course_id = data.get('course_id')
         chapter_id = data.get('chapter_id')
         progress = data.get('progress')
@@ -138,6 +140,9 @@ def update_progress():
             return jsonify({"success": False, "error": "progress 必须是 0 至 100 的数值"}), 400
         if not 0 <= progress <= 100:
             return jsonify({"success": False, "error": "progress 必须是 0 至 100 的数值"}), 400
+        completed = data.get('completed', False)
+        if not isinstance(completed, bool):
+            return jsonify({"success": False, "error": "completed 必须是布尔值"}), 400
         mysql = get_mysql_client()
 
         # learning_progress stores chapter.id as text.  Verify the authoritative
@@ -169,9 +174,9 @@ def update_progress():
             "course_id": str(course_id),
             "chapter_id": str(chapter_id),
             "progress": progress,
-            "completed": data.get('completed', False),
+            "completed": completed,
             "progress2": progress,
-            "completed2": data.get('completed', False)
+            "completed2": completed
         })
 
         persisted = mysql.execute(
@@ -185,7 +190,7 @@ def update_progress():
             or str(persisted[0].get("chapter_id")) != str(chapter_id)
             or str(persisted[0].get("course_id")) != str(course_id)
             or abs(float(persisted[0].get("progress")) - float(progress)) > 0.001
-            or bool(persisted[0].get("completed")) != bool(data.get("completed", False))
+            or bool(persisted[0].get("completed")) != completed
         ):
             return jsonify({"success": False, "error": "学习进度写入后未能核验"}), 500
 
@@ -206,8 +211,8 @@ def get_learning_report(user_id: str):
 
         sql = """
         SELECT
-            SUM(progress * ch.duration_hours) as total_study_time,
-            COUNT(DISTINCT lp.course_id) as completed_courses,
+            SUM((lp.progress / 100.0) * ch.duration_hours) as total_study_time,
+            COUNT(DISTINCT CASE WHEN lp.completed = 1 THEN lp.course_id END) as completed_courses,
             AVG(lp.progress) as average_progress
         FROM learning_progress lp
         JOIN chapter ch ON lp.chapter_id = ch.id

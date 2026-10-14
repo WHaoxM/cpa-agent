@@ -55,6 +55,17 @@ def test_conflicting_map_values_are_not_resolved_by_arbitrary_precedence():
     assert result["semantic_fact_conflicts"] == ["communication"]
 
 
+def test_chunk_merge_keeps_retry_priority_when_unmapped_and_bad_quote_coexist():
+    result = _merge_grounded_facts({}, [{
+        "semantic_facts": {"school_tier": {"value": "其他理工", "evidence": "其他理工"}},
+        "semantic_fact_issues": [{"field": "teamwork", "reason": "evidence_not_in_source"}],
+    }], "其他理工")
+    assert result["semantic_facts"]["school_tier"]["value"] == "其他理工"
+    assert {"field": "school_tier", "reason": "value_not_in_scoring_category"} in result["semantic_fact_issues"]
+    assert {"field": "teamwork", "reason": "evidence_not_in_source", "window_offset": 0} in result["semantic_fact_issues"]
+    assert result["semantic_fact_next_action"] == "retry_fact_extraction"
+
+
 def test_merge_cannot_introduce_new_semantic_facts():
     class Client:
         def chat(self, **kwargs):

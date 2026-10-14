@@ -2,7 +2,7 @@
 
 ## 运行合同
 
-`POST /api/profile/student/upload?async=1`（multipart `file`，可信 Principal）先在 MySQL 同一事务创建 `pipeline_task`、`pipeline_resume_dispatch` 和 `file_received`；返回 202 与可刷新回放的 `task_id`。Celery `cpa.pipeline.resume` 按租约/claim token 执行，Beat `cpa.pipeline.resume_replay` 负责有界恢复；旧同步上传合同保持不变。部署前在维护窗口执行 `backend/scripts/mysql/migration_resume_trace.sql`，核对两张表的列和索引；已有数据库 volume 不会重放初始化 SQL。此脚本不回填或改写旧任务，不能用任务创建接口代替迁移。
+`POST /api/profile/student/upload?async=1`（multipart `file`，可信 Principal）先在 MySQL 同一事务创建 `pipeline_task`、`pipeline_resume_dispatch` 和 `file_received`；返回 202 与可刷新回放的 `task_id`。Celery `cpa.pipeline.resume` 按租约/claim token 执行，Beat `cpa.pipeline.resume_replay` 负责有界恢复；旧同步上传合同保持不变。正式部署在维护窗口执行 Alembic `upgrade head`，由 `0004_resume_trace_schema` 接管两张表；已有数据库 volume 不会重放初始化 SQL。先前单独发布的 `migration_resume_trace.sql` 保留为历史兼容脚本，不再作为统一部署入口。
 
 异步 L0 是**按简历业务职责分工的串行协作**，并非四个模型同时投票：
 
@@ -23,7 +23,7 @@
 
 ## 验证与恢复
 
-1. 本机 `mkg` 环境、MySQL/Redis 启动后，在维护窗口备份数据库、停写，从 `backend/` 对目标库执行 `scripts/mysql/migration_resume_trace.sql`，核对 `pipeline_resume_dispatch`、`pipeline_task_trace` 的列和索引后恢复服务。不要把本次独立提交中尚未包含的 Alembic 迁移链当作已发布前置条件。
+1. 本机 `mkg` 环境、MySQL/Redis 启动后，在维护窗口备份数据库、停写，从 `backend/` 对目标库执行 `python -B -m alembic -c alembic.ini upgrade head`，核对 `current` 与 `heads` 都为 `0004_resume_trace_schema`，并检查 `pipeline_resume_dispatch`、`pipeline_task_trace` 的列和索引后恢复服务。旧 `--install`/单独 SQL 不能替代版本账本。
 2. 启动 Flask、`cpa.pipeline` solo worker 和独立 Beat。用测试账号上传仅含虚构姓名、学校、专业、项目的 `.txt` 到 `POST /api/profile/student/upload?async=1`；确认先返回 202、pending、0%。不要用真实学生账户做自动化回归。
 3. 轮询该账号的 `GET /api/pipeline/trace/<task_id>`，核对 `source_extracted` 25、`structure_extracted` 50、`entity_resolved` 75、`candidate_saved` 100，以及三次 Agent handoff 的 `source/target`。再用另一个账号请求同一 task，应为 404；最后回读候选核对未确认的 `student_profile` 未被改写。
 4. worker 停止后任务保留在 MySQL；重启 worker/Beat 后扫描可重发，claim token 拒绝过期执行者。若 `failed`，从事件定位阶段并重新上传；不要只改前端百分比或把中间模型调用成功当作最终候选成功。

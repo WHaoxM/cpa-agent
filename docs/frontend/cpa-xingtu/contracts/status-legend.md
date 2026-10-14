@@ -1,7 +1,7 @@
 # API 状态标签定义
 
 Status: active  
-Last updated: 2026-07-18
+Last updated: 2026-10-13
 
 页文档与 [api-catalog.md](api-catalog.md) **必须使用下列四态**，勿混用旧 matrix 的 `mock-only` / `partial` / `missing`（旧词仅出现在 matrix 历史表中）。
 
@@ -18,14 +18,14 @@ Last updated: 2026-07-18
 
 - 一条 API 只标一个主标签。若既 mismatch 又 heavy：主标 `field-mismatch`，备注 heavy；或主标 `heavy-excluded`，备注字段问题。
 - 「页面仍 mock、后端已通」→ 对 API 标 `backend-ready`（或 `field-mismatch`），**不要**因前端未接线改成 gap。
-- 刻意无后端（登录、消息、404）→ 不进 catalog，或标 `backend-gap` 且说明「产品接受无 API」。
+- 真正无对等后端的能力 → 不进 catalog，或标 `backend-gap` 并说明缺口；**登录已有自建账号 API**，页面仍 mock 不使后端标签退回 gap。
 
 ## Heavy 边界（与 grill 一致）
 
 | 能力 | 处理 |
 |------|------|
 | `POST /api/report/generate`（`CPA_DEMO_MODE=false`） | `heavy-excluded`（触 L4） |
-| `POST /api/pipeline/trigger` 真跑 L0–L4 | `heavy-excluded` |
+| `POST /api/pipeline/trigger` 真跑 L0–L4 | 当前 `backend-gap`：strict 模式无执行器，503；接线并真实消费后才可重新归类为 `heavy-excluded` |
 | `POST /api/agent/chat` + `mode=langgraph` / `react` | `heavy-excluded` |
 | `POST /api/agent/chat` + `mode=demo` | 可测 → 标 `backend-ready` |
 | `POST /api/pipeline/ext/parse/text` | 轻量 → `backend-ready` |

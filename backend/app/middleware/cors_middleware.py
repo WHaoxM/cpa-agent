@@ -31,13 +31,15 @@ class CorsMiddleware:
             response.headers['Access-Control-Allow-Origin'] = '*'
         elif origin and origin in self.allowed_origins:
             response.headers['Access-Control-Allow-Origin'] = origin
+            response.headers['Access-Control-Allow-Credentials'] = 'true'
+            response.vary.add('Origin')
         else:
             return response
 
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
         response.headers['Access-Control-Allow-Headers'] = (
             'Content-Type, Authorization, X-Requested-With, '
-            'X-Dev-Student-Id, Idempotency-Key'
+            'X-Dev-Student-Id, X-CSRFToken, Idempotency-Key'
         )
         response.headers['Access-Control-Expose-Headers'] = (
             'Idempotency-Replayed, Retry-After'

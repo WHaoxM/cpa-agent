@@ -9,7 +9,7 @@
 - `portrait_generate` / `report_generate` 的现有便捷函数只计算草稿，并未保存画像或报告行；因此标为 `partial`、`verified:false`，不返回虚构业务报告 ID。
 - Agent artifact candidate 缺失状态或缺少工具侧 `verified:true` 时不会被提交为 `completed`，公开引用缺状态时也显示 `unverified`。当前 `verified` 仍是受信工具契约，不代替未来对每类资源做 owner/存在性数据库复核。
 - `/api/profile/student/upload` 只返回 `PipelineRunner` 创建的 task ID，并把待确认候选标 `needs_input/partial`，不冒称资料已确认。`/api/report/generate` 使用 Principal 的 student ID；有报告行时须报告行与任务行均通过 owner 回读才返回报告 ID，无可信岗位来源而未生成报告时只返回已回读的任务 ID、`partial/success:false` 与空报告 ID。报告详情、导出、列表、进度和任务查询以 Principal 限制 SQL owner。
-- 旧 `/api/pipeline/trigger` 的 demo 结果只构成预览，标 `partial` 而非已持久化的业务完成；`/status/<task_id>` 按 Principal 查任务。旧 L0 文件路径也限定在当前 Principal 上传目录。
+- 旧 `/api/pipeline/trigger` 的 demo 结果只构成预览，标 `partial` 而非已持久化的业务完成；strict 模式及旧 `/l1..l4` 启动入口目前不具备执行器，返回 503 且不建永久 pending 任务。`/status/<task_id>` 仍按 Principal 查既有任务。旧 L0 文件路径也限定在当前 Principal 上传目录；详见 `pipeline-dispatch-boundary.md`。
 - growth-analysis 的 `reportIds` 查询增加 owner 条件；career-suggestions、learning progress/recommend 均不使用 body/query/path 的外部 student/user ID 决定读写归属。旧 `/api/career/assessment` 也只用服务端 Principal，GET 在读取 Redis 缓存之前核对路径 owner；POST 写入后按 owner + assessment ID 回读，成功后失效旧缓存。学习进度 POST 回读 owner + chapter 并比较持久化课程、进度、完成状态，无法核验则不得显示成功。
 - `/api/pipeline/ext/report/{full,html,match,career}` 与 `/portrait/student` 只以 Principal 为学生身份；旧计算器不落业务表，统一返回 `partial`、`verified:false`、`persisted:false`。临时生成的 `report_id` 改为 `draft_id`，HTML 内也标 `DRAFT-NOT-SAVED`。
 - `/api/match` 的用户结果、技能差距、解释、职业推荐和列表路径先比较 Principal，再以同一 student ID 查询；`/run` 不再用请求体 student_id 或自造 task ID，而是调用 `PipelineRunner` 的 L3 并返回真实 task ID。L3 当前未取得可信岗位来源，`/run` 按返回状态标 `partial`/`success:false`，不得硬编码 completed。`/hybrid-candidates` 只读取调用者给的技能并检索公共候选，未作为用户资源入口处理。
@@ -17,9 +17,9 @@
 
 ## 验证
 
-补充管理面与向量检索审计：`/api/admin/*` 已统一要求 Principal 与服务端认证适配器设置的 `flask.g.cpa_admin=True`；普通学生身份、请求体或开发身份不能赋予管理员权限。无管理员适配器时管理面有意 fail closed 为 403。L1 构建任务的 `triggered_by` 来自 Principal，返回 task ID 前回读待执行任务行，不声称后台实际执行。
+补充管理面与向量检索审计：`/api/admin/*` 已统一要求 Principal 与服务端认证适配器设置的 `flask.g.cpa_admin=True`；普通学生身份、请求体或开发身份不能赋予管理员权限。现在平台自建账号适配器可从实时 MySQL `user_account.role/status` 提供该标志；未配置安全会话密钥或未登录时仍故障关闭。**后续复验修订**：管理员 L1 构建原来虽从 Principal 写 `triggered_by` 并回读任务行，却没有执行器，仍会永久 pending；现在返回 503、不建任务，不能再把该回读视作任务受理。
 
-`/api/pipeline/ext/vector/search` 的 `all` 现在只查公共技能与岗位集合，私有 resume/conversation 或任意集合名拒绝访问。旧私有向量 owner 只在 JSON metadata 中，无法作为 ANN 查询的可靠标量过滤条件；个人向量写接口在校验 Principal/会话后仍返回 501，直到完成数据迁移与分区。公共向量写、init/rebuild 要服务端 admin claim；embedding 不可用时拒绝随机伪向量。
+`/api/pipeline/ext/vector/search` 的 `all` 现在只查公共技能与岗位集合，私有 resume/conversation 或任意集合名拒绝访问。进一步真 HTTP 测出旧 `jd_vectors` 原文会直接公开未发布岗位；现 JD 命中只用作排序线索，返回前重读最新有效 `job_catalog_publication` 快照，原索引 `metadata/text` 不输出，来源不可校验 503。旧私有向量 owner 只在 JSON metadata 中，无法作为 ANN 查询的可靠标量过滤条件；个人向量写接口在校验 Principal/会话后仍返回 501，直到完成数据迁移与分区。公共向量写、init/rebuild 要服务端 admin claim；embedding 不可用时拒绝随机伪向量。现存 Milvus 索引尚无发布摘要版本绑定，不能据此声称向量排序本身已获权威来源验证。
 
 新负测：`D:\Miniconda\miniconda3\envs\mkg\python.exe -B -m pytest -q backend/tests/test_p0_admin_vector_scope.py backend/tests/test_demo_endpoints.py`。
 

@@ -8,6 +8,11 @@
 # ============= 核心框架 =============
 flask>=3.0.0
 flask-cors>=6.0.0
+Flask-Login>=0.6.3,<1  # DB-backed account identity, never client-supplied role
+Flask-Session>=0.8,<1  # Redis server-side, revocable sessions
+Flask-WTF>=1.3,<2  # CSRF for cookie-authenticated writes
+Flask-Limiter>=4.1,<5  # Redis-backed login/registration throttling
+argon2-cffi>=25.1,<26  # Argon2id password hashes
 
 # ============= LLM 相关 =============
 openai>=1.0.0
@@ -27,6 +32,7 @@ neo4j>=5.0.0
 # MySQL
 pymysql>=1.1.0
 sqlalchemy>=2.0.0
+alembic>=1.13,<2  # versioned, explicit MySQL schema migrations
 
 # Redis
 redis>=5.0.0

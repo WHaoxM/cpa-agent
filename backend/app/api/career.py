@@ -674,7 +674,9 @@ def _validate_interest_query(query: str) -> str | None:
 def infer_role_from_skills():
     """从抽取技能推断职业方向 — 与 Interest Explore 分离的 Role Inference 缝。"""
     try:
-        body = request.get_json(silent=True) or {}
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"success": False, "error": "请求体必须是 JSON 对象"}), 400
         skills = body.get("skills") or []
         if not isinstance(skills, list):
             return jsonify({"success": False, "error": "skills 必须为数组"}), 400
@@ -691,10 +693,8 @@ def infer_role_from_skills():
             skills,
             top_k=top_k,
             preferred_role=preferred,
-            mysql_client=get_mysql_client(),
-            neo4j_client=get_neo4j_client(),
         )
-        return jsonify({"success": True, "data": data})
+        return jsonify({"success": True, "status": data.get("status", "complete"), "data": data})
     except Exception as e:
         return jsonify(safe_error("职业方向推断", e, message="服务器内部错误")), 500
 
@@ -705,6 +705,9 @@ def semantic_explore():
     try:
         query = request.args.get('q', '')
         top_k = request.args.get('top_k', 5, type=int)
+        # Match Role Inference's bounded result contract before passing the
+        # value to either MySQL LIMIT or the Milvus search API.
+        top_k = max(1, min(top_k if top_k is not None else 5, 20))
 
         err = _validate_interest_query(query)
         if err:
@@ -966,8 +969,17 @@ def submit_self_assessment():
         assessed_skills = body.get('assessed_skills', [])  # [{skill, level}]
         assessed_abilities = body.get('assessed_abilities', {})
 
-        if not assessed_skills:
+        if not isinstance(assessed_skills, list) or not assessed_skills:
             return jsonify({"success": False, "error": "assessed_skills 不能为空"}), 400
+        if any(
+            not isinstance(item, dict)
+            or not isinstance(item.get('skill'), str)
+            or not item['skill'].strip()
+            or not isinstance(item.get('level'), str)
+            or not item['level'].strip()
+            for item in assessed_skills
+        ):
+            return jsonify({"success": False, "error": "assessed_skills 每项必须包含非空 skill 和 level"}), 400
 
         mysql = get_mysql_client()
 

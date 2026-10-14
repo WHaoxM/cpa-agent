@@ -25,6 +25,7 @@ class KnowledgeBase(Base):
     status = Column(String(20), nullable=False, default='pending', comment='pending/processing/completed/failed')
     file_path = Column(String(500), comment='上传文件路径')
     file_size = Column(Integer, comment='字节')
+    content_sha256 = Column(String(64), comment='私有来源文件 SHA-256')
     content_text = Column(Text, comment='原始内容文本')
     parsed_entities = Column(JSON, comment='解析出的实体 (skills/roles/relations)')
     intent_json = Column(JSON, comment='意图识别结果')
@@ -41,6 +42,7 @@ class KnowledgeBase(Base):
             'status': self.status,
             'file_path': self.file_path,
             'file_size': self.file_size,
+            'content_sha256': self.content_sha256,
             'parsed_entities': self.parsed_entities,
             'intent': self.intent_json,
             'uploaded_by': self.uploaded_by,
@@ -64,6 +66,8 @@ class JobDataset(Base):
     status = Column(String(20), nullable=False, default='pending', comment='pending/processing/completed/failed')
     file_path = Column(String(500))
     file_size = Column(Integer)
+    content_sha256 = Column(String(64), comment='私有来源文件 SHA-256')
+    staged_record_count = Column(Integer, nullable=False, default=0, comment='服务端解析的暂存 JSON 条目数，非权威岗位数量')
     description = Column(Text)
     uploaded_by = Column(String(64), comment='→ user_account.id')
     error_message = Column(Text)
@@ -75,9 +79,12 @@ class JobDataset(Base):
             'id': self.id,
             'title': self.title,
             'count': self.count,
+            'staged_record_count': self.staged_record_count,
             'category': self.category,
             'status': self.status,
             'file_path': self.file_path,
+            'file_size': self.file_size,
+            'content_sha256': self.content_sha256,
             'description': self.description,
             'uploaded_by': self.uploaded_by,
             'created_at': self.created_at.isoformat() if self.created_at else None,

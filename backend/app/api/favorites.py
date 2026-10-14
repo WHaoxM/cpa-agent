@@ -43,7 +43,9 @@ def save_job():
     """收藏岗位（兼容 job_title / jobTitle、match_score / matchScore 等）"""
     try:
         scope = resolve_request_scope()
-        data = request.get_json() or {}
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"success": False, "error": "请求体必须是 JSON 对象"}), 400
         job_id = _pick(data, 'job_id', 'jobId')
         if not isinstance(job_id, str) or not job_id.strip():
             return jsonify({"success": False, "error": "job_id 必填，不能为收藏生成虚构岗位 ID"}), 400
@@ -110,9 +112,11 @@ def add_target_role():
     """添加目标职业方向（兼容 role_name / role）"""
     try:
         scope = resolve_request_scope()
-        data = request.get_json() or {}
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"success": False, "error": "请求体必须是 JSON 对象"}), 400
         role_name = _pick(data, 'role_name', 'role')
-        if not role_name:
+        if not isinstance(role_name, str) or not role_name.strip():
             return jsonify({"success": False, "error": "role_name 必填"}), 400
 
         record_id = favorites_repo.add_target_role(

@@ -218,6 +218,13 @@ def test_fork_rollup_not_sync_on_ask_greeting(monkeypatch):
 def test_ask_enqueues_rollup_at_k8_window(monkeypatch):
     from app.services.agent_runtime.mode_runtime import ModeRuntime
 
+    # This checks rollup scheduling, not provider availability. Keep Ask's
+    # response deterministic so a transient network failure cannot fail it.
+    class FakeLLM:
+        def chat(self, **_kwargs):
+            return "你好，今天想聊什么职业方向？"
+
+    monkeypatch.setattr("app.utils.llm_client.get_llm_client", lambda: FakeLLM())
     calls = []
     monkeypatch.setattr(
         "app.services.agent_runtime.mode_runtime.fork_enqueue",

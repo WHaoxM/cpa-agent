@@ -59,6 +59,7 @@ class MilvusClient:
         self.timeout = timeout
         self._connected = False
         self._client = None
+        self._loaded_collections: set[str] = set()
 
     def connect(self, alias: str = "default") -> bool:
         """连接 Milvus"""
@@ -140,7 +141,23 @@ class MilvusClient:
         """断开连接"""
         self._connected = False
         self._client = None
+        self._loaded_collections.clear()
         logger.info("Milvus 已断开")
+
+    def _ensure_loaded_for_search(self, collection_name: str) -> None:
+        """Milvus Lite may reopen an existing collection in the released state.
+
+        Check once per client/collection rather than adding a state RPC to each
+        hot-path search. If another process releases it later, search retries
+        once after refreshing the state below.
+        """
+        if collection_name in self._loaded_collections:
+            return
+        if hasattr(self._client, "get_load_state"):
+            state = self._client.get_load_state(collection_name)["state"]
+            if getattr(state, "name", "") != "Loaded":
+                self._client.load_collection(collection_name)
+        self._loaded_collections.add(collection_name)
 
     def test_connection(self) -> bool:
         """测试连接"""
@@ -198,26 +215,26 @@ class MilvusClient:
     ) -> List[int]:
         """插入向量数据"""
         try:
+            if len(texts) != len(vectors) or (metadata is not None and len(metadata) != len(texts)):
+                raise ValueError("texts、vectors、metadata 数量必须一致")
+            if not texts:
+                return []
             if not self._connected and not self.connect():
                 raise RuntimeError("Milvus 未连接")
             dim = len(vectors[0]) if vectors and vectors[0] else 1024
             if not self.ensure_collection(collection_name, dimension=dim):
                 raise RuntimeError(f"collection '{collection_name}' 不存在且创建失败")
-            meta_strs = [
-                json.dumps(m, ensure_ascii=False) if m else "{}"
-                for m in (metadata or [{}] * len(texts))
-            ]
-
-            data = {
-                "text": texts,
-                "embedding": vectors,
-                "metadata": meta_strs,
-            }
+            # PyMilvus MilvusClient.insert accepts one dict per entity. A dict
+            # of whole columns is interpreted as one row with a nested vector.
+            data = [{"text": text, "embedding": vector,
+                     "metadata": json.dumps(meta or {}, ensure_ascii=False)}
+                    for text, vector, meta in zip(texts, vectors, metadata or [{}] * len(texts))]
 
             result = self._client.insert(collection_name=collection_name, data=data)
 
             logger.info(f"插入 {len(texts)} 条向量到 {collection_name}")
-            return result.primary_keys
+            ids = result["ids"] if isinstance(result, dict) else result.primary_keys
+            return list(ids)
 
         except Exception as e:
             logger.error(f"插入向量失败: {e}")
@@ -230,15 +247,20 @@ class MilvusClient:
         top_k: int = 10,
         expr: Optional[str] = None,
         output_fields: Optional[List[str]] = None,
+        strict: bool = False,
     ) -> List[Dict[str, Any]]:
         """向量检索"""
         try:
             if not self._connected and not self.connect():
+                if strict:
+                    raise RuntimeError("Milvus 未连接")
                 return []
             if not self._client.has_collection(collection_name):
                 logger.warning(f"集合 {collection_name} 不存在（将尝试创建空集合）")
                 dim = len(query_vector) if query_vector else 1024
                 if not self.ensure_collection(collection_name, dimension=dim):
+                    if strict:
+                        raise RuntimeError(f"Milvus collection '{collection_name}' 不可访问")
                     return []
 
             kwargs: Dict[str, Any] = {
@@ -250,7 +272,17 @@ class MilvusClient:
             if expr:
                 kwargs["filter"] = expr
 
-            results = self._client.search(**kwargs)
+            self._ensure_loaded_for_search(collection_name)
+            try:
+                results = self._client.search(**kwargs)
+            except Exception as e:
+                # A separate process can release a collection after the first
+                # successful search. Retry only this explicit state transition.
+                if "released" not in str(e).lower():
+                    raise
+                self._loaded_collections.discard(collection_name)
+                self._ensure_loaded_for_search(collection_name)
+                results = self._client.search(**kwargs)
 
             formatted_results = []
             for hits in results:
@@ -274,6 +306,8 @@ class MilvusClient:
 
         except Exception as e:
             logger.error(f"向量检索失败: {e}")
+            if strict:
+                raise
             return []
 
     def delete_collection(self, collection_name: str) -> bool:
@@ -283,6 +317,7 @@ class MilvusClient:
                 return False
             if self._client.has_collection(collection_name):
                 self._client.drop_collection(collection_name)
+                self._loaded_collections.discard(collection_name)
                 logger.info(f"集合 {collection_name} 已删除")
             return True
         except Exception as e:

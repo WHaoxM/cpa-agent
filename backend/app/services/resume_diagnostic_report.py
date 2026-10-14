@@ -122,8 +122,15 @@ def _chapter(chapter_id, title, keys, profile, blocks):
             items.extend(_item(key, entry, index, blocks) for index, entry in enumerate(value)
                          if _present(entry))
         elif key == "semantic_facts" and isinstance(value, dict):
-            items.extend(_item(fact, entry, index, blocks) for index, (fact, entry) in enumerate(value.items())
-                         if _present(entry))
+            unmapped = {issue.get("field") for issue in (profile.get("semantic_fact_issues") or [])
+                        if isinstance(issue, dict) and issue.get("reason") == "value_not_in_scoring_category"}
+            for index, (fact, entry) in enumerate(value.items()):
+                if not _present(entry):
+                    continue
+                item = _item(fact, entry, index, blocks)
+                if fact in unmapped:
+                    item["scoring_status"] = "unmapped_category"
+                items.append(item)
         else:
             items.append(_item(key, value, 0, blocks))
     return {"id": chapter_id, "title": title, "items": items}
@@ -176,6 +183,10 @@ def build_resume_diagnostic_report(profile: dict, *, student_id: str) -> dict:
     chapters.append(_chapter("other_facts", "其他已提取事实", other, profile, blocks))
     missing_pages = evidence.get("missing_pages") or []
     limitations = ["岗位方向是基于已确认简历的待核验探索建议；不是实时招聘岗位、正式匹配分或市场需求判断。"]
+    if any(isinstance(issue, dict) and issue.get("field") == "school_tier"
+           and issue.get("reason") == "value_not_in_scoring_category"
+           for issue in (profile.get("semantic_fact_issues") or [])):
+        limitations.append("学校层级原文候选有可引用文字，但其类别不在当前学校评分表内；不可评分，也不推断一本或二本。")
     if missing_pages:
         limitations.append("原文件有未提取页面，本报告仅覆盖用户明确确认的已提取内容。")
     report_id = "resume_" + hashlib.sha256(

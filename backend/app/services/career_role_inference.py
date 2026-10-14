@@ -203,7 +203,7 @@ def fetch_neo4j_role_requirements(neo4j_client: Any) -> List[Dict[str, Any]]:
         return rows
     except Exception as e:
         logger.warning("Neo4j REQUIRES load failed: %s", e)
-        return []
+        raise
 
 
 def skill_document_frequency(role_rows: Sequence[Dict[str, Any]]) -> Dict[str, int]:
@@ -459,6 +459,18 @@ def _evidence_summary(ranked: List[Dict[str, Any]], skill_count: int) -> str:
     )
 
 
+def _with_source_coverage(result: Dict[str, Any], source_coverage: Dict[str, str]) -> Dict[str, Any]:
+    """Do not represent a dependency outage as a healthy empty inference."""
+    failed_sources = [name for name, status in source_coverage.items() if status == "unavailable"]
+    result["source_coverage"] = source_coverage
+    result["failed_sources"] = failed_sources
+    result["status"] = "partial" if failed_sources else ("complete" if result["candidates"] else "empty")
+    if failed_sources:
+        result["next_action"] = "retry_when_sources_available"
+        result["evidence_summary"] += "; partial_sources=" + ",".join(failed_sources)
+    return result
+
+
 def infer_roles_from_skills(
     skills: Sequence[SkillInput],
     *,
@@ -474,22 +486,36 @@ def infer_roles_from_skills(
     → taxonomy vote → preferred boost → rank.
     """
     pairs = normalize_skill_inputs(skills)
+    source_coverage = {
+        "neo4j_requires": "not_queried",
+        "career_insights": "not_queried",
+        "skill_taxonomy": "not_queried",
+    }
     if not pairs:
-        return _empty_result(preferred_role, 0)
+        return _with_source_coverage(_empty_result(preferred_role, 0), source_coverage)
 
     if mysql_client is None:
-        from .db import get_mysql_client
+        try:
+            from .db import get_mysql_client
 
-        mysql_client = get_mysql_client()
+            mysql_client = get_mysql_client()
+        except Exception as e:
+            logger.warning("mysql client unavailable: %s", e)
+            mysql_client = None
+            source_coverage["career_insights"] = "unavailable"
+            source_coverage["skill_taxonomy"] = "unavailable"
 
     taxonomy_names: List[str] = []
-    try:
-        rows = mysql_client.execute(
-            "SELECT skill_name FROM skill_taxonomy LIMIT 2000", {}
-        ) or []
-        taxonomy_names = [str(r.get("skill_name") or "") for r in rows if r.get("skill_name")]
-    except Exception as e:
-        logger.warning("taxonomy name load failed: %s", e)
+    if mysql_client is not None:
+        try:
+            rows = mysql_client.execute(
+                "SELECT skill_name FROM skill_taxonomy LIMIT 2000", {}
+            ) or []
+            taxonomy_names = [str(r.get("skill_name") or "") for r in rows if r.get("skill_name")]
+            source_coverage["skill_taxonomy"] = "available"
+        except Exception as e:
+            logger.warning("taxonomy name load failed: %s", e)
+            source_coverage["skill_taxonomy"] = "unavailable"
 
     skill_weights = canonicalize_skills(pairs, taxonomy_names)
     names = list(skill_weights.keys())
@@ -505,23 +531,32 @@ def infer_roles_from_skills(
 
     role_rows: List[Dict[str, Any]] = []
     if neo4j_client is not None:
-        role_rows = fetch_neo4j_role_requirements(neo4j_client)
+        try:
+            role_rows = fetch_neo4j_role_requirements(neo4j_client)
+            source_coverage["neo4j_requires"] = "available"
+        except Exception:
+            source_coverage["neo4j_requires"] = "unavailable"
+    else:
+        source_coverage["neo4j_requires"] = "unavailable"
 
     acc = score_neo4j_coverage(role_rows, skill_weights)
 
     insight_rows: List[Dict[str, Any]] = []
-    try:
-        insight_rows = mysql_client.execute(
-            """
-            SELECT role_name, core_skills, category, demand_level, entry_difficulty
-            FROM career_insights
-            ORDER BY skill_count DESC
-            LIMIT 80
-            """,
-            {},
-        ) or []
-    except Exception as e:
-        logger.warning("career_insights lookup failed: %s", e)
+    if mysql_client is not None:
+        try:
+            insight_rows = mysql_client.execute(
+                """
+                SELECT role_name, core_skills, category, demand_level, entry_difficulty
+                FROM career_insights
+                ORDER BY skill_count DESC
+                LIMIT 80
+                """,
+                {},
+            ) or []
+            source_coverage["career_insights"] = "available"
+        except Exception as e:
+            logger.warning("career_insights lookup failed: %s", e)
+            source_coverage["career_insights"] = "unavailable"
 
     score_insights_coverage(acc, insight_rows, skill_weights)
 
@@ -529,34 +564,38 @@ def infer_roles_from_skills(
     placeholders = ", ".join(f":s{i}" for i in range(len(names)))
     params = {f"s{i}": n for i, n in enumerate(names)}
     taxonomy_rows: List[Dict[str, Any]] = []
-    try:
-        taxonomy_rows = mysql_client.execute(
-            f"""
-            SELECT skill_name, related_roles, category, heat_score
-            FROM skill_taxonomy
-            WHERE skill_name IN ({placeholders})
-            """,
-            params,
-        ) or []
-    except Exception as e:
-        logger.warning("skill_taxonomy lookup failed: %s", e)
+    if mysql_client is not None:
+        try:
+            taxonomy_rows = mysql_client.execute(
+                f"""
+                SELECT skill_name, related_roles, category, heat_score
+                FROM skill_taxonomy
+                WHERE skill_name IN ({placeholders})
+                """,
+                params,
+            ) or []
+            if source_coverage["skill_taxonomy"] != "unavailable":
+                source_coverage["skill_taxonomy"] = "available"
+        except Exception as e:
+            logger.warning("skill_taxonomy lookup failed: %s", e)
+            source_coverage["skill_taxonomy"] = "unavailable"
 
     score_taxonomy_vote(acc, taxonomy_rows, skill_weights)
     apply_preferred_boost(acc, preferred_role)
 
     ranked = finalize_candidates(acc, top_k=top_k)
     if not ranked:
-        return _empty_result(
+        return _with_source_coverage(_empty_result(
             preferred_role,
             len(names),
             evidence="graph/insights empty after scoring",
-        )
+        ), source_coverage)
 
-    return {
+    return _with_source_coverage({
         "predicted_role": ranked[0]["role_name"],
         "confidence": _confidence_from_ranked(ranked),
         "candidates": ranked,
         "skill_count": len(names),
         "canonical_skills": names,
         "evidence_summary": _evidence_summary(ranked, len(names)),
-    }
+    }, source_coverage)

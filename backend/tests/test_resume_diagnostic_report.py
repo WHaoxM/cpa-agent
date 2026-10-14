@@ -48,6 +48,26 @@ def test_resume_report_preserves_all_facts_without_job_claims():
     assert "match_score" not in text and "salary" not in text
 
 
+def test_unmapped_school_tier_remains_quoted_but_not_presented_as_scoreable():
+    profile = _profile()
+    profile["semantic_facts"] = {"school_tier": {
+        "value": "其他理工", "evidence": "其他理工", "source_sha256": "source-hash",
+    }}
+    profile["semantic_fact_issues"] = [{
+        "field": "school_tier", "reason": "value_not_in_scoring_category",
+    }]
+    profile["semantic_fact_next_action"] = "review_unmapped_scoring_category"
+    profile["_resume_confirmation"]["source_evidence"]["blocks"][0]["text"] += " 其他理工"
+
+    report = build_resume_diagnostic_report(profile, student_id="student_test")
+    chapter = next(item for item in report["chapters"] if item["id"] == "semantic_evidence")
+    school = next(item for item in chapter["items"] if item["id"] == "school_tier_0")
+    assert school["fields"]["value"] == "其他理工"
+    assert school["evidence_refs"][0]["quote"] == "其他理工"
+    assert school["scoring_status"] == "unmapped_category"
+    assert any("学校层级" in item and "不可评分" in item for item in report["limitations"])
+
+
 def test_semantic_synthesis_requires_existing_evidence_ids():
     report = build_resume_diagnostic_report(_profile(), student_id="student_test")
     class Client:

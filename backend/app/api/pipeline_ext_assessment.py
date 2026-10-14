@@ -49,8 +49,18 @@ def submit_self_assessment():
         answers = data.get('answers', [])
         target_role = data.get('target_role', '')
 
-        if not answers:
+        if not isinstance(answers, list) or not answers:
             return jsonify({"success": False, "error": "answers 不能为空"}), 400
+        if any(
+            not isinstance(answer, dict)
+            or not isinstance(answer.get('skill'), str)
+            or not answer['skill'].strip()
+            or isinstance(answer.get('level'), bool)
+            or not isinstance(answer.get('level'), int)
+            or not 0 <= answer['level'] <= 5
+            for answer in answers
+        ):
+            return jsonify({"success": False, "error": "answers 每项必须包含非空 skill 和 0 至 5 的整数 level"}), 400
 
         student_id = resolve_request_scope().student_id
         from ..services.db import get_mysql_client

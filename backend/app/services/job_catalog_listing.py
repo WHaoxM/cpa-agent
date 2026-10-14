@@ -91,6 +91,19 @@ def list_published_job_candidates(mysql, *, limit=20, offset=0, now=None):
                 "publication_status": "published",
                 "vacancy_validity": "unknown",
             })
+        # The catalog is intentionally read without holding a transaction
+        # across page assembly. Recheck its marker so a concurrent publication
+        # or revocation of another job cannot make this page look current under
+        # the marker captured above.
+        final_state = mysql.fetch_all(
+            "SELECT COUNT(*) AS row_count, COALESCE(MAX(id), 0) AS max_id, "
+            "COALESCE(SUM(CASE WHEN status='published' THEN id ELSE 0 END), 0) AS published_id_sum, "
+            "COALESCE(SUM(CASE WHEN status='revoked' THEN id ELSE 0 END), 0) AS revoked_id_sum "
+            "FROM job_catalog_publication")[0]
+        final_marker = ":".join(str(final_state[key]) for key in
+                                ("row_count", "max_id", "published_id_sum", "revoked_id_sum"))
+        if final_marker != marker:
+            return _unavailable("catalog_changed_during_read")
     except (ValueError, KeyError, SQLAlchemyError):
         return _unavailable("catalog_integrity_unavailable")
 

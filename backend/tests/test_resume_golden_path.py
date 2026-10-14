@@ -183,6 +183,8 @@ def test_upload_confirm_and_page_l2_share_agent_runner(monkeypatch, parsed, tmp_
     def principal():
         g.cpa_principal = identity
     client = app.test_client()
+    malformed = client.post("/api/profile/student/confirm", json=["not", "an", "object"])
+    assert malformed.status_code == 400
     response = client.post("/api/profile/student/upload", data={"file": (BytesIO(b"fixture"), "resume.pdf")})
     assert response.status_code == 200
     data = response.json["data"]

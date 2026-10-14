@@ -1,10 +1,10 @@
 # cpa-xingtu API Catalog（理想 FE 契约）
 
 Status: active  
-Last updated: 2026-07-18  
+Last updated: 2026-10-13
 标签定义：[status-legend.md](status-legend.md)
 
-按域列出产品需要的 method/path。状态依据后端路由 + 2026-07-18 真库冒烟；**不表示前端已接线**。
+按域列出产品需要的 method/path。状态依据后端路由及随后逐域真库复验；**不表示前端已接线**。
 
 公共 envelope：`{ "success": true|false, "data"?: ..., "error"?: string, "message"?: string, "count"?: number }`
 
@@ -14,7 +14,9 @@ Last updated: 2026-07-18
 
 | Method Path | 用途 | Fixture | BE 状态 | 备注 |
 |-------------|------|---------|---------|------|
-| （无）登录校验 | 本地 `mockUsers` | `auth/users.json` | backend-gap | 产品接受无 `/api/auth` |
+| `GET /api/auth/csrf` | 获取会话 CSRF token | — | backend-ready | 自建账号真 HTTP + MySQL/Redis 已验；页面仍使用 mock 登录，未接线 |
+| `POST /api/auth/register`、`/login`、`/logout`、`GET /me` | 学生开户、登录、登出、当前身份 | — | backend-ready | 管理员仅可信本机 CLI 开户；需强 `SECRET_KEY`、Redis、账号迁移与 HTTPS/cookie 配置；页面未接线，不可继续把 mock 身份当正式身份 |
+| `POST /api/auth/change-password` | 已登录账号自助改密 | — | backend-ready | 当前密码与 CSRF 必需；成功后所有设备会话失效并需重新登录；无密码找回入口，页面未接线 |
 
 ---
 
@@ -30,7 +32,7 @@ Last updated: 2026-07-18
 | `GET /api/career/learning-path` | 学习路径列表 | `career/learning-path.list.json` | backend-ready | |
 | `GET /api/career/paths` | 晋升路径 | `career/paths.json` | backend-ready | |
 | `GET /api/career/transfer` | 转岗 | `career/transfer.json` | backend-ready | |
-| `POST /api/career/assessment` | 技能自评提交 | `career/assessment.create.json` | backend-ready | 与 exams 页相关 |
+| `POST /api/career/assessment` | 技能自评提交 | `career/assessment.create.json` | field-mismatch | 当前 Exams 页面传 `assessed_skills: string[]`（弱项名）；后端要求 `[{skill, level}]`，HTTP 模式会返回 400，尚未决定权威转换契约 |
 | `GET /api/career/assessment/<student_id>` | 最新自评 | `career/assessment.latest.json` | backend-ready | |
 | `GET /api/career/role-intro?role=` | 能力图谱角色简介 | `ability/role-intro.frontend.json` | backend-ready | 拼 `career_insights`；无匹配 `data:null`；无 Python 业务兜底文案 |
 
@@ -44,9 +46,9 @@ Last updated: 2026-07-18
 | `GET /api/profile/student/<student_id>` | 学生档案 | `profile/student.detail.json` | backend-ready | |
 | `PATCH /api/profile/student/<student_id>` | 更新账号资料 | — | backend-ready | user_account + 可选同步 student_profile 列 |
 | `GET /api/profile/student/<student_id>/basic` | 基础字段 | `profile/student.basic.json` | backend-ready | |
-| `GET /api/profile/job/<portrait_id>` | 岗位画像 | `profile/job.job_001.json` | backend-ready | smoke PASS |
-| `GET /api/profile/job/list` | 岗位列表 | `profile/job.list.json` | backend-ready | |
-| `GET /api/profile/job/search` | 岗位搜索 | `profile/job.search.json` | backend-ready | |
+| `GET /api/profile/job/<portrait_id>` | 岗位详情 | `profile/job.job_001.json` | field-mismatch | 可评分发布快照与 `source_csb_` 来源原文是两层；后者 `portrait_json:null`、`match_eligible:false`，不承诺 fixture 的四维权重/title 字段 |
+| `GET /api/profile/job/list` | 岗位列表 | `profile/job.list.json` | field-mismatch | 可评分发布摘要及独立 `source_only` 目录；来源后台核验不可用时 `status=partial`、`failed_sources`，仍保留已发布候选，页面必须提示不完整并区分不可评分/匹配；旧画像行不公开 |
+| `GET /api/profile/job/search` | 岗位搜索 | `profile/job.search.json` | field-mismatch | 仅按已审核岗位名搜索；来源专用岗位不可评分；不公开旧 job_posting 的公司/分类/薪资 |
 | `POST /api/profile/student/upload` | 简历上传触 L0 | — | heavy-excluded | 真解析管线 |
 
 ---
@@ -73,7 +75,7 @@ Last updated: 2026-07-18
 | `GET /api/report/<report_id>` | 报告详情 | `report/detail.report_001.json` | backend-ready | |
 | `GET /api/report/<report_id>/export?format=` | 导出 | — | backend-ready | |
 | `GET /api/report/<report_id>/progress` | 生成进度 | — | backend-ready | |
-| `POST /api/report/generate` | 触发生成 | — | heavy-excluded | DEMO_MODE=false 触 L4 |
+| `POST /api/report/generate` | 触发生成 | — | heavy-excluded | DEMO_MODE=false 触 L4；`source_csb_` 返回 `409 job_source_only_unscored`，不建报告 |
 
 前端 stub 曾写 `/api/reports` + `userId` → 理想契约已统一为上表（`GET /api/report/list?student_id=`）。
 
@@ -115,7 +117,7 @@ Last updated: 2026-07-18
 | `GET /api/pipeline/list` | 管线目录 | `pipeline/list.json` | backend-ready | |
 | `POST /api/pipeline/ext/parse/text` | 粘贴简历解析 | `pipeline/parse.text.json` | backend-ready | 职途导航 / 简历页轻量 |
 | `POST /api/pipeline/ext/parse/upload/resume` | 文件抽文本 | — | backend-ready | 偏 I/O，demo 可用 fixture |
-| `POST /api/pipeline/trigger` | 触发 L0–L4 | — | heavy-excluded | |
+| `POST /api/pipeline/trigger` | 旧管线启动 | — | backend-gap | strict 模式执行器未接入，503 且不建任务；demo 仅 partial 预览 |
 | `GET /api/pipeline/status/<task_id>` | 任务状态 | `pipeline/status.sample.json` | backend-ready | 读状态可测 |
 | `POST /api/pipeline/ext/exams` | 试卷提交 | `pipeline/exams.create.json` | backend-ready | 前端未接 |
 | `GET /api/pipeline/ext/exams/<id>` | 试卷结果 | `pipeline/exams.detail.json` | backend-ready | |
@@ -130,8 +132,9 @@ Last updated: 2026-07-18
 | `GET /api/match/result/<student_id>/<job_portrait_id>` | 匹配结果 | `match/result.json` | backend-ready | 权威分数 |
 | `GET /api/match/skill-gap/...` | 技能缺口 | `match/skill-gap.json` | backend-ready | 含 evidence / keyword_coverage |
 | `GET /api/match/explain/<student_id>/<job_portrait_id>` | 可解释匹配 | `match/explain.json` | backend-ready | **不计分**；只读 total_score |
-| `POST /api/match/hybrid-candidates` | Hybrid 召回 | `match/hybrid-candidates.json` | backend-ready | RRF；返回 retrieve_score |
-| `GET /api/match/career-recommendation/<student_id>` | 方向推荐 | `match/career-recommendation.json` | backend-ready | |
+| `POST /api/match/hybrid-candidates` | Hybrid 召回 | `match/hybrid-candidates.json` | field-mismatch | RRF 只融合当前已发布且摘要有效岗位及公共职业方向；岗位带 `candidate_kind=published_job`/版本/摘要，方向带 `candidate_kind=role`、`match_eligible=false`；旧 fixture 的 `job_001` 不证明已发布，真实目录为空时可仅返回方向。`retrieve_score` 不是匹配分 |
+| `POST /api/pipeline/ext/vector/search` | 公共向量检索 | — | backend-ready | JD 命中只返回当前已发布岗位投影；技能命中须绑定当前 MySQL taxonomy 结构/摘要，污染行过滤并标 `partial`；私有 resume/conversation 403 |
+| `GET /api/match/career-recommendation/<student_id>` | 职业路径参考 | — | field-mismatch | strict 模式只基于已验证 L3 岗位和公共图谱给**通用**路径，`recommended_dir=null`、`personalized_recommendation_verified=false`；无 L3 为 404，撤回为 409；旧个性化推荐契约不可直接接用 |
 
 ---
 
@@ -140,13 +143,18 @@ Last updated: 2026-07-18
 | Method Path | 用途 | Fixture | BE 状态 | 备注 |
 |-------------|------|---------|---------|------|
 | `GET /api/admin/dataset` | 岗位数据集列表 | `admin/dataset.list.json` | backend-ready | |
-| `POST /api/admin/dataset/upload` | 上传元数据 | `admin/dataset.upload.ok.json` | backend-ready | JSON 元数据 |
+| `POST /api/admin/dataset/upload` | JSON 创建元数据；multipart 私有来源暂存 | `admin/dataset.upload.ok.json` | field-mismatch | 当前前端仍用 JSON metadata；multipart JSON 文件仅写私有来源与 staged_record_count，真实 count=0、pending、content_ingested=false，不发布岗位或建图 |
 | `DELETE /api/admin/dataset/<id>` | 删除 | `admin/dataset.delete.ok.json` | backend-ready | |
 | `GET /api/admin/knowledge-base` | KB 列表 | `admin/kb.list.json` | backend-ready | |
-| `POST /api/admin/knowledge-base/upload` | KB 上传元数据 | `admin/kb.upload.ok.json` | backend-ready | |
+| `POST /api/admin/knowledge-base/upload` | JSON 创建元数据；multipart 私有文本暂存 | `admin/kb.upload.ok.json` | field-mismatch | 当前前端仍用 JSON metadata；multipart TXT 文件可私有暂存并管理员回读，pending、content_ingested=false；旧 fixture 不代表正文入图谱 |
 | `DELETE /api/admin/knowledge-base/<id>` | 删除 | `admin/kb.delete.ok.json` | backend-ready | |
 | `POST /api/admin/knowledge-base/smart-upload` | 智能入库 | — | heavy-excluded | 含解析 |
-| `POST /api/admin/pipeline/build` | 管理端建图 | — | heavy-excluded | |
+| `POST /api/admin/pipeline/build` | 管理端建图 | — | backend-gap | 来源内容与执行器未接入，503 且不建任务 |
+| `GET /api/admin/job-reviews`、`/<review_id>` | 管理员回看模型岗位审查及阻断原因 | — | backend-ready | 真 HTTP + MySQL/Redis 已验；仅只读模型审计，现存五条均 blocked，不能直接发布；页面未接线 |
+| `POST /api/admin/job-source-listings`、`POST /<id>/revoke` | 精确核对官方原文后独立展示/撤回不可评分岗位 | — | backend-ready | 真 HTTP + MySQL/Redis 已验；必须正式管理员+CSRF；`source_csb_` 不参与匹配/报告，页面未接线；见 `docs/specs/source-only-job-catalog.md` |
+| `GET /api/admin/job-source-listings`、`/<id>` | 回看来源专用岗位版本及原文 | — | backend-ready | 含已撤回版本；仅正式管理员；响应不缓存；页面未接线 |
+| `POST /api/admin/job-publications/preview`、`POST /api/admin/job-publications` | 账号管理员预检、人工确认并发布精确岗位快照 | — | backend-ready | 真 HTTP + MySQL/Redis 已验；需要已登录 admin、CSRF、来源逐字段证据和明确确认；页面未接线，不等于自动核验招聘真实性 |
+| `GET /api/admin/job-publications`、`/<id>`、`POST /<id>/revoke` | 发布版本回看和精确撤回 | — | backend-ready | 仅正式管理员；撤回后公共目录与 L3/L4 不回退旧版本 |
 
 ---
 
@@ -181,4 +189,4 @@ Last updated: 2026-07-18
 3. ~~target-role-market 字段过少~~ → BE 补齐 hotCities / skillTags 等；FE `mergeTargetRoleMarket` 兜底
 4. ~~report `/api/reports`~~ → FE 已改 `/api/report/list?student_id=`
 
-当前 catalog **无未决 field-mismatch**。
+**未决（2026-10-13 实码核对）**：Exams 页面提交的 `assessed_skills` 是弱项名称 `string[]`，而 `/api/career/assessment` 后端需要带等级的 `{skill, level}[]`。不能凭“路由存在/测试通过”标为已接通，也不能默默把弱项推断成某个自评等级。

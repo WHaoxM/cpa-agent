@@ -86,9 +86,20 @@ def test_live_publication_match_report_roundtrip(monkeypatch):
                    {"jid": jid}, commit=True)
         stale_match = client.get(match_url)
         stale_report = client.get(report_url)
+        stale_progress = client.get(f"{report_url}/progress")
+        stale_list = client.get("/api/report/list")
+        stale_task = client.get(f"/api/report/task/{report['task_id']}")
         assert stale_match.status_code == stale_report.status_code == 409
         assert "total_score" not in stale_match.get_data(as_text=True)
         assert "match_snapshot" not in stale_report.get_data(as_text=True)
+        # These legacy read routes currently bypass the same authoritative
+        # source gate used by detail/export and can present revoked artifacts as live.
+        assert stale_progress.status_code == 409
+        assert stale_progress.get_json()["status"] == "stale"
+        assert all(row["report_id"] != report["report_id"]
+                   for row in stale_list.get_json()["data"])
+        assert stale_task.status_code == 409
+        assert report["report_id"] not in stale_task.get_data(as_text=True)
         denied = pipeline.PipelineRunner().run("L3_run_match", {"student_id": sid, "job_id": jid})
         assert denied["reason"] == "catalog_publication_unavailable"
         denied_report = pipeline.PipelineRunner().run("L4_generate_report", {"student_id": sid, "job_id": jid})

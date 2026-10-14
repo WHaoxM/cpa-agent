@@ -200,8 +200,10 @@ def career_suggestions():
 def growth_analysis():
     """POST /api/ai/growth-analysis — AIAnalysisResult。"""
     try:
-        data = request.get_json() or {}
         user_id = resolve_request_scope().student_id
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"success": False, "error": "请求体必须是 JSON 对象", "data": None}), 400
         report_ids = data.get("reportIds") or data.get("report_ids") or []
         if (not isinstance(report_ids, list) or len(report_ids) > 10
                 or any(not isinstance(rid, str) or not rid or len(rid) > 128 for rid in report_ids)):

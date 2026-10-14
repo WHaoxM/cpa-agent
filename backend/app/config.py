@@ -81,6 +81,8 @@ class Config:
     DEMO_MODE = os.environ.get('CPA_DEMO_MODE', 'true').lower() in ('1', 'true', 'yes', 'on')
     DEMO_STUDENT_ID = os.environ.get('CPA_DEMO_STUDENT_ID', 'student_001')
     DEMO_PRINCIPAL_ID = os.environ.get('CPA_DEMO_PRINCIPAL_ID', f'demo:{DEMO_STUDENT_ID}')
+    # Cookie account auth defaults to HTTPS-only. Explicitly disable only for local HTTP.
+    CPA_AUTH_COOKIE_SECURE = os.environ.get('CPA_AUTH_COOKIE_SECURE', 'true').lower() not in ('0', 'false', 'no', 'off')
     ENABLE_LEGACY_AGENT_ENGINES = (
         os.environ.get('CPA_ENABLE_LEGACY_AGENT_ENGINES', 'false').lower()
         in ('1', 'true', 'yes', 'on')

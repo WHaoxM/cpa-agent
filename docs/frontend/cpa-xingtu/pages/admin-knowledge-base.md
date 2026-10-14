@@ -61,8 +61,7 @@ GET /api/admin/knowledge-base
 ```json
 {
   "title": "职业路径补充",
-  "type": "career_path",
-  "status": "draft"
+  "type": "text"
 }
 ```
 
@@ -71,9 +70,11 @@ GET /api/admin/knowledge-base
 ```json
 {
   "success": true,
-  "data": { "id": "kb_new_001", "message": "ok" }
+  "data": { "id": "kb_new_001", "status": "pending", "content_ingested": false, "message": "元数据已创建，内容未入库" }
 }
 ```
+
+当前页面的 JSON 调用只写入知识库元数据，不上传或解析正文；新记录的 `status` 由服务端置为 `pending`，客户端传入的状态不生效。响应明确标 `content_ingested=false`；`title` 与可选 `type` 在写库前校验，非法输入返回 400。后端另有 multipart TXT 私有暂存及管理员内容回读，但本页尚未接线，不执行实体解析/入图。见 `docs/specs/admin-source-staging.md`。
 
 **Fixture:** `cpa-xingtu/public/fixtures/admin/kb.upload.ok.json`  
 **Client 建议:** `api.admin.uploadKnowledgeBase(meta)`

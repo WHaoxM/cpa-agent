@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import os
 
-from flask import Flask, g, request
+from flask import Flask, current_app, g, request
 
 from ..utils.logger import get_logger
 
@@ -49,6 +49,10 @@ class DevAuthMiddleware:
         from ..api._helpers import Principal
         from ..config import Config
 
+        # A configured platform account adapter is authoritative even on loopback.
+        # Never let a development header become an alternate login path.
+        if current_app.extensions.get("cpa_account_auth_enabled", False):
+            return
         # demo 模式或已有认证适配器设置的 principal → 跳过
         if getattr(Config, "DEMO_MODE", True):
             return

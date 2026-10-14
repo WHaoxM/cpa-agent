@@ -61,16 +61,6 @@ def create_app(config_class=Config):
     def health():
         return {'status': 'ok', 'service': 'CPA-Agent Backend'}
 
-    @app.route('/api/admin/python-info')
-    def python_info():
-        """检查 Flask 使用的 Python 信息"""
-        import sys
-        return {
-            'python_executable': sys.executable,
-            'python_version': sys.version,
-            'python_path': sys.path[:5],
-        }
-
     @app.route('/metrics')
     def metrics():
         """性能监控指标"""
@@ -105,6 +95,9 @@ def create_app(config_class=Config):
     app.register_blueprint(ability_bp, url_prefix='/api')
     app.register_blueprint(ai_bp, url_prefix='/api/ai')
     app.register_blueprint(roles_bp, url_prefix='/api/roles')
+
+    from .middleware.account_auth import install_account_auth
+    install_account_auth(app)
 
     try:
         from .services.agent_runtime.schema_ensure import ensure_runtime_schema

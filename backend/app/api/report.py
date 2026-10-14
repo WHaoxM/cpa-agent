@@ -14,6 +14,7 @@ from ._helpers import (
 )
 from ..config import Config
 from ..services.db import get_mysql_client
+from ..services.job_source_listing import is_source_only_id
 from ..utils.logger import get_logger
 
 logger = get_logger('cpa-agent.api.report')
@@ -196,19 +197,26 @@ def _save_demo_report(mysql, report: dict) -> None:
 @report_bp.route('/generate', methods=['POST'])
 def generate_report():
     """生成职业发展报告 (L4 管线)"""
-    data = request.get_json() or {}
     try:
         scope = resolve_request_scope()
     except ScopeError as e:
         return scope_error_response(e)
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"success": False, "error": "请求体必须是 JSON 对象"}), 400
     student_id = scope.student_id
     job_portrait_id = data.get('job_portrait_id') or data.get('job_id')
 
-    if not job_portrait_id:
+    if (not isinstance(job_portrait_id, str) or not job_portrait_id.strip()
+            or len(job_portrait_id) > 64):
         return jsonify({
             "success": False,
-            "error": "job_portrait_id 必填"
+            "error": "job_portrait_id 必须是 1–64 字符的非空文本"
         }), 400
+    job_portrait_id = job_portrait_id.strip()
+    if is_source_only_id(job_portrait_id):
+        return jsonify({"success": False, "code": "job_source_only_unscored",
+                        "error": "该岗位仅供查看官方来源，暂不可生成匹配报告"}), 409
 
     report_id = f"report_{uuid.uuid4().hex[:12]}"
 
@@ -263,7 +271,10 @@ def generate_report():
             return jsonify({
                 "success": False, "status": status,
                 "data": {"task_id": report_result["task_id"], "status": status,
-                         "report_id": None, "message": report_result.get("summary") or "报告尚未生成"},
+                         "report_id": None,
+                         "reason": report_result.get("reason"),
+                         "next_action": report_result.get("next_action"),
+                         "message": report_result.get("summary") or "报告尚未生成"},
             })
         except Exception as e:
             logger.error("报告任务回读失败: %s", e)
@@ -481,7 +492,7 @@ def list_reports():
             count_where = "WHERE 1=1"
             count_params = {}
 
-        if status:
+        if status and Config.DEMO_MODE:
             where_clause += " AND cr.status = :status"
             params["status"] = status
             count_where += " AND status = :status"
@@ -502,14 +513,29 @@ def list_reports():
         FROM career_report cr
         {where_clause}
         ORDER BY cr.created_at DESC
-        LIMIT :limit OFFSET :offset
         """
-
-        results = mysql.execute(sql, params)
-
-        count_sql = f"SELECT COUNT(*) as total FROM career_report {count_where}"
-        count_result = mysql.execute(count_sql, count_params)
-        total = count_result[0]['total'] if count_result else 0
+        if Config.DEMO_MODE:
+            results = mysql.execute(sql + " LIMIT :limit OFFSET :offset", params)
+            count_result = mysql.execute(
+                f"SELECT COUNT(*) as total FROM career_report {count_where}", count_params)
+            total = count_result[0]['total'] if count_result else 0
+        else:
+            # Filter against current authoritative sources *before* applying
+            # pagination. Paginating persisted rows first produces short/empty
+            # pages even when later verified reports exist.
+            from ..services.agent_runtime.match_report_resources import read_match_report_resource
+            current = []
+            for report in mysql.execute(sql, {"student_id": student_id}):
+                resource = read_match_report_resource(
+                    mysql, student_id=scope.student_id,
+                    uri=f"career://me/reports/{report['report_id']}")
+                if not resource.get("business_artifact_verified"):
+                    continue
+                report["status"] = resource["status"]
+                if not status or report["status"] == status:
+                    current.append(report)
+            total = len(current)
+            results = current[offset:offset + limit]
 
         return jsonify({
             "success": True,
@@ -557,6 +583,16 @@ def get_report_progress(report_id: str):
 
         report = results[0]
         status = report.get('status', 'pending')
+        if not Config.DEMO_MODE:
+            from ..services.agent_runtime.match_report_resources import read_match_report_resource
+            resource = read_match_report_resource(
+                mysql, student_id=scope.student_id, uri=f"career://me/reports/{report_id}")
+            if not resource.get("business_artifact_verified"):
+                return jsonify({"success": False, "status": "stale", "data": {
+                    "report_id": report_id, "reason": resource.get("reason"),
+                    "next_action": resource.get("next_action"),
+                }}), 409
+            status = resource["status"]
 
         progress = report.get('progress')
         if progress is None:
@@ -631,6 +667,16 @@ def get_report_task(task_id: str):
 
         task['params_json'] = parse_json_field(task.get('params_json'))
         task['result_json'] = parse_json_field(task.get('result_json'))
+        report_id = task['result_json'].get('report_id') if isinstance(task['result_json'], dict) else None
+        if report_id and not Config.DEMO_MODE:
+            from ..services.agent_runtime.match_report_resources import read_match_report_resource
+            resource = read_match_report_resource(
+                mysql, student_id=scope.student_id, uri=f"career://me/reports/{report_id}")
+            if not resource.get("business_artifact_verified"):
+                return jsonify({"success": False, "status": "stale", "data": {
+                    "task_id": task_id, "reason": resource.get("reason"),
+                    "next_action": resource.get("next_action"),
+                }}), 409
 
         return jsonify({
             "success": True,

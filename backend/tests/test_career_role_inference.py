@@ -163,6 +163,68 @@ def test_infer_end_to_end_with_fakes():
     assert out["predicted_role"] != "随便岗"
 
 
+def test_infer_distinguishes_healthy_empty_from_failed_dependencies():
+    class EmptyMySQL:
+        def execute(self, _sql, _params=None):
+            return []
+
+    class FailedMySQL:
+        def execute(self, _sql, _params=None):
+            raise OSError("mysql unavailable")
+
+    class EmptyNeo4j:
+        def execute_query(self, *_args, **_kwargs):
+            return []
+
+    skill = ["__never_catalogued_skill__"]
+    empty = infer_roles_from_skills(
+        skill, mysql_client=EmptyMySQL(), neo4j_client=EmptyNeo4j(),
+    )
+    assert empty["status"] == "empty"
+    assert empty["failed_sources"] == []
+    assert empty["source_coverage"] == {
+        "neo4j_requires": "available",
+        "career_insights": "available",
+        "skill_taxonomy": "available",
+    }
+
+    partial = infer_roles_from_skills(
+        skill, mysql_client=FailedMySQL(), neo4j_client=EmptyNeo4j(),
+    )
+    assert partial["status"] == "partial"
+    assert partial["candidates"] == []
+    assert set(partial["failed_sources"]) == {"career_insights", "skill_taxonomy"}
+    assert partial["source_coverage"]["neo4j_requires"] == "available"
+    assert partial["next_action"] == "retry_when_sources_available"
+
+
+def test_infer_retains_fallback_candidates_but_marks_failed_graph_partial():
+    class TaxonomyMySQL:
+        def execute(self, sql, _params=None):
+            if "related_roles" in sql:
+                return [
+                    {"skill_name": skill, "related_roles": '["后端开发"]',
+                     "category": "后端", "heat_score": 0.9}
+                    for skill in ("Python", "SQL")
+                ]
+            if "FROM skill_taxonomy" in sql:
+                return [{"skill_name": skill} for skill in ("Python", "SQL")]
+            return []
+
+    class FailedNeo4j:
+        def execute_query(self, *_args, **_kwargs):
+            raise OSError("neo4j unavailable")
+
+    out = infer_roles_from_skills(
+        ["Python", "SQL"], mysql_client=TaxonomyMySQL(), neo4j_client=FailedNeo4j(),
+    )
+    assert out["predicted_role"] == "后端开发"
+    assert out["candidates"]
+    assert out["status"] == "partial"
+    assert out["failed_sources"] == ["neo4j_requires"]
+    assert out["source_coverage"]["skill_taxonomy"] == "available"
+
+
 def test_explore_rejects_resume_blob(monkeypatch):
     from app import create_app
 
@@ -175,6 +237,29 @@ def test_explore_rejects_resume_blob(monkeypatch):
     resp = client.get("/api/career/explore", query_string={"q": blob, "top_k": 5})
     assert resp.status_code == 400
     assert "infer-role" in resp.get_json()["error"]
+
+
+def test_explore_bounds_top_k_before_database_calls(monkeypatch):
+    from app import create_app
+
+    calls = []
+    monkeypatch.setattr(career_api, "_cache_get", lambda key: None)
+    monkeypatch.setattr(career_api, "_cache_set", lambda *args: None)
+    monkeypatch.setattr(
+        career_api,
+        "_mysql_fuzzy_match",
+        lambda query, top_k: calls.append(top_k) or [],
+    )
+    monkeypatch.setattr(career_api, "_milvus_semantic_match", lambda *args: [])
+    client = create_app().test_client()
+
+    for requested, expected in ((-5, 1), (0, 1), (999, 20)):
+        response = client.get(
+            "/api/career/explore", query_string={"q": "creative writing", "top_k": requested}
+        )
+        assert response.status_code == 200
+        assert response.get_json()["success"] is True
+        assert calls[-1] == expected
 
 
 def test_infer_role_endpoint(monkeypatch):
@@ -207,6 +292,21 @@ def test_infer_role_endpoint(monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.get_json()["data"]["predicted_role"] == "RAG工程师"
+
+
+def test_infer_role_rejects_non_object_json_before_dependencies(monkeypatch):
+    from app import create_app
+
+    def unexpected_dependency():
+        raise AssertionError("malformed request must not access dependencies")
+
+    monkeypatch.setattr(career_api, "get_mysql_client", unexpected_dependency)
+    monkeypatch.setattr(career_api, "get_neo4j_client", unexpected_dependency)
+    client = create_app().test_client()
+    for body in (["RAG"], 3):
+        response = client.post("/api/career/infer-role", json=body)
+        assert response.status_code == 400
+        assert response.get_json()["success"] is False
 
 
 def test_normalize_skill_inputs_dedupes():

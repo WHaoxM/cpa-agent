@@ -76,7 +76,7 @@
 
 两个能力决定了 CPA-Agent 与通用 Chatbot 的本质差异：
 
-- 🧭 **L0–L4 分层管线。** 简历解析、图谱构建、画像生成、人岗匹配、报告生成各自独立、又可串联调度。每层有明确的输入输出与 `pipeline_task` 状态追踪，适合高校场景下的批处理与异步任务。
+- 🧭 **L0–L4 分层管线。** 简历解析、图谱构建、画像生成、人岗匹配、报告生成有独立业务边界与 `pipeline_task` 状态追踪。当前主链仍以同步入口执行；专用 L0 简历导入与 L3 匹配入口具备 MySQL 持久意图、Celery 消费和重放。其余旧异步触发入口在 strict 模式返回 503，不创建永久等待任务；L1/L2/L4 的可靠异步调度仍待完成。
 - 🤖 **多模式 Agent + 13 工具。** 默认运行时为 **Supervisor 编排器**（Ask / Agent / Experts 三种交互模式，Plan 步骤 + 黑板 + 记忆分库 + PreToolUse 门禁）。旧 LangGraph（单体）/ ReAct 引擎默认关闭，仅 demo 开关显式启用。Agent 可调用图谱查询、语义检索、管线触发等 13 个工具，在推理与确定性业务逻辑之间保持边界清晰。
 
 ## 🔄 工作流程
@@ -123,7 +123,18 @@ cd backend
 python run.py      # http://localhost:5001
 ```
 
-仓库根目录 `.env` 的 `CPA_DEMO_MODE=false` 表示 strict 身份模式：默认不会从请求体、查询参数或内置学号自动推断用户。仅在本机开发调试且明确设置 `CPA_DEV_AUTH=1` 时，loopback 请求可通过 `X-Dev-Student-Id` 请求头注入临时 Principal；正式认证应由服务端认证适配器提供。
+严格模式的专用 `POST /api/pipeline/l3/run-match` 使用 MySQL 持久意图和 `cpa.pipeline` Celery 队列，不随 Flask 进程内执行。先按 [MySQL 统一迁移](docs/runbooks/mysql-migrations.md) 在 `backend/` 运行 `python -B -m alembic -c alembic.ini upgrade head`；再分别启动 `python -B -m celery -A app.services.agent_runtime.media.jobs:celery_app worker --pool=solo --concurrency=1 --queues=cpa.pipeline --loglevel=INFO` 和 `python -B -m celery -A app.services.agent_runtime.media.jobs:celery_app beat --loglevel=INFO`。Beat 默认每 60 秒触发有界 MySQL 恢复扫描；缺 Beat 时故障任务只能按 [Pipeline 派发与恢复边界](docs/guides/pipeline-dispatch-boundary.md) 手动重放。其他旧启动入口仍不可用。当前真实岗位发布目录为空，不能把接口可运行理解为已有可匹配岗位。
+
+职途导航的真实简历导入另有专用 `POST /api/profile/student/upload?async=1`：文件或粘贴文字经同一 L0 持久任务进入 `cpa.pipeline` worker，由文档、结构、实体、证据四个实际职责接力；`GET /api/pipeline/trace/<task_id>` 提供归属校验后的交接轨迹和四个已完成检查点百分比。解析前沿用演示版页面布局，处理中在原预览/仪表盘位置动态呈现；候选仍须人工核对，轨迹/百分比不代表已评分。首次启用须完成 Alembic 迁移，详见 [L0 多 Agent 轨迹](docs/guides/resume-agent-team-trace.md)。
+
+仓库根目录 `.env` 的 `CPA_DEMO_MODE=false` 表示 strict 身份模式：默认不会从请求体、查询参数或内置学号自动推断用户。平台自建账号的 `/api/auth/csrf`、`/register`、`/login`、`/change-password`、`/logout`、`/me` 使用 MySQL `user_account` 与 Redis 服务端会话；已登录改密须提供当前密码，成功后所有设备重新登录。启用前须设置随机、至少 32 字符的 `SECRET_KEY`，生产须使用 HTTPS、`FLASK_DEBUG=false`、`CPA_AUTH_COOKIE_SECURE=true`（默认）。仅本机 HTTP 调试时才将 `CPA_AUTH_COOKIE_SECURE=false`；管理员使用可信本机 CLI `flask --app app provision-admin --username <name>` 开户，不提供公开管理员注册。详情和未覆盖边界见 [自建账号规格](docs/specs/self-managed-account-auth.md)。仅在本机开发调试且明确设置 `CPA_DEV_AUTH=1` 时，loopback 请求可通过 `X-Dev-Student-Id` 请求头注入临时学生 Principal，不能获得管理员权限。
+
+岗位发布的正式账号管理端提供 `/api/admin/job-publications` 的预检、精确摘要确认、版本回读与撤回；见 [HTTP 发布契约](docs/specs/admin-job-publication-http.md)。这不是原网页真实性或招聘有效期的自动证明。旧本机 `backend/scripts/mysql/publish_job_catalog.py` 仍可直接发布，但 `reviewed_by/reviewed_at` 来自其 JSON 输入，**不经过账号审核或新的原子审计**；只限可信运维环境与独立人工核对，不能与正式 HTTP 审核记录等价。
+正式管理员还可经只读 `/api/admin/job-reviews` 查看模型岗位审查的来源、阻断原因和候选摘要；它不授予发布权，不自动核实当前招聘是否仍开放，见 [岗位模型审查](docs/guides/job-catalog-model-review.md)。
+管理员 dataset/KB 上传现可用受限 multipart 将 JSON 岗位列表或 UTF-8 文本**私有暂存**并回读摘要；不创建可信岗位行、不公开也不建图，既有 MySQL volume 须先迁移，见 [管理员来源暂存](docs/specs/admin-source-staging.md)。
+经正式管理员核对固定官方原文、精确摘要及截止时间后，评分器暂不支持的岗位可通过独立 `/api/admin/job-source-listings` 作为**仅供查看来源**的条目展示于公开岗位目录；此类 `source_csb_` 岗位明确标为不可评分/匹配，L3/L4 在建任务前拒绝，且不自动转成可评分岗位。公共读取使用最长 5 分钟的 Redis 后台来源核验缓存；上游/缓存故障会隐藏这类岗位，仍保留平台已发布岗位并标记部分结果。后台核验复用上文的 Beat 和 `cpa.pipeline` worker；缺任一进程不会刷新。既有 MySQL volume 必须先执行加表迁移，见 [来源专用岗位规格](docs/specs/source-only-job-catalog.md)。
+
+既有 Docker MySQL volume **不会重跑初始化 SQL**。首次启用新后端或升级现有库时，先备份、停写，再在 `backend/` 目录以 `mkg` 环境执行 `python -B -m alembic -c alembic.ini upgrade head` 并核对 `current` 与 `heads`；新建 volume 初始化后也执行同一命令。它集中接管账号 `auth_epoch`、管理员来源、Pipeline 与投影等结构变更；不再反复修改初始化 SQL 或逐个运行旧迁移脚本。缺账号列/触发器时认证仍返回 503，不降级为开发头身份。操作与失败恢复见 [MySQL 统一迁移](docs/runbooks/mysql-migrations.md) 与 [自建账号规格](docs/specs/self-managed-account-auth.md)。
 
 ### 运行测试
 
@@ -183,10 +194,10 @@ LLM_MODEL_NAME=deepseek-chat
 # 数据库配置
 MYSQL_PASSWORD=your_password
 NEO4J_PASSWORD=your_password
-REDIS_URL=redis://localhost:6379/0
+REDIS_URL=redis://localhost:16379/0
 
 # 向量数据库（默认使用 Lite 嵌入式模式，无需额外部署）
-MILVUS_URI=./milvus_data/milvus.db
+CPA_MILVUS_URI=./milvus_data/milvus.db
 EMBEDDING_MODEL=BAAI/bge-m3
 ```
 

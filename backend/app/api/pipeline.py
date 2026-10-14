@@ -4,7 +4,7 @@ Pipeline API - L0-L4 管线调用接口
 
 与 pipeline_ext.py 的区别:
 - pipeline_ext.py: 同步直接调用，提供 /extract、/match、/portrait 等细粒度端点
-- 本模块: 异步任务队列模式，提供 /trigger、/status 等任务管理端点
+- 本模块: L3 专用入口有持久派发；通用 trigger 和其他旧启动入口仍不可用
 """
 
 import os
@@ -24,6 +24,16 @@ from ..config import Config
 logger = get_logger('cpa-agent.api.pipeline')
 
 pipeline_bp = Blueprint('pipeline', __name__)
+
+
+def _dispatch_unavailable():
+    """Do not persist an unconsumable pending task as if it were accepted."""
+    return jsonify({
+        'success': False,
+        'code': 'pipeline_dispatch_unavailable',
+        'error': '该管线入口尚未接入执行器，未创建任务',
+        'retryable': False,
+    }), 503
 
 
 @pipeline_bp.route('/entity-review', methods=['GET'])
@@ -181,6 +191,11 @@ def list_pipelines():
         {'name': 'L3_run_match', 'description': '人岗匹配 (D1硬约束 + D2技能覆盖 + D3/D4加权)'},
         {'name': 'L4_generate_report', 'description': '报告生成 (6章结构, 模板70% + LLM30%)'},
     ]
+    for item in pipelines:
+        item['trigger_mode'] = ('demo_preview' if Config.DEMO_MODE else
+                                'dedicated_async' if item['name'] == 'L3_run_match' else 'unavailable')
+        if item['trigger_mode'] == 'dedicated_async':
+            item['start_path'] = '/api/pipeline/l3/run-match'
 
     return jsonify({
         'success': True,
@@ -191,11 +206,13 @@ def list_pipelines():
 @pipeline_bp.route('/trigger', methods=['POST'])
 def trigger_pipeline():
     """触发管线任务"""
-    data = request.get_json() or {}
+    data = request.get_json(silent=True)
     try:
         scope = resolve_request_scope()
     except ScopeError as e:
         return scope_error_response(e)
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'error': '请求体必须是 JSON 对象'}), 400
     data["student_id"] = scope.student_id
 
     pipeline = data.get('pipeline', '')
@@ -209,6 +226,9 @@ def trigger_pipeline():
         ok, msg = validate_student_id(student_id)
         if not ok:
             return jsonify({'success': False, 'error': msg}), 400
+
+    if not Config.DEMO_MODE:
+        return _dispatch_unavailable()
 
     mysql = get_mysql_client()
     task_id = _create_task(pipeline, data, mysql)
@@ -386,95 +406,82 @@ def parse_resume():
 @pipeline_bp.route('/l1/build-graph', methods=['POST'])
 def build_graph():
     """L1: 知识图谱构建"""
-    data = request.get_json() or {}
     try:
-        student_id = resolve_request_scope().student_id
+        resolve_request_scope()
     except ScopeError as e:
         return scope_error_response(e)
-
-    mysql = get_mysql_client()
-    task_id = _create_task('L1_build_graph', {'student_id': student_id}, mysql)
-
-    return jsonify({
-        'success': True,
-        'data': {
-            'task_id': task_id,
-            'status': 'pending',
-            'message': '图谱构建任务已创建'
-        }
-    })
+    return _dispatch_unavailable()
 
 
 @pipeline_bp.route('/l2/generate-portrait', methods=['POST'])
 def generate_portrait():
     """L2: 画像生成"""
-    data = request.get_json() or {}
     try:
-        student_id = resolve_request_scope().student_id
+        resolve_request_scope()
     except ScopeError as e:
         return scope_error_response(e)
-    job_id = data.get('job_id')
-
-    mysql = get_mysql_client()
-    task_id = _create_task('L2_generate_portrait', {'student_id': student_id, 'job_id': job_id}, mysql)
-
-    return jsonify({
-        'success': True,
-        'data': {
-            'task_id': task_id,
-            'status': 'pending',
-            'message': '画像生成任务已创建'
-        }
-    })
+    return _dispatch_unavailable()
 
 
 @pipeline_bp.route('/l3/run-match', methods=['POST'])
 def run_match():
     """L3: 人岗匹配"""
-    data = request.get_json() or {}
+    data = request.get_json(silent=True)
     try:
-        student_id = resolve_request_scope().student_id
+        scope = resolve_request_scope()
     except ScopeError as e:
         return scope_error_response(e)
+    if Config.DEMO_MODE:
+        return _dispatch_unavailable()
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'error': '请求体必须是 JSON 对象'}), 400
     job_portrait_id = data.get('job_portrait_id')
 
-    if not job_portrait_id:
+    if not isinstance(job_portrait_id, str) or not job_portrait_id.strip() or len(job_portrait_id) > 64:
         return jsonify({'success': False, 'error': 'job_portrait_id 必填'}), 400
-
-    mysql = get_mysql_client()
-    task_id = _create_task('L3_run_match', {'student_id': student_id, 'job_portrait_id': job_portrait_id}, mysql)
-
-    return jsonify({
-        'success': True,
-        'data': {
-            'task_id': task_id,
-            'status': 'pending',
-            'message': '匹配任务已创建'
-        }
-    })
+    # Ignore browser-supplied identity, scores and source claims. The domain
+    # prerequisites are authoritative rows read before an intent is accepted.
+    try:
+        from ..services.pipeline import (PipelineSourceUnavailable,
+                                         require_confirmed_profile,
+                                         require_authoritative_match_sources)
+        from ..services.pipeline_match_jobs import persist_match_intent, enqueue_match_intent
+        mysql = get_mysql_client()
+        profile = require_confirmed_profile(mysql, scope.student_id)
+        require_authoritative_match_sources(mysql, scope.student_id, job_portrait_id, profile)
+        task_id = f"task_{uuid.uuid4().hex[:20]}"
+        persist_match_intent(mysql, student_id=scope.student_id,
+                             job_portrait_id=job_portrait_id, task_id=task_id)
+        try:
+            delivery = enqueue_match_intent(mysql, task_id)
+        except Exception:
+            # The intent is already committed. Preserve its stable ID so the
+            # owner can read it and the operator can replay it after recovery.
+            logger.exception("L3 delivery failed after durable commit task_id=%s", task_id)
+            delivery = "unverified"
+        return jsonify({'success': True, 'data': {
+            'task_id': task_id, 'pipeline': 'L3_run_match', 'status': 'pending',
+            'delivery': delivery, 'retryable': delivery != 'queued',
+        }}), 202
+    except (ValueError, PipelineSourceUnavailable) as e:
+        return jsonify({'success': False, 'error': str(e), 'retryable': False}), 409
+    except Exception as e:
+        return jsonify(safe_error('L3 持久派发', e, message='匹配任务未确认受理；请检查迁移和数据库')), 503
 
 
 @pipeline_bp.route('/l4/generate-report', methods=['POST'])
 def generate_report():
     """L4: 报告生成"""
-    data = request.get_json() or {}
+    data = request.get_json(silent=True)
     try:
-        student_id = resolve_request_scope().student_id
+        resolve_request_scope()
     except ScopeError as e:
         return scope_error_response(e)
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'error': '请求体必须是 JSON 对象'}), 400
     job_portrait_id = data.get('job_portrait_id')
 
     if not job_portrait_id:
         return jsonify({'success': False, 'error': 'job_portrait_id 必填'}), 400
 
-    mysql = get_mysql_client()
-    task_id = _create_task('L4_generate_report', {'student_id': student_id, 'job_portrait_id': job_portrait_id}, mysql)
-
-    return jsonify({
-        'success': True,
-        'data': {
-            'task_id': task_id,
-            'status': 'pending',
-            'message': '报告生成任务已创建'
-        }
-    })
+    return _dispatch_unavailable()

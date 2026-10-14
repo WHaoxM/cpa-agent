@@ -69,6 +69,14 @@ Current hardening priority:
 4. Clean repository hygiene: ignore env files, caches, model artifacts, generated docs, and temporary Word revisions.
 5. Only then consider deeper refactors or frontend-backend integration.
 
+## Backend Experience-Driven Acceptance
+
+- Do not call a backend change "done" from source inspection, a green unit test, HTTP 200, or an Agent reply alone. State exactly which user-visible path and authoritative result were verified, and distinguish real services from substitutes.
+- For each iteration, inventory registered backend entrypoints before choosing a narrow defect. Deeply verify currently used paths; for legacy/deferred paths, prioritize authorization, incorrect data or mutations, and false success. Do not expand deferred features merely to make an endpoint return 200.
+- Reproduce a concrete failure before changing code. Keep one-variable probes and a regression test, make the smallest correction, then replay through the actual HTTP route. For writes or task results, verify the owner-bound database/file/task state or prove that a rejected request never reached persistence.
+- Report the exact old/new behavior, test command and result, runtime dependencies/substitutes, and remaining unverified scope. If MySQL, Redis, Neo4j, OCR, or a real model was unavailable, mark the affected acceptance as partial rather than silently replacing it with a mock.
+- Fix clearly reproduced, bounded defects without waiting for per-defect triage. Escalate a product-contract choice or a broad redesign instead of guessing. Keep an explicit queue of findings; one fixed path never implies all secondary routes have been audited.
+
 ## Frontend Boundary
 
 `cpa-xingtu/` is currently a mock-data frontend demo. Its own `cpa-xingtu/AGENTS.md` is authoritative for frontend-only work.

@@ -18,6 +18,10 @@ _Avoid_: 第二套完整配置、与 repo 无 schema 约束的随意覆盖
 当前真实运行面只承认 `overrides/rules.yaml` 的白名单规则参数覆盖，以及 `overrides/prompts/<prompt_id>/tone.md` 的语气层替换。
 _Avoid_: 把尚未被业务链路消费的 seeds、branding 或 schema loader 当成已上线能力
 
+**Self-Managed Account（平台自建账号）**:
+正式学生和管理员身份由平台 `user_account` 登录产生，服务端从数据库重载 role/status 后注入 `Principal`；管理员只可信 CLI 开户。新注册学生 ID 独立生成，不自动认领历史画像。开发头身份不是管理员凭据。
+_Avoid_: 把客户端 role、用户名或 `X-Dev-Student-Id` 当作正式管理员授权
+
 **Workspace Deferred Capability（工作区暂缓能力）**:
 已存在 loader 或示例文件，但暂不作为下一阶段主线接入真实业务链路的 workspace 能力，如 seeds 追加和报告 branding。
 _Avoid_: 为未验证的多机构、多租户或演示运营需求继续扩展 workspace 目录结构
@@ -110,6 +114,10 @@ _Avoid_: 与 repo 内 `backend/config/` 混为同一目录
 
 ### Pipeline
 
+**Resume Agent Trace（简历 Agent 协作轨迹）**:
+真实模式的专用异步 L0 上传按文档读取、结构化、实体核验、证据整理四个后端职责串行交接；MySQL 记录 owner-scoped、无简历正文的阶段/模型元数据。页面百分比只等于四个已持久提交检查点的完成比例，候选仍要用户确认，既不是模型思考文本，也不是画像/匹配评分进度。
+_Avoid_: 把普通时间线改名为多 Agent；前端计时插值、伪造并行协作；用轨迹完成代替候选核对
+
 **L0 PDF Engine Registry（L0 PDF 引擎能力登记）**:
 PDF 解析引擎按「能力」而非「包能 import」登记：`READY | DISABLED | FAILED`。模式升级后 **auto 阶梯 = Parse Sidecar → PyMuPDF**；进程内 MinerU **退出 auto**（仅 `CPA_L0_PDF_ENGINE=mineru` 显式启用）。Sidecar 经 `CPA_L0_PARSE_SIDECAR_URL` HTTP 取 Markdown/JSON，未配置或不可达为 `DISABLED`，不阻塞启动。`docker-compose.parse-sidecar.yml` 的 `parse-sidecar-contract` profile 只是明确返回 503 的契约桩，不是 OCR；真实本机服务仍由 `mkg` 中的 `parse_sidecar_mineru.py` 提供。策略：`CPA_L0_PDF_ENGINE=auto|sidecar|pymupdf|mineru`。
 _Avoid_: 把整仓 RAGFlow 当业务核心；auto 仍加载进程内 MinerU；Sidecar 不可达时启动失败
@@ -119,8 +127,8 @@ PDF/DOCX ingest 与 OCR repair 经 Celery 5.3 + Redis AOF 的专用 `cpa.media` 
 _Avoid_: Redis/Celery 未启动时回退到请求线程跑 OCR；把 Celery result backend 当业务完成真值；把 MinerU 3.0.7 进程内 `/tasks` 当作重启后持久队列
 
 **Retrieve Not Score（检索不计分）**:
-Hybrid 召回（Milvus 向量 + MySQL 关键词 RRF + Neo4j 能力 hop）只产候选与 `retrieve_score` / explain 证据，**不得**改写 `match_result.total_score`。
-_Avoid_: 用 rerank/LLM 覆盖规则分；把 GraphRAG 全量社区索引替换领域 Neo4j schema
+Hybrid 召回（Milvus 向量 + MySQL 关键词 RRF + Neo4j 能力 hop）只产候选与 `retrieve_score` / explain 证据，**不得**改写 `match_result.total_score`。公开岗位候选必须从当前已核验的 `job_catalog_publication` 快照导出；Milvus 命中只提供排序线索，原始索引标题/正文不能作为公开岗位事实。公共职业方向另标 `role`，不能伪装成可匹配岗位。
+_Avoid_: 用 rerank/LLM 覆盖规则分；把未发布旧画像或向量元数据当岗位目录；把 GraphRAG 全量社区索引替换领域 Neo4j schema
 
 **Portrait（画像）**:
 学生或岗位的四维能力刻画（D1 基础 / D2 技能 / D3 素养 / D4 潜力）。输入须含 NS-LE LLM 产出的 **student_profile**（`POST /nsle/resume` → entities 适配）；职途导航链路：L0 文本 → **nsle/resume** → **extract/skills(use_llm)** → infer-role → portrait/student。
@@ -129,6 +137,10 @@ _Avoid_: 前端哈希伪造 GPA；`extract/skills` 长期 `use_llm=false`；用�
 **Match（匹配）**:
 人岗对齐结果，含总分、技能覆盖率、缺失技能与是否通过硬约束；分数由 rules/代码确定性计算。Explain：`GET /api/match/explain/...` 提供 evidence、关键词覆盖、图谱路径（LLM 仅可润色文案，不可改分）。
 _Avoid_: 画像本身、职业报告（后者是 **Career Report**）；LLM 改写总分
+
+**Source-Only Job（仅供来源查看的岗位）**:
+固定官方来源原文与摘要经正式管理员核对后独立公开的岗位记录；即使模型审查因资格条件超出当前评分器而 blocked，也可只展示原文。`source_csb_` ID 与可评分发布仓库分离，`match_eligible=false`，L3/L4 不建任务、不出分数或岗位报告；来源截止时间后隐藏，不保证核验后一直仍在招聘。
+_Avoid_: 把来源核对当成资格评分完成；把模型候选、旧画像行或 source-only 条目自动升级为可评分发布
 
 **Agent Topology Freeze（Agent 拓扑冻结）**:
 运行时允许的 subagent / 专家集合冻结；模式升级期只硬化门禁、budget、trace/eval，禁止新增角色。
@@ -507,6 +519,10 @@ _Avoid_: 把构造测试数据写成线上真实运营数据，或写出无法�
   - 真库冒烟快照仍以 `docs/specs/frontend-api-contract-matrix.md` 为准；两者冲突时以 `docs/frontend/cpa-xingtu` + 当前后端路由为准。
 
 - **2026-10 简历确认金路径切片（进行中，覆盖上述旧 http 职途导航链路）**：真实模式职途导航改为 `/api/profile/student/upload` 的服务端任务候选 → 逐页证据和结构字段人工确认 → `/api/profile/student/confirm` 权威回读。已确认简历可独立生成、保存和重新读取 Resume Diagnostic Report；L2 画像即使因分数证据不足仍为 `partial`，也不阻断简历报告。真实页面保留左侧进度与全屏画像，并可切换简历诊断；同一成果通过 owner/version 约束的资源 URI 供主 Agent 读取。L3/L4 岗位专项仍依赖可信岗位发布，本机岗位目录为空，未有真实匹配和岗位专项报告。实体对齐仅为 L0 新候选的可审阅提议，旧已确认简历未自动重解析；完整反馈、可扩展 RAG 索引、模型建议事实性及 Agent 生产 checkpoint/interrupt 恢复仍未验收，不能称完整循环。以当前代码与 `docs/architecture/platform-agent-capability-architecture.md` 的本轮状态表为准。
+
+- **2026-10 L3 专用持久派发切片（进行中）**：严格模式 `POST /api/pipeline/l3/run-match` 在服务端校验已确认简历、当前 L2 画像来源和人工发布岗位后，原子提交 MySQL 任务与派发意图；Celery worker 按同一 task ID、租约与 claim token 消费，领域匹配和任务终态同事务提交。Broker/worker 故障由 Celery Beat 每 60 秒触发有界重放扫描，需同时运行独立 Beat、worker 与 Redis；手动回放仍可运维使用。既有 MySQL volume 须迁移。L0 有独立的 `/api/profile/student/upload?async=1` 持久入口与 Agent trace；L0/L1/L2/L4 的**旧通用异步启动入口**仍不可用。本机正式发布岗位 0 条，不能把合成验收当成真实用户已有匹配结果。运行与回放见 `docs/guides/pipeline-dispatch-boundary.md`、`docs/guides/resume-agent-team-trace.md`。
+
+- **2026-10 公共内容供给切片（进行中）**：管理员 dataset/KB 上传现能私有暂存原文与摘要，但 `job_dataset.count=0`、未入图/未发布；来源已审核而评分器不支持的官方原文可独立 `source_only` 展示，始终禁止评分与匹配。公开读取只使用最多 5 分钟的后台来源核验缓存；故障隐藏这层并保留经验证的正式发布候选，标 `partial`。技能向量已从真 MySQL `skill_taxonomy` 的 99 条结构字段用本地 BGE-M3 重建，并经公共 HTTP 查询首命中 Python；管理员旧浏览器正文写入已禁，公共 skill 命中还须精确绑定当前 taxonomy 结构/摘要，污染行过滤并标部分结果。不等于岗位供给或完整语义质量。**学校评分档位的人工修正仅可使用可核验的学校官方或教育主管部门材料**，不得以学生自报、模型推测或一般网站代替；目前仍无可执行审核/续跑链路，未知档位保持 partial。详见 `docs/specs/admin-source-staging.md`、`docs/specs/source-only-job-catalog.md`、`docs/guides/skill-vector-index.md`、`docs/guides/domain-semantic-evidence.md`。
 
 - **2026-10 模型调用预算切片（进行中）**：复用现有 LangChain/LangGraph 模型调用边界和 `ContextWindowStatus`；最终消息与工具 schema 在 dispatch 前预检，未知/超窗拒发；同步 LLMClient/LangGraph 每次已完成的 provider 调用进入 request-local usage 账本。缺失 provider usage、失败请求的未知成本、fork 后台任务、绕过这两个客户端的直连 SDK 尚未闭合，不宣称 Agent/Experts 全链预算已验收。详见 `docs/guides/agent-call-budget-ledger.md`。
 

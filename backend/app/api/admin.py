@@ -6,11 +6,16 @@ Admin API - 管理员相关 API
 import json
 import uuid
 from enum import Enum
-from flask import request, jsonify, g
+from flask import request, jsonify, g, current_app
+from flask_login import current_user
+from itsdangerous import URLSafeTimedSerializer, BadSignature
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy import text
+from werkzeug.exceptions import RequestEntityTooLarge
 
 from . import admin_bp
 from ._helpers import (
+    _iso,
     api_handler,
     clamp_pagination,
     parse_json_field,
@@ -22,6 +27,9 @@ from ._helpers import (
     scope_error_response,
 )
 from ..services.db import get_mysql_client, get_neo4j_client
+from ..services.admin_source_store import (
+    MAX_SOURCE_BYTES, checked_path, read_source, remove_staged_source, stage_source,
+)
 from ..utils.logger import get_logger
 
 logger = get_logger('cpa-agent.api.admin')
@@ -40,6 +48,18 @@ def require_server_admin_claim():
         return scope_error_response(e)
     if getattr(g, "cpa_admin", False) is not True:
         return jsonify({"success": False, "error": "需要服务端管理员权限"}), 403
+
+
+@admin_bp.route('/python-info', methods=['GET'])
+def python_info():
+    """Diagnostic data is covered by the same server-side admin gate as other admin routes."""
+    import sys
+
+    return jsonify({
+        'python_executable': sys.executable,
+        'python_version': sys.version,
+        'python_path': sys.path[:5],
+    })
 
 
 class OovStatus(str, Enum):
@@ -70,8 +90,18 @@ def list_knowledge_base():
 @admin_bp.route('/knowledge-base/upload', methods=['POST'])
 @api_handler("上传知识库")
 def upload_knowledge_base():
-    """上传知识库"""
-    data = request.get_json() or {}
+    """Create metadata, or privately stage an explicitly supplied UTF-8 text file."""
+    if request.mimetype == 'multipart/form-data':
+        return _upload_admin_source('knowledge-base')
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(safe_bad_request("请求体必须是 JSON 对象")), 400
+    title = data.get('title')
+    kb_type = data.get('type', 'skill')
+    if not isinstance(title, str) or not title.strip() or len(title) > 200:
+        return jsonify(safe_bad_request("title 必须是 1 至 200 字符的文本")), 400
+    if not isinstance(kb_type, str) or not kb_type.strip() or len(kb_type) > 30:
+        return jsonify(safe_bad_request("type 必须是 1 至 30 字符的文本")), 400
     mysql = get_mysql_client()
 
     kb_id = f"kb_{uuid.uuid4().hex[:12]}"
@@ -82,12 +112,15 @@ def upload_knowledge_base():
 
     mysql.execute_write(sql, {
         "id": kb_id,
-        "title": data.get('title'),
-        "type": data.get('type', 'skill'),
-        "status": data.get('status', 'pending')
+        "title": title.strip(),
+        "type": kb_type.strip(),
+        # Metadata upload does not ingest or process content; clients cannot
+        # claim a terminal processing state.
+        "status": 'pending'
     })
 
-    return {"id": kb_id, "message": "上传成功"}
+    return {"id": kb_id, "status": "pending", "content_ingested": False,
+            "message": "元数据已创建，内容未入库"}
 
 
 @admin_bp.route('/knowledge-base/<kb_id>', methods=['DELETE'])
@@ -95,10 +128,22 @@ def upload_knowledge_base():
 def delete_knowledge_base(kb_id: str):
     """删除知识库"""
     mysql = get_mysql_client()
-    sql = "DELETE FROM knowledge_base WHERE id = :kb_id"
-    mysql.execute_write(sql, {"kb_id": kb_id})
+    existing = mysql.execute("SELECT id, file_path FROM knowledge_base WHERE id = :kb_id LIMIT 1", {"kb_id": kb_id})
+    if not existing:
+        return jsonify(safe_not_found(f"知识库不存在: {kb_id}")), 404
+    _delete_admin_source(mysql, 'knowledge-base', kb_id, existing[0].get('file_path'))
+
+    remaining = mysql.execute("SELECT id FROM knowledge_base WHERE id = :kb_id LIMIT 1", {"kb_id": kb_id})
+    if remaining:
+        raise RuntimeError("知识库删除未通过数据库回读验证")
 
     return {"message": f"知识库 {kb_id} 已删除"}
+
+
+@admin_bp.route('/knowledge-base/<kb_id>/content', methods=['GET'])
+@api_handler("读取知识库暂存内容")
+def read_knowledge_base_content(kb_id: str):
+    return _read_admin_content('knowledge-base', kb_id)
 
 
 # ========== 数据集管理 API ==========
@@ -115,8 +160,18 @@ def list_dataset():
 @admin_bp.route('/dataset/upload', methods=['POST'])
 @api_handler("上传数据集")
 def upload_dataset():
-    """上传数据集"""
-    data = request.get_json() or {}
+    """Create metadata, or privately stage JSON; never publish job rows."""
+    if request.mimetype == 'multipart/form-data':
+        return _upload_admin_source('dataset')
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(safe_bad_request("请求体必须是 JSON 对象")), 400
+    title = data.get('title')
+    category = data.get('category')
+    if not isinstance(title, str) or not title.strip() or len(title) > 200:
+        return jsonify(safe_bad_request("title 必须是 1 至 200 字符的文本")), 400
+    if category is not None and (not isinstance(category, str) or len(category) > 50):
+        return jsonify(safe_bad_request("category 必须是最多 50 字符的文本")), 400
     mysql = get_mysql_client()
 
     ds_id = f"ds_{uuid.uuid4().hex[:12]}"
@@ -127,13 +182,17 @@ def upload_dataset():
 
     mysql.execute_write(sql, {
         "id": ds_id,
-        "title": data.get('title'),
-        "count": data.get('count', 0),
-        "category": data.get('category'),
-        "status": data.get('status', 'pending')
+        "title": title.strip(),
+        # No job records are ingested here. The public count is observed, not
+        # a client-declared estimate of a file this endpoint never received.
+        "count": 0,
+        "category": category,
+        # This endpoint persists metadata only; build/ingest status is server-owned.
+        "status": 'pending'
     })
 
-    return {"id": ds_id, "message": "上传成功"}
+    return {"id": ds_id, "status": "pending", "content_ingested": False,
+            "message": "元数据已创建，岗位未入库"}
 
 
 @admin_bp.route('/dataset/<ds_id>', methods=['DELETE'])
@@ -141,82 +200,159 @@ def upload_dataset():
 def delete_dataset(ds_id: str):
     """删除数据集"""
     mysql = get_mysql_client()
-    sql = "DELETE FROM job_dataset WHERE id = :ds_id"
-    mysql.execute_write(sql, {"ds_id": ds_id})
+    existing = mysql.execute("SELECT id, file_path FROM job_dataset WHERE id = :ds_id LIMIT 1", {"ds_id": ds_id})
+    if not existing:
+        return jsonify(safe_not_found(f"数据集不存在: {ds_id}")), 404
+    _delete_admin_source(mysql, 'dataset', ds_id, existing[0].get('file_path'))
+
+    remaining = mysql.execute("SELECT id FROM job_dataset WHERE id = :ds_id LIMIT 1", {"ds_id": ds_id})
+    if remaining:
+        raise RuntimeError("数据集删除未通过数据库回读验证")
 
     return {"message": f"数据集 {ds_id} 已删除"}
+
+
+@admin_bp.route('/dataset/<ds_id>/content', methods=['GET'])
+@api_handler("读取岗位数据集暂存内容")
+def read_dataset_content(ds_id: str):
+    return _read_admin_content('dataset', ds_id)
+
+
+def _upload_admin_source(kind: str):
+    """Keep source staging distinct from the legacy metadata-only JSON contract."""
+    # Reject the multipart envelope before Werkzeug spools a much larger file.
+    request.max_content_length = MAX_SOURCE_BYTES + 64 * 1024
+    try:
+        title = request.form.get('title')
+        upload = request.files.get('file')
+        field = 'category' if kind == 'dataset' else 'type'
+        value = request.form.get(field)
+    except RequestEntityTooLarge:
+        return jsonify({"success": False, "code": "admin_source_too_large",
+                        "error": "multipart 请求超过来源上传上限"}), 413
+    if not isinstance(title, str) or not title.strip() or len(title) > 200:
+        return jsonify(safe_bad_request("title 必须是 1 至 200 字符的文本")), 400
+    limit = 50 if kind == 'dataset' else 30
+    if value is not None and len(value) > limit:
+        return jsonify(safe_bad_request(f"{field} 最多 {limit} 字符")), 400
+    if upload is None:
+        return jsonify(safe_bad_request("multipart 上传必须包含 file")), 400
+    source_id = ('ds_' if kind == 'dataset' else 'kb_') + uuid.uuid4().hex[:12]
+    try:
+        staged = stage_source(source_id, kind, upload)
+    except ValueError as exc:
+        return jsonify(safe_bad_request(str(exc))), 400
+    try:
+        mysql = get_mysql_client()
+        if kind == 'dataset':
+            sql = """
+                INSERT INTO job_dataset
+                    (id, title, count, category, status, file_path, file_size,
+                     content_sha256, staged_record_count, uploaded_by, created_at)
+                VALUES (:id, :title, 0, :category, 'pending', :file_path, :file_size,
+                        :content_sha256, :staged_record_count, :uploaded_by, NOW())
+            """
+            params = {"id": source_id, "title": title.strip(), "category": value,
+                      "uploaded_by": resolve_request_scope().principal_id, **staged}
+        else:
+            sql = """
+                INSERT INTO knowledge_base
+                    (id, title, type, status, file_path, file_size,
+                     content_sha256, uploaded_by, created_at)
+                VALUES (:id, :title, :type, 'pending', :file_path, :file_size,
+                        :content_sha256, :uploaded_by, NOW())
+            """
+            params = {"id": source_id, "title": title.strip(), "type": value or 'text',
+                      "uploaded_by": resolve_request_scope().principal_id,
+                      **{k: v for k, v in staged.items() if k != 'staged_record_count'}}
+        table = 'job_dataset' if kind == 'dataset' else 'knowledge_base'
+        with mysql.engine.begin() as conn:
+            conn.execute(text(sql), params)
+            saved = conn.execute(text(
+                f"SELECT file_path, file_size, content_sha256, status"
+                + (", count, staged_record_count" if kind == 'dataset' else "")
+                + f" FROM {table} WHERE id=:id LIMIT 1"), {"id": source_id}).mappings().first()
+            if (not saved or saved['file_path'] != staged['file_path']
+                    or saved['file_size'] != staged['file_size']
+                    or saved['content_sha256'] != staged['content_sha256']
+                    or saved['status'] != 'pending'
+                    or (kind == 'dataset' and (saved['count'] != 0
+                        or saved['staged_record_count'] != staged['staged_record_count']))):
+                raise RuntimeError("管理员来源写入未通过数据库回读验证")
+    except Exception:
+        remove_staged_source(staged['file_path'])
+        raise
+    return {"id": source_id, "status": "pending", "content_staged": True,
+            "content_ingested": False, "file_size": staged['file_size'],
+            "content_sha256": staged['content_sha256'],
+            "staged_record_count": staged['staged_record_count'],
+            "count": 0 if kind == 'dataset' else None,
+            "message": "私有来源文件已暂存；未发布、未建图"}
+
+
+def _read_admin_content(kind: str, source_id: str):
+    table = 'job_dataset' if kind == 'dataset' else 'knowledge_base'
+    mysql = get_mysql_client()
+    rows = mysql.execute(
+        f"SELECT id, file_path, file_size, content_sha256"
+        + (", staged_record_count" if kind == 'dataset' else "")
+        + f" FROM {table} WHERE id=:id LIMIT 1", {"id": source_id})
+    if not rows:
+        return jsonify(safe_not_found("管理员来源不存在")), 404
+    row = rows[0]
+    if not row.get('file_path'):
+        return jsonify(safe_bad_request("该记录仅有元数据，没有暂存内容")), 409
+    try:
+        content = read_source(source_id, kind, row)
+    except (OSError, ValueError) as exc:
+        logger.error("admin source content unavailable: %s: %s", source_id, exc)
+        return jsonify({"success": False, "code": "admin_source_unavailable",
+                        "error": "暂存来源文件不可用或完整性校验失败"}), 503
+    return {"id": source_id, "content": content,
+            "file_size": row['file_size'], "content_sha256": row['content_sha256'],
+            "staged_record_count": row.get('staged_record_count', 0),
+            "published": False, "graph_built": False}
+
+
+def _delete_admin_source(mysql, kind: str, source_id: str, file_path):
+    table = 'job_dataset' if kind == 'dataset' else 'knowledge_base'
+    tombstone = None
+    path = None
+    if file_path:
+        path = checked_path(source_id, kind, file_path)
+        if path.exists():
+            tombstone = path.with_name(f".{path.name}.{uuid.uuid4().hex}.deleting")
+            path.replace(tombstone)
+    try:
+        with mysql.engine.begin() as conn:
+            deleted = conn.execute(text(f"DELETE FROM {table} WHERE id=:id"), {"id": source_id})
+            if deleted.rowcount != 1:
+                raise RuntimeError("管理员来源删除未影响唯一记录")
+    except Exception:
+        if tombstone is not None:
+            tombstone.replace(path)
+        raise
+    if tombstone is not None:
+        tombstone.unlink()
 
 
 # ========== 管线管理 API ==========
 
 @admin_bp.route('/pipeline/build', methods=['POST'])
 def trigger_pipeline_build():
-    """
-    触发 L1 构建流程（从数据源构建知识图谱）
-
-    Body:
-        {
-            "source": "dataset|knowledge_base|upload",
-            "source_id": "数据集ID",
-            "pipeline_type": "full|skills_only|jobs_only",
-            "triggered_by": "管理员ID"
-        }
-
-    流程:
-        1. 验证数据源
-        2. 创建 pipeline_task 记录
-        3. 触发异步构建（L1提取 → 归一化 → 入图）
-    """
-    try:
-        data = request.get_json() or {}
-        source = data.get('source', 'dataset')
-        source_id = data.get('source_id', '')
-        pipeline_type = data.get('pipeline_type', 'full')
-        triggered_by = resolve_request_scope().principal_id
-
-        if not source_id:
-            return jsonify(safe_bad_request("source_id 必填")), 400
-
-        mysql = get_mysql_client()
-
-        # 创建任务记录
-        task_id = f"task_{uuid.uuid4().hex[:12]}"
-        sql = """
-        INSERT INTO pipeline_task
-        (task_id, pipeline, status, params_json, triggered_by, created_at)
-        VALUES (:task_id, :pipeline, 'pending', :params, :triggered_by, NOW())
-        """
-        mysql.execute_write(sql, {
-            "task_id": task_id,
-            "pipeline": f"l1_build_{pipeline_type}",
-            "params": json.dumps({"source": source, "source_id": source_id}),
-            "triggered_by": triggered_by
-        })
-        rows = mysql.fetch_all(
-            "SELECT task_id, status, triggered_by FROM pipeline_task WHERE task_id=:task_id LIMIT 1",
-            {"task_id": task_id},
-        )
-        if (not rows or rows[0].get("task_id") != task_id
-                or rows[0].get("status") != "pending"
-                or rows[0].get("triggered_by") != triggered_by):
-            raise RuntimeError("L1 管理任务写入未通过权威记录回读")
-
-        # 异步任务队列接入见 issue tracker, 当前为同步占位
-
-        return jsonify({
-            "success": True,
-            "data": {
-                "task_id": task_id,
-                "status": "pending",
-                "message": "L1构建任务已创建",
-                "next_steps": [
-                    f"GET /api/pipeline/status/{task_id} 查询进度"
-                ]
-            }
-        })
-
-    except Exception as e:
-        return jsonify(safe_error("触发L1构建", e)), 500
+    """Do not claim a build was accepted until source ingestion and dispatch exist."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(safe_bad_request("请求体必须是 JSON 对象")), 400
+    source_id = data.get('source_id')
+    if not isinstance(source_id, str) or not source_id.strip():
+        return jsonify(safe_bad_request("source_id 必须为非空文本")), 400
+    return jsonify({
+        "success": False,
+        "code": "admin_pipeline_build_unavailable",
+        "error": "管理端建图尚未接入数据源读取与执行器，未创建任务",
+        "retryable": False,
+    }), 503
 
 
 @admin_bp.route('/pipeline/status/<task_id>', methods=['GET'])
@@ -295,7 +431,11 @@ def list_oov_pending():
 
         # 统计总数
         count_sql = f"SELECT COUNT(*) as total FROM oov_entity WHERE status = '{OovStatus.PENDING.value}'"
-        count_result = mysql.execute(count_sql)
+        count_params = {}
+        if entity_type:
+            count_sql += " AND entity_type = :entity_type"
+            count_params["entity_type"] = entity_type
+        count_result = mysql.execute(count_sql, count_params)
         total = count_result[0]["total"] if count_result else 0
 
     except Exception as e:
@@ -337,36 +477,41 @@ def approve_oov(oov_id: str):
         {
             "canonical_name": "规范名称",
             "category": "分类",
-            "aliases": ["别名1", "别名2"],
-            "reviewed_by": "管理员ID"
+            "aliases": ["别名1", "别名2"]
         }
     """
-    data = request.get_json() or {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(safe_bad_request("请求体必须是 JSON 对象")), 400
     canonical_name = data.get('canonical_name', '')
-    if not canonical_name:
-        return jsonify(safe_bad_request("canonical_name 必填")), 400
+    if not isinstance(canonical_name, str) or not canonical_name.strip():
+        return jsonify(safe_bad_request("canonical_name 必须是非空文本")), 400
+    canonical_name = canonical_name.strip()
 
     category = data.get('category', '')
     aliases = data.get('aliases', [])
-    reviewed_by = data.get('reviewed_by', 'admin')
+    if not isinstance(category, str) or not isinstance(aliases, list) or any(
+        not isinstance(alias, str) or not alias.strip() for alias in aliases
+    ):
+        return jsonify(safe_bad_request("category 必须是文本，aliases 必须是文本数组")), 400
+    reviewed_by = resolve_request_scope().principal_id
 
     mysql = get_mysql_client()
 
-    # 获取 OOV 记录
-    oov_results = mysql.execute(
-        "SELECT * FROM oov_entity WHERE oov_id = :oov_id",
-        {"oov_id": oov_id}
-    )
-    if not oov_results:
-        return jsonify(safe_not_found("OOV记录不存在")), 404
-
-    oov = oov_results[0]
-    entity_type = oov["entity_type"]
-
-    # 事务: INSERT canonical_entity + SELECT LAST_INSERT_ID + UPDATE oov_entity
-    # 三步必须原子, 避免审核状态与规范库不一致
+    # Lock and verify the pending state in the same transaction as the
+    # canonical insert, so a reviewed row cannot be replayed or reversed.
     with mysql.engine.connect() as conn:
-        with conn.begin():  # 自动 commit / 失败时 rollback
+        with conn.begin():
+            oov = conn.execute(text(
+                "SELECT entity_type, status FROM oov_entity "
+                "WHERE oov_id = :oov_id FOR UPDATE"
+            ), {"oov_id": oov_id}).mappings().first()
+            if not oov:
+                return jsonify(safe_not_found("OOV记录不存在")), 404
+            if oov["status"] != OovStatus.PENDING.value:
+                return jsonify({"success": False, "error": "OOV记录已审核，不能重复变更"}), 409
+            entity_type = oov["entity_type"]
+
             conn.execute(text("""
                 INSERT INTO canonical_entity
                 (entity_type, canonical_name, aliases_json, category, source, created_at)
@@ -383,18 +528,20 @@ def approve_oov(oov_id: str):
             row = conn.execute(text("SELECT LAST_INSERT_ID() AS new_id")).fetchone()
             new_entity_id = row[0] if row else None
 
-            conn.execute(text(f"""
+            updated = conn.execute(text(f"""
                 UPDATE oov_entity SET
                 status = '{OovStatus.APPROVED.value}',
                 canonical_mapping = :canonical_name,
                 reviewed_by = :reviewed_by,
                 reviewed_at = NOW()
-                WHERE oov_id = :oov_id
+                WHERE oov_id = :oov_id AND status = '{OovStatus.PENDING.value}'
             """), {
                 "canonical_name": canonical_name,
                 "reviewed_by": reviewed_by,
                 "oov_id": oov_id
             })
+            if updated.rowcount != 1:
+                raise RuntimeError("OOV审核状态已变化，操作已回滚")
 
     return {
         "oov_id": oov_id,
@@ -408,20 +555,34 @@ def approve_oov(oov_id: str):
 @api_handler("拒绝OOV")
 def reject_oov(oov_id: str):
     """拒绝 OOV 实体"""
-    data = request.get_json() or {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(safe_bad_request("请求体必须是 JSON 对象")), 400
     reason = data.get('reason', '')
-    reviewed_by = data.get('reviewed_by', 'admin')
+    if not isinstance(reason, str):
+        return jsonify(safe_bad_request("reason 必须是文本")), 400
+    reviewed_by = resolve_request_scope().principal_id
 
     mysql = get_mysql_client()
-    sql = f"""
-    UPDATE oov_entity SET
-    status = '{OovStatus.REJECTED.value}',
-    review_notes = :reason,
-    reviewed_by = :reviewed_by,
-    reviewed_at = NOW()
-    WHERE oov_id = :oov_id
-    """
-    mysql.execute_write(sql, {"reason": reason, "reviewed_by": reviewed_by, "oov_id": oov_id})
+    with mysql.engine.connect() as conn:
+        with conn.begin():
+            current = conn.execute(text(
+                "SELECT status FROM oov_entity WHERE oov_id = :oov_id FOR UPDATE"
+            ), {"oov_id": oov_id}).mappings().first()
+            if not current:
+                return jsonify(safe_not_found("OOV记录不存在")), 404
+            if current["status"] != OovStatus.PENDING.value:
+                return jsonify({"success": False, "error": "OOV记录已审核，不能重复变更"}), 409
+            updated = conn.execute(text(f"""
+                UPDATE oov_entity SET
+                status = '{OovStatus.REJECTED.value}',
+                review_notes = :reason,
+                reviewed_by = :reviewed_by,
+                reviewed_at = NOW()
+                WHERE oov_id = :oov_id AND status = '{OovStatus.PENDING.value}'
+            """), {"reason": reason, "reviewed_by": reviewed_by, "oov_id": oov_id})
+            if updated.rowcount != 1:
+                raise RuntimeError("OOV审核状态已变化，操作已回滚")
 
     return {"oov_id": oov_id, "message": "已拒绝"}
 
@@ -538,3 +699,343 @@ def generate_ability_course_graph():
         return jsonify({"success": True, "data": result})
     except Exception as e:
         return jsonify(safe_error("generate ability/course graph", e)), 500
+
+
+# ========== 可信岗位发布：正式账号的二次摘要确认 ==========
+
+def _job_publication_admin():
+    """Do not let a test/dev g.cpa_admin bit stand in for an account login."""
+    if (not current_app.extensions.get("cpa_account_auth_enabled")
+            or not current_app.extensions.get("cpa_account_session_schema_ready")):
+        return None
+    if (not current_user.is_authenticated or current_user.row["role"] != "admin"
+            or current_user.row["status"] != "active"
+            or current_user.id != resolve_request_scope().principal_id):
+        return None
+    return current_user.id
+
+
+def _publication_body():
+    if request.content_length is not None and request.content_length > 256_000:
+        return None
+    body = request.get_json(silent=True)
+    return body if isinstance(body, dict) else None
+
+
+def _preview_signer():
+    return URLSafeTimedSerializer(current_app.secret_key, salt="cpa-job-publication-preview-v1")
+
+
+@admin_bp.route('/job-reviews', methods=['GET'])
+def list_admin_job_source_reviews():
+    """Read-only model audit queue; not an approval or source-currentness API."""
+    from ..services.admin_job_review import list_admin_job_reviews, JobReviewCorrupt
+
+    if _job_publication_admin() is None:
+        return jsonify({"success": False, "error": "需要正式登录的管理员账号"}), 403
+    status = request.args.get("status")
+    limit_raw = request.args.get("limit", "20")
+    offset_raw = request.args.get("offset", "0")
+    if (status not in (None, "blocked", "candidate_ready")
+            or not limit_raw.isdecimal() or not offset_raw.isdecimal()):
+        return jsonify(safe_bad_request("status、limit 或 offset 无效")), 400
+    try:
+        data = list_admin_job_reviews(get_mysql_client(), status=status,
+                                      limit=int(limit_raw), offset=int(offset_raw))
+    except ValueError as exc:
+        if isinstance(exc, JobReviewCorrupt):
+            logger.exception("岗位模型审查列表完整性检查失败")
+            return jsonify({"success": False, "error": "岗位模型审查记录暂不可用"}), 503
+        return jsonify(safe_bad_request(str(exc))), 400
+    except SQLAlchemyError:
+        logger.exception("岗位模型审查列表读取失败")
+        return jsonify({"success": False, "error": "岗位模型审查记录暂不可用"}), 503
+    response = jsonify({"success": True, **data})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@admin_bp.route('/job-reviews/<review_id>', methods=['GET'])
+def get_admin_job_source_review(review_id):
+    from ..services.admin_job_review import read_admin_job_review, JobReviewCorrupt
+
+    if _job_publication_admin() is None:
+        return jsonify({"success": False, "error": "需要正式登录的管理员账号"}), 403
+    try:
+        detail = read_admin_job_review(get_mysql_client(), review_id)
+    except ValueError as exc:
+        if isinstance(exc, JobReviewCorrupt):
+            logger.exception("岗位模型审查详情完整性检查失败")
+            return jsonify({"success": False, "error": "岗位模型审查记录暂不可用"}), 503
+        return jsonify(safe_bad_request(str(exc))), 400
+    except SQLAlchemyError:
+        logger.exception("岗位模型审查详情读取失败")
+        return jsonify({"success": False, "error": "岗位模型审查记录暂不可用"}), 503
+    if detail is None:
+        return jsonify(safe_not_found("模型审查记录不存在")), 404
+    response = jsonify({"success": True, **detail})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@admin_bp.route('/job-source-listings', methods=['GET'])
+def list_admin_source_only_jobs():
+    from ..services.job_source_listing import list_admin_source_listings, SourceListingUnavailable
+
+    if _job_publication_admin() is None:
+        return jsonify({"success": False, "error": "需要正式登录的管理员账号"}), 403
+    limit, offset = clamp_pagination(request.args.get("limit", type=int),
+                                     request.args.get("offset", type=int))
+    try:
+        data = list_admin_source_listings(get_mysql_client(), limit=limit, offset=offset)
+    except (SourceListingUnavailable, ValueError, SQLAlchemyError):
+        logger.exception("来源专用岗位审核列表回读失败")
+        return jsonify({"success": False, "error": "来源专用岗位记录暂不可用"}), 503
+    response = jsonify({"success": True, **data})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@admin_bp.route('/job-source-listings/<int:listing_id>', methods=['GET'])
+def get_admin_source_only_job(listing_id):
+    from ..services.job_source_listing import read_admin_source_listing, SourceListingUnavailable
+
+    if _job_publication_admin() is None:
+        return jsonify({"success": False, "error": "需要正式登录的管理员账号"}), 403
+    try:
+        detail = read_admin_source_listing(get_mysql_client(), listing_id)
+    except (SourceListingUnavailable, ValueError, SQLAlchemyError):
+        logger.exception("来源专用岗位审核详情回读失败")
+        return jsonify({"success": False, "error": "来源专用岗位记录暂不可用"}), 503
+    if detail is None:
+        return jsonify(safe_not_found("来源专用岗位版本不存在")), 404
+    response = jsonify({"success": True, **detail})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@admin_bp.route('/job-source-listings', methods=['POST'])
+def publish_admin_source_only_job():
+    """Account-approved original official source, never a scored publication."""
+    from ..services.job_source_listing import (
+        list_official_source_only, SourceListingConflict,
+        SourceListingForbidden, SourceListingUnavailable,
+    )
+    from ..services.admin_job_review import JobReviewCorrupt
+
+    actor_id = _job_publication_admin()
+    if actor_id is None:
+        return jsonify({"success": False, "error": "需要正式登录的管理员账号"}), 403
+    body = _publication_body()
+    if body is None:
+        return jsonify(safe_bad_request("请求体必须是至多 256 KB 的 JSON 对象")), 400
+    if body.get("confirm_source_only") is not True:
+        return jsonify(safe_bad_request("必须明确确认仅展示官方原文、不参与评分与匹配")), 400
+    try:
+        result = list_official_source_only(
+            get_mysql_client(), review_id=body.get("review_id"),
+            listing_version=body.get("listing_version"),
+            expected_review_sha256=body.get("expected_review_sha256"),
+            expected_record_sha256=body.get("expected_source_record_sha256"),
+            actor_id=actor_id, ip=request.remote_addr)
+    except LookupError:
+        return jsonify(safe_not_found("模型岗位审查不存在")), 404
+    except SourceListingConflict as exc:
+        return jsonify({"success": False, "error": str(exc)}), 409
+    except SourceListingForbidden:
+        return jsonify({"success": False, "error": "管理员账号不再有效"}), 403
+    except IntegrityError:
+        return jsonify({"success": False, "error": "该来源展示版本已存在"}), 409
+    except (SourceListingUnavailable, JobReviewCorrupt, SQLAlchemyError):
+        logger.exception("官方来源专用岗位审核暂不可用")
+        return jsonify({"success": False, "error": "官方来源暂不可核验或数据库不可用"}), 503
+    except (ValueError, TypeError) as exc:
+        return jsonify(safe_bad_request(str(exc))), 400
+    return jsonify({"success": True, **result}), 201
+
+
+@admin_bp.route('/job-source-listings/<int:listing_id>/revoke', methods=['POST'])
+def revoke_admin_source_only_job(listing_id):
+    from ..services.job_source_listing import (
+        revoke_source_only, SourceListingConflict, SourceListingForbidden,
+        SourceListingUnavailable,
+    )
+
+    actor_id = _job_publication_admin()
+    if actor_id is None:
+        return jsonify({"success": False, "error": "需要正式登录的管理员账号"}), 403
+    body = _publication_body()
+    if body is None:
+        return jsonify(safe_bad_request("请求体必须是至多 256 KB 的 JSON 对象")), 400
+    try:
+        result = revoke_source_only(get_mysql_client(), listing_id=listing_id,
+                                    expected_digest=body.get("expected_content_sha256"),
+                                    reason=body.get("reason"), actor_id=actor_id,
+                                    ip=request.remote_addr)
+    except SourceListingConflict as exc:
+        return jsonify({"success": False, "error": str(exc)}), 409
+    except SourceListingForbidden:
+        return jsonify({"success": False, "error": "管理员账号不再有效"}), 403
+    except (SourceListingUnavailable, SQLAlchemyError):
+        logger.exception("来源专用岗位撤回暂不可用")
+        return jsonify({"success": False, "error": "来源专用岗位数据库暂不可用"}), 503
+    except ValueError as exc:
+        return jsonify(safe_bad_request(str(exc))), 400
+    if result is None:
+        return jsonify(safe_not_found("来源专用岗位不存在")), 404
+    return jsonify({"success": True, **result})
+
+
+@admin_bp.route('/job-publications', methods=['GET'])
+def list_admin_job_publications():
+    from ..services.admin_job_publication import list_admin_publications, PublicationConflict
+
+    if _job_publication_admin() is None:
+        return jsonify({"success": False, "error": "需要正式登录的管理员账号"}), 403
+    limit, offset = clamp_pagination(request.args.get("limit", type=int),
+                                     request.args.get("offset", type=int))
+    try:
+        data = list_admin_publications(get_mysql_client(), limit=limit, offset=offset)
+    except (PublicationConflict, ValueError, SQLAlchemyError):
+        logger.exception("管理员岗位发布列表回读失败")
+        return jsonify({"success": False, "error": "岗位发布记录暂不可用"}), 503
+    return jsonify({"success": True, **data})
+
+
+@admin_bp.route('/job-publications/<int:publication_id>', methods=['GET'])
+def get_admin_job_publication(publication_id):
+    from ..services.admin_job_publication import read_admin_publication, PublicationConflict
+
+    if _job_publication_admin() is None:
+        return jsonify({"success": False, "error": "需要正式登录的管理员账号"}), 403
+    try:
+        detail = read_admin_publication(get_mysql_client(), publication_id)
+    except (PublicationConflict, ValueError, SQLAlchemyError):
+        logger.exception("管理员岗位发布详情回读失败")
+        return jsonify({"success": False, "error": "岗位发布记录暂不可用"}), 503
+    if detail is None:
+        return jsonify(safe_not_found("发布版本不存在")), 404
+    response = jsonify({"success": True, **detail})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@admin_bp.route('/job-publications/preview', methods=['POST'])
+def preview_job_publication():
+    from ..services.admin_job_publication import prepare_candidate, PublicationNotReady
+
+    actor_id = _job_publication_admin()
+    if actor_id is None:
+        return jsonify({"success": False, "error": "需要正式登录的管理员账号"}), 403
+    body = _publication_body()
+    if body is None:
+        return jsonify(safe_bad_request("请求体必须是至多 256 KB 的 JSON 对象")), 400
+    try:
+        prepared = prepare_candidate(job_portrait_id=body.get("job_portrait_id"),
+                                     publication_version=body.get("publication_version"),
+                                     candidate=body.get("snapshot"), actor_id=actor_id)
+    except PublicationNotReady as exc:
+        return jsonify({"success": False, "error": str(exc),
+                        "missing_job_fields": exc.missing}), 422
+    except (ValueError, TypeError, OverflowError) as exc:
+        return jsonify(safe_bad_request(str(exc))), 400
+    signed = _preview_signer().dumps({
+        "actor": actor_id, "job": prepared["job_portrait_id"],
+        "version": prepared["publication_version"],
+        "candidate_sha256": prepared["candidate_sha256"],
+        "source_text_sha256": prepared["source_text_sha256"],
+    })
+    response = jsonify({"success": True, "status": "preview_not_approved",
+                        "job_portrait_id": prepared["job_portrait_id"],
+                        "publication_version": prepared["publication_version"],
+                        "candidate_sha256": prepared["candidate_sha256"],
+                        "source_text_sha256": prepared["source_text_sha256"],
+                        "snapshot_for_review": prepared["preview_snapshot"],
+                        "preview_token": signed, "expires_in_seconds": 600,
+                        "vacancy_validity": "unknown"})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@admin_bp.route('/job-publications', methods=['POST'])
+def publish_admin_job():
+    from ..services.admin_job_publication import (
+        prepare_candidate, publish_reviewed_candidate, PublicationNotReady,
+        PublicationConflict, PublicationForbidden,
+    )
+
+    actor_id = _job_publication_admin()
+    if actor_id is None:
+        return jsonify({"success": False, "error": "需要正式登录的管理员账号"}), 403
+    body = _publication_body()
+    if body is None:
+        return jsonify(safe_bad_request("请求体必须是至多 256 KB 的 JSON 对象")), 400
+    confirmation = body.get("confirm_review")
+    required = ("source_checked", "requirements_checked", "license_checked",
+                "publish_exact_digest")
+    if not isinstance(confirmation, dict) or any(confirmation.get(k) is not True for k in required):
+        return jsonify(safe_bad_request("缺少来源、要求、许可及精确摘要的明确审核确认")), 400
+    try:
+        prepared = prepare_candidate(job_portrait_id=body.get("job_portrait_id"),
+                                     publication_version=body.get("publication_version"),
+                                     candidate=body.get("snapshot"), actor_id=actor_id)
+    except PublicationNotReady as exc:
+        return jsonify({"success": False, "error": str(exc),
+                        "missing_job_fields": exc.missing}), 422
+    except (ValueError, TypeError, OverflowError) as exc:
+        return jsonify(safe_bad_request(str(exc))), 400
+    try:
+        signed = _preview_signer().loads(body.get("preview_token", ""), max_age=600)
+    except (BadSignature, TypeError):
+        return jsonify({"success": False, "error": "预检确认已失效，请重新预检"}), 409
+    expected = {"actor": actor_id, "job": prepared["job_portrait_id"],
+                "version": prepared["publication_version"],
+                "candidate_sha256": prepared["candidate_sha256"],
+                "source_text_sha256": prepared["source_text_sha256"]}
+    if (signed != expected or body.get("expected_candidate_sha256") != prepared["candidate_sha256"]
+            or body.get("expected_source_text_sha256") != prepared["source_text_sha256"]):
+        return jsonify({"success": False, "error": "候选或来源已改变，请重新预检"}), 409
+    try:
+        result = publish_reviewed_candidate(get_mysql_client(), prepared=prepared,
+                                            candidate=body["snapshot"], actor_id=actor_id,
+                                            ip=request.remote_addr)
+    except (PublicationConflict, IntegrityError) as exc:
+        return jsonify({"success": False, "error": str(exc) if isinstance(exc, PublicationConflict)
+                        else "该岗位发布版本已存在"}), 409
+    except PublicationForbidden:
+        return jsonify({"success": False, "error": "管理员账号不再有效"}), 403
+    except SQLAlchemyError:
+        logger.exception("岗位发布数据库事务失败")
+        return jsonify({"success": False, "error": "岗位发布数据库暂不可用"}), 503
+    return jsonify({"success": True, **result}), 201
+
+
+@admin_bp.route('/job-publications/<int:publication_id>/revoke', methods=['POST'])
+def revoke_admin_job(publication_id):
+    from ..services.admin_job_publication import (
+        revoke_publication, PublicationConflict, PublicationForbidden,
+    )
+
+    actor_id = _job_publication_admin()
+    if actor_id is None:
+        return jsonify({"success": False, "error": "需要正式登录的管理员账号"}), 403
+    body = _publication_body()
+    if body is None:
+        return jsonify(safe_bad_request("请求体必须是至多 256 KB 的 JSON 对象")), 400
+    try:
+        result = revoke_publication(get_mysql_client(), publication_id=publication_id,
+                                    expected_digest=body.get("expected_content_sha256"),
+                                    reason=body.get("reason"), actor_id=actor_id,
+                                    ip=request.remote_addr)
+    except PublicationConflict as exc:
+        return jsonify({"success": False, "error": str(exc)}), 409
+    except PublicationForbidden:
+        return jsonify({"success": False, "error": "管理员账号不再有效"}), 403
+    except ValueError as exc:
+        return jsonify(safe_bad_request(str(exc))), 400
+    except SQLAlchemyError:
+        logger.exception("岗位撤回数据库事务失败")
+        return jsonify({"success": False, "error": "岗位撤回数据库暂不可用"}), 503
+    if result is None:
+        return jsonify(safe_not_found("发布版本不存在")), 404
+    return jsonify({"success": True, **result})

@@ -19,28 +19,60 @@ from ._helpers import (
     scope_error_response,
     sub_dimensions_from_payload,
 )
+from ..config import Config
 from ..services.db import get_mysql_client
-from ..services.hybrid_retrieve import build_match_explain, hybrid_recommend
+from ..services.job_source_listing import is_source_only_id
+from ..services.hybrid_retrieve import (
+    CandidateCatalogUnavailable, build_match_explain, hybrid_recommend,
+)
 from ..utils.logger import get_logger
 
 logger = get_logger('cpa-agent.api.match')
 
 
+def _stale_match_response(mysql, student_id: str, job_portrait_id: str, match_id):
+    """Gate legacy score/explanation projections on the current L3 evidence."""
+    if Config.DEMO_MODE:
+        return None
+    if match_id is None:
+        return jsonify({"success": False, "status": "stale", "data": {
+            "job_portrait_id": job_portrait_id,
+            "reason": "match_result_unavailable",
+            "next_action": "run_match",
+        }}), 409
+    from ..services.agent_runtime.match_report_resources import read_match_report_resource
+    resource = read_match_report_resource(
+        mysql, student_id=student_id, uri=f"career://me/matches/{match_id}")
+    if not resource.get("business_artifact_verified"):
+        return jsonify({"success": False, "status": "stale", "data": {
+            "resource_id": str(match_id), "job_portrait_id": job_portrait_id,
+            "reason": resource.get("reason"), "next_action": resource.get("next_action"),
+        }}), 409
+    return None
+
+
 @match_bp.route('/run', methods=['POST'])
 def run_match():
     """执行人岗匹配 (L3 管线)"""
-    data = request.get_json() or {}
     try:
         student_id = resolve_request_scope().student_id
     except ScopeError as e:
         return scope_error_response(e)
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"success": False, "error": "请求体必须是 JSON 对象"}), 400
     job_portrait_id = data.get('job_portrait_id') or data.get('job_id')
 
-    if not job_portrait_id:
+    if (not isinstance(job_portrait_id, str) or not job_portrait_id.strip()
+            or len(job_portrait_id) > 64):
         return jsonify({
             "success": False,
-            "error": "job_portrait_id 必填"
+            "error": "job_portrait_id 必须是 1–64 字符的非空文本"
         }), 400
+    job_portrait_id = job_portrait_id.strip()
+    if is_source_only_id(job_portrait_id):
+        return jsonify({"success": False, "code": "job_source_only_unscored",
+                        "error": "该岗位仅供查看官方来源，暂不可评分或匹配"}), 409
 
     logger.info(f"触发人岗匹配: student_id={student_id}, job_portrait_id={job_portrait_id}")
 
@@ -206,16 +238,10 @@ def get_skill_gap(student_id: str, job_portrait_id: str):
 
         gap = results[0]
 
-        import json
-        gap_json = gap.get('gap_json')
-        gaps = parse_json_field(gap_json, default=[])
-        if not isinstance(gaps, list):
-            gaps = []
-
         # Enrich with explain fields (does not change stored scores)
         mr_rows = mysql.execute(
             """
-            SELECT total_score, skill_coverage, result_json
+            SELECT id, total_score, skill_coverage, result_json
             FROM match_result
             WHERE student_id = :student_id AND job_portrait_id = :job_portrait_id
             LIMIT 1
@@ -223,6 +249,12 @@ def get_skill_gap(student_id: str, job_portrait_id: str):
             {"student_id": student_id, "job_portrait_id": job_portrait_id},
         ) or []
         mr = mr_rows[0] if mr_rows else {}
+        stale = _stale_match_response(mysql, student_id, job_portrait_id, mr.get("id"))
+        if stale is not None:
+            return stale
+        gaps = parse_json_field(gap.get('gap_json'), default=[])
+        if not isinstance(gaps, list):
+            gaps = []
         result_json = parse_json_field(mr.get("result_json"), default={}) or {}
         matched = result_json.get("matched_skills") or []
         missing = result_json.get("missing_skills") or [
@@ -272,6 +304,7 @@ def explain_match(student_id: str, job_portrait_id: str):
         mr_rows = mysql.execute(
             """
             SELECT
+                mr.id,
                 mr.total_score,
                 mr.skill_coverage,
                 mr.result_json,
@@ -292,6 +325,9 @@ def explain_match(student_id: str, job_portrait_id: str):
             }), 404
 
         mr = mr_rows[0]
+        stale = _stale_match_response(mysql, student_id, job_portrait_id, mr.get("id"))
+        if stale is not None:
+            return stale
         result_json = parse_json_field(mr.get("result_json"), default={}) or {}
         matched = result_json.get("matched_skills") or []
         missing = result_json.get("missing_skills") or result_json.get("missing_required") or []
@@ -336,32 +372,53 @@ def explain_match(student_id: str, job_portrait_id: str):
 @match_bp.route('/hybrid-candidates', methods=['POST'])
 def hybrid_candidates():
     """Hybrid 召回候选（向量+关键词+图 hop）。返回 retrieve_score，不含确定性 match 总分。"""
-    data = request.get_json() or {}
-    skills = data.get("skills") or []
-    preferred_role = data.get("preferred_role") or data.get("role")
-    top_k = int(data.get("top_k") or 10)
-    top_k = max(1, min(top_k, 50))
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"success": False, "error": "请求体必须是 JSON 对象"}), 400
+    skills = data.get("skills")
+    if (not isinstance(skills, list) or not 1 <= len(skills) <= 40
+            or any(not ((isinstance(item, str) and 1 <= len(item.strip()) <= 100)
+                        or (isinstance(item, dict) and set(item) == {"name"}
+                            and isinstance(item["name"], str)
+                            and 1 <= len(item["name"].strip()) <= 100)) for item in skills)):
+        return jsonify({"success": False, "error": "skills 必须是 1 至 40 个非空技能名"}), 400
+    preferred_role = data.get("preferred_role", data.get("role"))
+    if preferred_role is not None and (not isinstance(preferred_role, str)
+                                       or not 1 <= len(preferred_role.strip()) <= 200):
+        return jsonify({"success": False, "error": "preferred_role 必须是非空文本"}), 400
+    if isinstance(preferred_role, str):
+        preferred_role = preferred_role.strip()
+    top_k = data.get("top_k", 10)
+    if type(top_k) is not int or not 1 <= top_k <= 50:
+        return jsonify({"success": False, "error": "top_k 必须是 1 至 50 的整数"}), 400
     enable_graph = data.get("enable_graph_hop", True)
-    if not skills:
-        return jsonify({"success": False, "error": "skills 必填"}), 400
+    if type(enable_graph) is not bool:
+        return jsonify({"success": False, "error": "enable_graph_hop 必须是布尔值"}), 400
     try:
         payload = hybrid_recommend(
             skills,
             preferred_role=preferred_role,
             top_k=top_k,
-            enable_graph_hop=bool(enable_graph),
+            enable_graph_hop=enable_graph,
         )
         return jsonify({"success": True, "data": payload})
+    except CandidateCatalogUnavailable:
+        logger.exception("Hybrid 候选目录不可校验")
+        return jsonify({"success": False, "status": "unavailable",
+                        "error": "候选岗位来源暂不可校验，请稍后重试"}), 503
     except Exception as e:
         return jsonify(safe_error("hybrid 召回", e, message="召回失败，请稍后重试")), 500
 
 
 @match_bp.route('/career-recommendation/<student_id>', methods=['GET'])
 def get_career_recommendation(student_id: str):
-    """获取职业发展推荐"""
+    """读取职业路径；严格模式仅可用已核验 L3 + 公共职业图作参考。"""
     try:
         require_student_path(student_id, resolve_request_scope())
         mysql = get_mysql_client()
+
+        if not Config.DEMO_MODE:
+            return _verified_career_path(mysql, student_id)
 
         job_portrait_id = request.args.get('job_portrait_id')
 
@@ -439,6 +496,81 @@ def get_career_recommendation(student_id: str):
         return jsonify(safe_error("获取职业推荐", e, message="查询失败，请稍后重试")), 500
 
 
+def _verified_career_path(mysql, student_id: str):
+    """Never promote a legacy client-written career_path row to verified advice."""
+    job_portrait_id = request.args.get("job_portrait_id")
+    if job_portrait_id is not None:
+        if not job_portrait_id.strip() or len(job_portrait_id) > 64:
+            return jsonify({"success": False, "error": "job_portrait_id 必须是 1–64 字符的非空文本"}), 400
+        job_portrait_id = job_portrait_id.strip()
+        rows = mysql.execute(
+            "SELECT id, job_portrait_id FROM match_result "
+            "WHERE student_id=:student_id AND job_portrait_id=:job_portrait_id "
+            "ORDER BY id DESC LIMIT 1",
+            {"student_id": student_id, "job_portrait_id": job_portrait_id},
+        ) or []
+    else:
+        rows = mysql.execute(
+            "SELECT id, job_portrait_id FROM match_result "
+            "WHERE student_id=:student_id ORDER BY id DESC LIMIT 1",
+            {"student_id": student_id},
+        ) or []
+    if not rows:
+        return jsonify({"success": False, "status": "not_available", "data": {
+            "reason": "verified_match_unavailable", "next_action": "run_match",
+        }}), 404
+
+    row = rows[0]
+    from ..services.agent_runtime.match_report_resources import read_match_report_resource
+    resource = read_match_report_resource(
+        mysql, student_id=student_id, uri=f"career://me/matches/{row['id']}")
+    if not resource.get("business_artifact_verified"):
+        return jsonify({"success": False, "status": "stale", "data": {
+            "resource_id": str(row["id"]), "job_portrait_id": row.get("job_portrait_id"),
+            "reason": resource.get("reason"), "next_action": resource.get("next_action"),
+        }}), 409
+
+    position_name = (resource.get("data") or {}).get("position_name")
+    if not isinstance(position_name, str) or not position_name.strip():
+        return jsonify({"success": False, "status": "stale", "data": {
+            "resource_id": str(row["id"]), "reason": "verified_job_name_unavailable",
+            "next_action": "run_match",
+        }}), 409
+
+    data = {
+        "student_id": student_id, "job_portrait_id": row["job_portrait_id"],
+        "source_match_id": str(row["id"]), "position_name": position_name,
+        "recommended_dir": None, "promotion_steps": None, "lateral_options": None,
+        "paths": [], "path_kind": "public_generic_promotion_reference",
+        "personalized_recommendation_verified": False,
+        "basis": "verified_l3_job_snapshot_and_public_career_node_exact_name",
+        "coverage": "partial", "unavailable_sources": [],
+    }
+    # Reuse the same bounded public-only template as /api/graph/query. No
+    # private Person/Skill/JobPortrait fallback or job-title similarity guess.
+    try:
+        from .graph import _execute_safe_query
+        graph_rows = _execute_safe_query("career_path", {"position_name": position_name})
+    except Exception as exc:
+        logger.warning("公共职业路径暂不可用: %s", type(exc).__name__)
+        data.update({"reason": "public_career_graph_unavailable",
+                     "unavailable_sources": ["public_career_graph"],
+                     "next_action": "retry_public_career_graph"})
+        return jsonify({"success": True, "status": "partial", "data": data})
+
+    data["paths"] = [
+        {"start": position_name, "end": item["end"], "steps": item["steps"]}
+        for item in graph_rows
+        if isinstance(item, dict) and item.get("start") == position_name
+        and isinstance(item.get("end"), str) and item["end"].strip()
+        and isinstance(item.get("steps"), int) and 1 <= item["steps"] <= 3
+    ]
+    if not data["paths"]:
+        data.update({"reason": "exact_public_promotion_path_unavailable",
+                     "next_action": "review_public_career_mapping"})
+    return jsonify({"success": True, "status": "partial", "data": data})
+
+
 @match_bp.route('/list/<student_id>', methods=['GET'])
 def list_match_results(student_id: str):
     """获取学生的所有匹配结果"""
@@ -481,6 +613,24 @@ def list_match_results(student_id: str):
             "limit": limit,
             "offset": offset
         })
+
+        # Legacy rows can outlive the job publication/profile sources used to
+        # calculate them. Reuse the authoritative resource reader before any
+        # score or result_json is returned from this collection endpoint.
+        if not Config.DEMO_MODE:
+            from ..services.agent_runtime.match_report_resources import read_match_report_resource
+            for row in results:
+                resource = read_match_report_resource(
+                    mysql, student_id=student_id,
+                    uri=f"career://me/matches/{row['id']}",
+                )
+                if not resource.get("business_artifact_verified"):
+                    return jsonify({"success": False, "status": "stale", "data": {
+                        "resource_id": str(row["id"]),
+                        "job_portrait_id": row.get("job_portrait_id"),
+                        "reason": resource.get("reason"),
+                        "next_action": resource.get("next_action"),
+                    }}), 409
 
         # 构造 sub_dimensions 字段 (与 /result 端点保持一致)
         for row in results:

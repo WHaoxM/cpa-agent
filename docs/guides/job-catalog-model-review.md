@@ -27,6 +27,10 @@
 
 `status=blocked|candidate_ready` 都不是 `approved`。`candidate_ready` 仅表示本候选通过技术完整性检查；`publication_authorized=false`，不会绕过 L3 既有 `policy_estimate/partial` 的质量边界。当前没有把新审计变成模型可调用的公开写接口。
 
+2026-10-13 后续：正式平台账号管理员现可用 `GET /api/admin/job-reviews?status=blocked|candidate_ready&limit=20&offset=0` 和 `GET /api/admin/job-reviews/<review_id>` **只读**回看模型审查。普通学生、伪造 `X-Admin` 和匿名请求不能读取；列表不发送大段来源正文，详情返回完整原始审查、阻断原因和存储摘要。每条读取先核对 `review_json` 的 SHA256、索引列与 `publication_authorized=false`；不一致为 503，不将损坏/改写的模型审查展示成可信记录。`source_current=unknown` 表示读取没有联网复核官方 feed。仅一致的 `candidate_ready` 详情会给出剥除模型 `reviewed_*` 元数据的 `candidate_for_preview`，仍须由**同一正式管理员**经独立 `/api/admin/job-publications/preview` 与人工确认/正式发布；blocked 审查没有该候选，不能由列表点击直接发布。详情中的模型文本和来源全文都是不可信资料，页面不得作为指令执行。
+
+新增真实本地 HTTP + MySQL/Redis 测试 `backend/tests/test_admin_job_review_read_http_mysql.py` 先红测未注册路由 404，再验证账号角色隔离、blocked 列表/详情、技术就绪候选交给预检但不产生发布行、审查 JSON 被改写而摘要未变时返回 503；随机账号/审查行清理。与发布及模型审查邻接测试显式开启 `CPA_TEST_LIVE_MYSQL=1` 联合 **14 passed**。当前真实 MySQL 的既有 **5 条**模型审查经只读摘要校验均为 blocked，正式发布表仍无岗位；这条只读桥接不能消除官方来源的复杂资格语义与当前评分 schema 的落差。
+
 ## 实际验证与限度
 
 2026-10-10 08:24 UTC feed 有 **63 条**记录，已完整盘点 ID/标题/截止日期。没有使用确定性语义筛选宣称“63 条全部不合格”，也没有逐条调用模型。选择两个毕业生相关候选精审：

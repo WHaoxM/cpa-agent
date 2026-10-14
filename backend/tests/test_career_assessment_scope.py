@@ -31,6 +31,19 @@ def test_career_assessment_requires_principal_before_write(monkeypatch):
     }).status_code == 401
 
 
+def test_career_assessment_rejects_malformed_skill_items_before_db(monkeypatch):
+    client = _client(monkeypatch)
+    monkeypatch.setattr(
+        career_api, "get_mysql_client",
+        lambda: (_ for _ in ()).throw(AssertionError("DB accessed")),
+    )
+    result = client.post("/api/career/assessment", json={
+        "assessed_skills": ["not-a-skill"],
+    })
+    assert result.status_code == 400
+    assert result.get_json()["success"] is False
+
+
 def test_career_assessment_binds_owner_and_only_returns_verified_id(monkeypatch):
     client = _client(monkeypatch)
     writes = []
@@ -103,6 +116,19 @@ def test_learning_progress_rejects_invalid_percentage_before_db(monkeypatch):
         "course_id": "c1", "chapter_id": "1", "progress": 101,
     })
     assert result.status_code == 400
+
+
+def test_learning_progress_rejects_non_boolean_completed_before_db(monkeypatch):
+    client = _client(monkeypatch)
+    monkeypatch.setattr(
+        learning_api, "get_mysql_client",
+        lambda: (_ for _ in ()).throw(AssertionError("DB accessed")),
+    )
+    result = client.post("/api/learning/learning/progress", json={
+        "course_id": "c1", "chapter_id": "1", "progress": 25, "completed": "false",
+    })
+    assert result.status_code == 400
+    assert result.get_json()["success"] is False
 
 
 def test_learning_progress_no_success_without_persisted_state(monkeypatch):

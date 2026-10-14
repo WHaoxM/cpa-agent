@@ -20,6 +20,19 @@ def _client(monkeypatch):
     return app.test_client()
 
 
+def test_growth_analysis_rejects_non_object_body_before_resource_lookup(monkeypatch):
+    client = _client(monkeypatch)
+
+    def unexpected_dependency():
+        raise AssertionError("invalid input must not access MySQL")
+
+    monkeypatch.setattr(ai_api, "get_mysql_client", unexpected_dependency)
+    for body in (["report_1"], 3):
+        response = client.post("/api/ai/growth-analysis", json=body)
+        assert response.status_code == 400
+        assert response.get_json()["success"] is False
+
+
 def test_growth_analysis_rejects_partial_portrait_and_browser_snapshot(monkeypatch):
     client = _client(monkeypatch)
     reads = []

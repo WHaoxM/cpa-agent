@@ -106,13 +106,10 @@ L1 管理性图谱构建不对 Agent 开放；个人图谱由已确认资料发�
     def _run_pipeline_sync(self, pipeline: str, params: dict) -> str:
         task_id = self._create_task(pipeline, params)
 
-        self.mysql.execute(
-            "UPDATE pipeline_task SET status=:status, started_at=:started_at WHERE task_id=:task_id",
-            {"status": "running", "started_at": datetime.now(), "task_id": task_id},
-            commit=True
-        )
-
         try:
+            # The delegated BasePipeline owns the sole pending→running claim
+            # and authoritative terminal write. A wrapper pre-write would make
+            # that CAS fail; a wrapper post-write could roll back a confirmation.
             result = self._execute_pipeline(pipeline, params, task_id=task_id)
             if not isinstance(result, dict) or result.get("success") is False or result.get("status") == "failed":
                 raise RuntimeError(str((result or {}).get("summary") or "管线未完成"))
@@ -120,12 +117,14 @@ L1 管理性图谱构建不对 Agent 开放；个人图谱由已确认资料发�
             final_status = result.get("status", "completed")
             if final_status not in {"completed", "needs_input", "partial"}:
                 raise RuntimeError("管线返回未知完成状态")
-            self.mysql.execute(
-                "UPDATE pipeline_task SET status=:status, completed_at=:completed_at, result_json=:result_json WHERE task_id=:task_id",
-                {"status": final_status, "completed_at": datetime.now() if final_status == "completed" else None,
-                 "result_json": json.dumps(result), "task_id": task_id},
-                commit=True
-            )
+            if isinstance(self.mysql, MySQLClient):
+                rows = self.mysql.fetch_all(
+                    "SELECT status FROM pipeline_task WHERE task_id=:task_id "
+                    "AND student_id=:student_id LIMIT 1",
+                    {"task_id": task_id, "student_id": params["student_id"]},
+                )
+                if not rows or rows[0].get("status") != final_status:
+                    raise RuntimeError("管线结果未通过权威任务状态回读")
 
             summary = result.get("summary", "处理完成")
             confirmation_workflow = None
@@ -156,11 +155,49 @@ L1 管理性图谱构建不对 Agent 开放；个人图谱由已确认资料发�
 
         except Exception as e:
             logger.error(f"管线执行失败: {e}")
-            self.mysql.execute(
-                "UPDATE pipeline_task SET status=:status, error_message=:error_message WHERE task_id=:task_id",
-                {"status": "failed", "error_message": str(e), "task_id": task_id},
-                commit=True
-            )
+            observed_status = "failed"
+            if isinstance(self.mysql, MySQLClient):
+                try:
+                    from sqlalchemy import text
+
+                    with self.mysql.engine.begin() as conn:
+                        # The delegated pipeline owns running→failed. Only a
+                        # setup error before its claim belongs to this wrapper;
+                        # never kill a currently running or terminal task.
+                        conn.execute(text(
+                            "UPDATE pipeline_task SET status=:status, error_message=:error_message "
+                            "WHERE task_id=:task_id AND student_id=:student_id "
+                            "AND status='pending'"
+                        ), {"status": "failed", "error_message": str(e),
+                            "task_id": task_id, "student_id": params["student_id"]})
+                        row = conn.execute(text(
+                            "SELECT status FROM pipeline_task WHERE task_id=:task_id "
+                            "AND student_id=:student_id LIMIT 1"
+                        ), {"task_id": task_id, "student_id": params["student_id"]}).mappings().first()
+                        observed_status = row["status"] if row else "unverified"
+                except Exception:
+                    logger.exception("管线异常后无法回读权威任务状态: %s", task_id)
+                    observed_status = "unverified"
+            else:
+                # Memory fakes used by unit tests do not expose transaction
+                # rowcount or a shared task-state store.
+                self.mysql.execute(
+                    "UPDATE pipeline_task SET status=:status, error_message=:error_message "
+                    "WHERE task_id=:task_id AND status IN ('pending','running')",
+                    {"status": "failed", "error_message": str(e), "task_id": task_id},
+                    commit=True,
+                )
+            if observed_status != "failed":
+                return json.dumps({
+                    "success": False,
+                    "message": "管线工具响应未完成，请按任务 ID 回读权威状态",
+                    "summary": "管线结果需回读",
+                    "task_id": task_id,
+                    "pipeline": pipeline,
+                    "status": "unverified",
+                    "authoritative_task_status": observed_status,
+                    "artifact_candidates": [],
+                }, ensure_ascii=False)
             return json.dumps({
                 "message": "[pipeline_run] 任务失败，请稍后重试",
                 "summary": f"{PIPELINE_TASKS.get(pipeline, pipeline)}失败",

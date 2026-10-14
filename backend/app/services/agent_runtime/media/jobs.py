@@ -54,11 +54,19 @@ celery_app = Celery("cpa_agent_media", broker=_redis_url())
 celery_app.conf.update(
     task_default_queue=MEDIA_QUEUE,
     task_routes={"cpa.media.*": {"queue": MEDIA_QUEUE}, "cpa.graph.*": {"queue": "cpa.graph"},
-                 "cpa.pipeline.*": {"queue": PIPELINE_QUEUE}},
+                 "cpa.pipeline.*": {"queue": PIPELINE_QUEUE},
+                 "cpa.catalog.*": {"queue": PIPELINE_QUEUE}},
     imports=("app.services.personal_graph_jobs", "app.services.personal_entity_link_jobs",
-             "app.services.pipeline_resume_jobs"),
-    beat_schedule={"pipeline-resume-replay": {
+             "app.services.pipeline_match_jobs", "app.services.pipeline_resume_jobs",
+             "app.services.job_source_verification_jobs"),
+    beat_schedule={"pipeline-match-replay": {
+        "task": "cpa.pipeline.replay", "schedule": _pipeline_replay_interval(),
+        "options": {"queue": PIPELINE_QUEUE},
+    }, "pipeline-resume-replay": {
         "task": "cpa.pipeline.resume_replay", "schedule": _pipeline_replay_interval(),
+        "options": {"queue": PIPELINE_QUEUE},
+    }, "official-source-refresh": {
+        "task": "cpa.catalog.refresh_source_feed", "schedule": 60,
         "options": {"queue": PIPELINE_QUEUE},
     }},
     task_serializer="json",

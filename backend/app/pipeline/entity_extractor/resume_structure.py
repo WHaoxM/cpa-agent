@@ -138,6 +138,8 @@ def _ground_semantic_facts(profile, data, text):
     profile["source_sha256"] = digest
     facts = {}
     issues = []
+    scoring_categories = get_rules_config().scoring_tables
+    category_tables = {"school_tier": "school_tier_score", "major_category": "major_category_score"}
     candidates = data.get("semantic_facts") or {}
     for key, raw in (candidates.items() if isinstance(candidates, dict) else []):
         if raw is None:
@@ -149,13 +151,23 @@ def _ground_semantic_facts(profile, data, text):
             continue
         if fact.evidence in text:
             facts[key] = {**fact.model_dump(), "source_sha256": digest}
+            table = category_tables.get(key)
+            if table and fact.value not in scoring_categories[table]:
+                # Retain the quoted candidate for human review and L0
+                # confirmation. A real quote is not proof that its value
+                # belongs to this dimension's scoring vocabulary.
+                issues.append({"field": key, "reason": "value_not_in_scoring_category"})
         else:
             issues.append({"field": key, "reason": "evidence_not_in_source"})
     if facts:
         profile["semantic_facts"] = facts
     if issues:
         profile["semantic_fact_issues"] = issues
-        profile["semantic_fact_next_action"] = "retry_fact_extraction"
+        profile["semantic_fact_next_action"] = (
+            "review_unmapped_scoring_category"
+            if all(issue["reason"] == "value_not_in_scoring_category" for issue in issues)
+            else "retry_fact_extraction"
+        )
     return profile
 
 
@@ -200,9 +212,17 @@ def _merge_grounded_facts(profile, partials, text):
         profile["semantic_fact_next_action"] = "review_conflicting_facts"
     issues = [{**issue, "window_offset": part.get("_window_offset", 0)}
               for part in partials for issue in part.get("semantic_fact_issues", [])]
+    seen = {(issue.get("field"), issue.get("reason")) for issue in issues}
+    issues.extend(issue for issue in profile.get("semantic_fact_issues", [])
+                  if (issue.get("field"), issue.get("reason")) not in seen)
     if issues:
         profile["semantic_fact_issues"] = issues
-        profile.setdefault("semantic_fact_next_action", "retry_fact_extraction")
+        if not conflicts:
+            profile["semantic_fact_next_action"] = (
+                "review_unmapped_scoring_category"
+                if all(issue["reason"] == "value_not_in_scoring_category" for issue in issues)
+                else "retry_fact_extraction"
+            )
     return profile
 
 # Character budgets for structure LLM (not silent 1.5k/2k head-slices)

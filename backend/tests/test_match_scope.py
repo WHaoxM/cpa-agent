@@ -82,3 +82,37 @@ def test_match_owned_paths_fail_closed_without_principal(monkeypatch):
     client = create_app().test_client()
     assert client.get("/api/match/explain/owner_A/job_1").status_code == 401
     assert client.post("/api/match/run", json={"job_portrait_id": "job_1"}).status_code == 401
+
+
+def test_explain_and_skill_gap_do_not_expose_revoked_match(monkeypatch):
+    from app.api import match as match_api
+    from app.services.agent_runtime import match_report_resources
+
+    client = _scoped_client(monkeypatch)
+
+    class FakeMySQL:
+        def execute(self, sql, params=None):
+            assert params["student_id"] == "owner_A"
+            if "FROM skill_gap sg" in sql:
+                return [{"student_id": "owner_A", "job_portrait_id": "job_1",
+                         "gap_json": '[{"skill":"Python"}]'}]
+            if "FROM match_result" in sql:
+                return [{"id": 42, "total_score": 80, "result_json": '{"matched_skills":["Python"]}'}]
+            raise AssertionError(sql)
+
+    monkeypatch.setattr(match_api, "get_mysql_client", FakeMySQL)
+
+    def revoked(_mysql, *, student_id, uri):
+        assert student_id == "owner_A" and uri == "career://me/matches/42"
+        return {"business_artifact_verified": False, "reason": "publication_revoked",
+                "next_action": "run_match"}
+
+    monkeypatch.setattr(match_report_resources, "read_match_report_resource", revoked)
+    monkeypatch.setattr(match_api, "build_match_explain", lambda **_kwargs: (_ for _ in ()).throw(
+        AssertionError("stale data must not reach explanation")))
+    for route in ("explain", "skill-gap"):
+        response = client.get(f"/api/match/{route}/owner_A/job_1")
+        assert response.status_code == 409
+        assert response.json["status"] == "stale"
+        assert "total_score" not in response.get_data(as_text=True)
+        assert "Python" not in response.get_data(as_text=True)

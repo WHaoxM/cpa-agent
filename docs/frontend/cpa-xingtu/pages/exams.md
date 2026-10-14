@@ -21,7 +21,7 @@
 | 加载题库 | 进入页 | （理想）本地或 `GET` 题包 | — | questions[] | `learning/exams.questions.json` | backend-gap |
 | 提交答卷 | 交卷 | `POST /api/pipeline/ext/exams` | 见下 | assessment | `pipeline/exams.create.json` | backend-ready |
 | 查结果 | 历史 | `GET /api/pipeline/ext/exams/<assessment_id>` | — | 详情 | `pipeline/exams.detail.json` | backend-ready |
-| 备选提交 | 同左 | `POST /api/career/assessment` | student_id+skills | weak/recommend | `career/assessment.create.json` | backend-ready |
+| 备选提交 | 同左 | `POST /api/career/assessment` | 当前页面送 `assessed_skills: string[]`；后端需 `{skill,level}[]` | weak/recommend | `career/assessment.create.json` | field-mismatch |
 | 最新自评 | 摘要 | `GET /api/career/assessment/student_001` | — | 最新行 | `career/assessment.latest.json` | backend-ready |
 
 ### 提交答卷 Request（pipeline/ext）
@@ -47,7 +47,7 @@
 
 ## Demo 说明
 
-- 题库 fixture + 提交走 mock ok；http 可接 assessment
+- 题库 fixture + mock 提交可演示；当前 HTTP 提交的 `assessed_skills` 形状与后端不一致，尚不能按真实自评完成验收。
 
 ## 后续实现备注
 

@@ -96,6 +96,54 @@ D:\Miniconda\miniconda3\envs\mkg\python.exe -B -m pytest -q backend/tests/test_d
 
 因此当前仍保持 partial、未知分数为 null，不生成可供真实匹配消费的“已完成画像”。
 
+### 2026-10-14：同名类别误置的窄域回归
+
+`其他理工` 是 `major_category_score` 的合法值，不在 `school_tier_score` 中。即使模型给出
+`school_tier={value:"其他理工",evidence:"其他理工"}` 且引句确实存在于来源，逐字引用只证明
+字符串来自简历，不能证明这是学校层级。L0 现在**保留**该候选事实、引句和来源 hash，同时给
+`semantic_fact_issues=[{field:"school_tier",reason:"value_not_in_scoring_category"}]`、
+`semantic_fact_next_action=review_unmapped_scoring_category`。这不是把它改成合法层级，
+也不阻断其他条件已满足的简历候选确认。有效的 `major_category="其他理工"` 仍按专业表处理。
+
+L2 对此类已确认输入继续返回 `partial`：原始学校值仍可读，`sub_school=null`、
+`school_score_basis=no_tier_mapping`、总分 null；只持久化 partial 任务，不写入评分画像。
+简历诊断报告保留此逐字引句，但该条标记 `scoring_status=unmapped_category`，
+并在 `limitations` 说明学校层级类别不可评分；报告不能把引句位置当作评分授权。
+`next_action=confirm_semantic_facts` 是机器代码，当前无语义事实修改/续跑入口，
+`action_available=false`；不能将其解释为用户现在即可通过页面补填完成。用户仍可从
+L0 候选回读原始材料，后续学校类别的评分映射须另行决定，不能把“其他理工”或普通本科
+擅自填成一本/二本。
+
+用户已确定人工修正学校评分档位的证据门槛：**只接受可核验的学校官方或教育主管部门材料**。
+学生自报、模型推断、一般网页与仅出现学校名称的简历引句均不能批准映射；校方材料若只证明
+“普通本科”，却不能唯一落到当前 `school_tier_score` 档位，也仍不得补分。将来若实现审核入口，
+须把学校原名、精确档位、官方来源定位/摘录、审核账号、审核时间和适用的 L0 确认版本绑定，
+在生成 L2 前回查，并让撤回或换版后的旧画像不再可用。当前没有这个入口，不能把本口径误报为已修复的 L2 恢复能力。
+
+回归用合成的、含错置类别及可评分 D3 自述的 L0 `needs_input` 候选，
+先经真实 MySQL 的 `confirm_resume_candidate` 事务确认（仅个人图谱投影替身，不测试 LangGraph/确认 HTTP），再通过
+`GET /api/profile/student/candidate/<task_id>` 和 `POST /api/profile/student/pipeline`
+验收：前者可读原引句/错误类别标记；后者 HTTP 200 但业务状态 `partial`，权威
+`pipeline_task` 为 partial，`student_portrait_4d` 无该学生行，清理后无临时数据。
+回放：
+
+```powershell
+$env:CPA_TEST_LIVE_MYSQL='1'
+& 'D:\Miniconda\miniconda3\envs\mkg\python.exe' -B -m pytest -q backend/tests/test_l2_unmapped_school_tier_mysql.py
+```
+
+该测试替代不了真实模型重新生成、用户亲自确认或真实学校层级规则签审；旧
+`student_001/task_56edb2e94056` 已不再是当前确认源，只读探针按当前源门禁拒绝，
+不复用旧候选或旧 task ID。
+
+该窄修仅在既有 Pydantic 校验与来源绑定之后，增加评分表成员检测及报告投影标记，
+没有自建新的 Agent 解析/确认状态机。复核本地 OpenCode
+`388406238bd5ca15564a762840a2362c3a45bd9c` 的
+`packages/opencode/src/session/prompt.ts:createStructuredOutputTool`（结构校验在接收前），
+以及本地 Codex `a06545b311fe01e51ce855c7aa5d8da21e9e7aaf` 的
+`codex-rs/protocol/src/request_user_input.rs`（结构化候选与用户答复分开）；
+两者都不提供本项目的学校评分词表，业务类别校验仍由现有 repo rules 薄适配完成。
+
 ### 只读重放
 
 ```powershell

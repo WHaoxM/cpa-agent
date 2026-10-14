@@ -77,10 +77,11 @@ class EmbeddingService:
                 os.environ.setdefault('HF_ENDPOINT', hf_endpoint)
             # 显式指定 cache_folder, 确保走项目内 models/embeddings/ 而非 C 盘默认缓存
             cache_folder = os.environ.get('SENTENCE_TRANSFORMERS_HOME', str(_EMBEDDING_CACHE))
+            started = time.perf_counter()
             self._model = SentenceTransformer(self.model_name, cache_folder=cache_folder)
             self._load_time = time.time()
 
-            logger.info(f"BGE-M3 模型加载成功, 耗时: {self._load_time:.2f}s")
+            logger.info(f"BGE-M3 模型加载成功, 耗时: {time.perf_counter() - started:.2f}s")
 
         except ImportError as e:
             logger.error(

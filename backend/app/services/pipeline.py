@@ -11,6 +11,7 @@ import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import Enum
+from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 from ..utils.logger import get_logger
@@ -387,6 +388,40 @@ def source_blocked_result(pipeline: BasePipeline, error: PipelineSourceUnavailab
     return result
 
 
+def _locked_l3_l4_sources(conn, pipeline: BasePipeline, original_sources: dict,
+                          *, lock_match: bool = False):
+    """Recheck source versions under the same locks held until result commit."""
+    from sqlalchemy import text
+    from .pipeline_events import ConfirmationTransaction
+
+    student_id = pipeline.params["student_id"]
+    job_id = pipeline.params.get("job_portrait_id") or pipeline.params.get("job_id")
+    # Confirmation and L2 writers also lock this owner profile first.
+    conn.execute(text(
+        "SELECT student_id FROM student_profile WHERE student_id=:sid FOR UPDATE"
+    ), {"sid": student_id}).first()
+    # A locking current read observes a committed revoke/new version instead
+    # of the transaction's earlier consistent-read snapshot. The latest row
+    # remains locked until the match/report and task outcome are committed.
+    conn.execute(text(
+        "SELECT id FROM job_catalog_publication WHERE job_portrait_id=:jid "
+        "ORDER BY id DESC LIMIT 1 FOR UPDATE"
+    ), {"jid": job_id}).first()
+    if lock_match:
+        conn.execute(text(
+            "SELECT id FROM match_result WHERE student_id=:sid AND job_portrait_id=:jid "
+            "LIMIT 1 FOR UPDATE"
+        ), {"sid": student_id, "jid": job_id}).first()
+    transaction = ConfirmationTransaction(conn)
+    profile = require_confirmed_profile(transaction, student_id)
+    sources = require_authoritative_match_sources(transaction, student_id, job_id, profile)
+    if sources["references"] != original_sources["references"]:
+        raise PipelineSourceUnavailable(
+            "sources_changed_during_run", "retry_with_current_sources",
+            "简历、画像或岗位来源在执行期间变化，请刷新后重试", sources["references"])
+    return transaction, profile, sources
+
+
 def confirm_resume_candidate(mysql, *, student_id: str, task_id: str, acknowledge_partial: bool = False) -> dict:
     if isinstance(mysql, MySQLClient):
         from sqlalchemy import text
@@ -630,53 +665,104 @@ class L2GeneratePortraitPipeline(BasePipeline):
             # 写入 MySQL student_portrait_4d (v2.0 Schema)
             skill_cov = portrait.get("D2_skill", {}).get("skill_coverage", 0)
 
-            self.mysql.execute(
-                """INSERT INTO student_portrait_4d
+            portrait_values = {
+                "sid": student_id, "jid": job_id,
+                "d1": d1_score, "d2": d2_score, "d3": d3_score, "d4": d4_score,
+                "comp": comp_score, "cov": skill_cov,
+                "lvl": summary.get("competitiveness_level", ""),
+                "complete": summary.get("completeness_score", 0), "count": len(skills),
+                "pj": json.dumps(portrait, ensure_ascii=False),
+            }
+            insert_sql = """INSERT INTO student_portrait_4d
                    (student_id, target_job_id, d1_score, d2_score, d3_score, d4_score,
                     competitiveness, competitiveness_lvl, completeness, skill_count,
                     skill_coverage, portrait_json, updated_at)
                    VALUES (:sid, :jid, :d1, :d2, :d3, :d4, :comp, :lvl, :complete, :count, :cov, :pj, NOW())
                    ON DUPLICATE KEY UPDATE d1_score=:d1, d2_score=:d2, d3_score=:d3, d4_score=:d4,
                     competitiveness=:comp, competitiveness_lvl=:lvl, completeness=:complete, skill_count=:count,
-                    skill_coverage=:cov, portrait_json=:pj, updated_at=NOW()""",
-                {
-                    "sid": student_id, "jid": job_id,
-                    "d1": d1_score, "d2": d2_score, "d3": d3_score, "d4": d4_score,
-                    "comp": comp_score, "cov": skill_cov,
-                    "lvl": summary.get("competitiveness_level", ""),
-                    "complete": summary.get("completeness_score", 0), "count": len(skills),
-                    "pj": json.dumps(portrait, ensure_ascii=False),
-                },
-                commit=True,
-            )
-            records = self.mysql.fetch_all(
-                "SELECT id, portrait_json FROM student_portrait_4d WHERE student_id=:sid AND target_job_id <=> :jid ORDER BY id DESC LIMIT 1",
-                {"sid": student_id, "jid": job_id})
-            saved = records[0] if records else {}
-            saved_payload = saved.get("portrait_json") or {}
-            saved_payload = json.loads(saved_payload) if isinstance(saved_payload, str) else saved_payload
-            if not saved.get("id") or saved_payload.get("source_confirmation_task_id") != portrait["source_confirmation_task_id"]:
-                raise RuntimeError("画像写入未通过权威记录回读验证")
+                    skill_coverage=:cov, portrait_json=:pj, updated_at=NOW()"""
+            def completed_result(saved):
+                saved_payload = saved.get("portrait_json") or {}
+                saved_payload = json.loads(saved_payload) if isinstance(saved_payload, str) else saved_payload
+                if (not saved.get("id")
+                        or saved_payload.get("source_confirmation_task_id") != portrait["source_confirmation_task_id"]
+                        or saved_payload.get("source_portrait_task_id") != self.task_id):
+                    raise RuntimeError("画像写入未通过权威记录回读验证")
+                return {
+                    "status": "completed", "resource_type": "student_portrait_4d",
+                    "resource_id": str(saved["id"]), "portrait_id": str(saved["id"]),
+                    "source_confirmation_task_id": portrait["source_confirmation_task_id"],
+                    "portrait": portrait,
+                    "student_id": student_id,
+                    "job_id": job_id,
+                    "competitiveness_score": comp_score,
+                    "competitiveness_level": summary.get("competitiveness_level", ""),
+                    "completeness_score": summary.get("completeness_score", 0),
+                    "d1_score": d1_score,
+                    "d2_score": d2_score,
+                    "d3_score": d3_score,
+                    "d4_score": d4_score,
+                    "skill_coverage": skill_cov,
+                    "summary": f"画像生成完成，竞争力 {comp_score} ({summary.get('competitiveness_level', '')})"
+                }
 
-            result = {
-                "status": "completed", "resource_type": "student_portrait_4d",
-                "resource_id": str(saved["id"]), "portrait_id": str(saved["id"]),
-                "source_confirmation_task_id": portrait["source_confirmation_task_id"],
-                "portrait": portrait,
-                "student_id": student_id,
-                "job_id": job_id,
-                "competitiveness_score": comp_score,
-                "competitiveness_level": summary.get("competitiveness_level", ""),
-                "completeness_score": summary.get("completeness_score", 0),
-                "d1_score": d1_score,
-                "d2_score": d2_score,
-                "d3_score": d3_score,
-                "d4_score": d4_score,
-                "skill_coverage": skill_cov,
-                "summary": f"画像生成完成，竞争力 {comp_score} ({summary.get('competitiveness_level', '')})"
-            }
-            self.update_status(PipelineStatus.COMPLETED, result)
-            return result
+            if isinstance(self.mysql, MySQLClient):
+                # Keep the domain row, task terminal status and status-journal
+                # trigger in ONE MySQL transaction. Locking the confirmed
+                # profile also serializes concurrent untargeted writes, whose
+                # nullable MySQL unique key otherwise permits duplicates.
+                from sqlalchemy import text
+                with self.mysql.engine.begin() as conn:
+                    profile_row = conn.execute(text(
+                        "SELECT profile_json FROM student_profile WHERE student_id=:sid FOR UPDATE"
+                    ), {"sid": student_id}).mappings().first()
+                    current_profile = profile_row.get("profile_json") if profile_row else None
+                    current_profile = json.loads(current_profile) if isinstance(current_profile, str) else current_profile
+                    current_confirmation = (current_profile or {}).get("_resume_confirmation") if isinstance(current_profile, dict) else None
+                    if not isinstance(current_confirmation, dict) or current_confirmation.get("task_id") != portrait["source_confirmation_task_id"]:
+                        raise ValueError("已确认简历在画像生成期间发生变化，请重新生成")
+                    existing = conn.execute(text(
+                        "SELECT id FROM student_portrait_4d "
+                        "WHERE student_id=:sid AND target_job_id <=> :jid "
+                        "ORDER BY id DESC LIMIT 1 FOR UPDATE"
+                    ), {"sid": student_id, "jid": job_id}).mappings().first()
+                    if existing:
+                        conn.execute(text(
+                            "UPDATE student_portrait_4d SET d1_score=:d1, d2_score=:d2, "
+                            "d3_score=:d3, d4_score=:d4, competitiveness=:comp, "
+                            "competitiveness_lvl=:lvl, completeness=:complete, "
+                            "skill_count=:count, skill_coverage=:cov, portrait_json=:pj, "
+                            "updated_at=NOW() WHERE id=:portrait_id AND student_id=:sid "
+                            "AND target_job_id <=> :jid"
+                        ), {**portrait_values, "portrait_id": existing["id"]})
+                    else:
+                        conn.execute(text(insert_sql), portrait_values)
+                    saved = conn.execute(text(
+                        "SELECT id, portrait_json FROM student_portrait_4d "
+                        "WHERE student_id=:sid AND target_job_id <=> :jid "
+                        "ORDER BY id DESC LIMIT 1"
+                    ), {"sid": student_id, "jid": job_id}).mappings().first()
+                    result = completed_result(dict(saved) if saved else {})
+                    changed = conn.execute(text(
+                        "UPDATE pipeline_task SET status='completed', completed_at=NOW(), "
+                        "result_json=:result WHERE task_id=:task_id AND student_id=:sid "
+                        "AND status='running'"
+                    ), {"result": json.dumps(result, ensure_ascii=False),
+                        "task_id": self.task_id, "sid": student_id})
+                    if changed.rowcount != 1:
+                        raise RuntimeError("画像任务终态未通过权威行更新验证")
+                return result
+            else:
+                # In-memory repositories used by unit tests retain their own
+                # transaction semantics; real MySQL always uses the branch above.
+                self.mysql.execute(insert_sql, portrait_values, commit=True)
+                records = self.mysql.fetch_all(
+                    "SELECT id, portrait_json FROM student_portrait_4d "
+                    "WHERE student_id=:sid AND target_job_id <=> :jid ORDER BY id DESC LIMIT 1",
+                    {"sid": student_id, "jid": job_id})
+                result = completed_result(records[0] if records else {})
+                self.update_status(PipelineStatus.COMPLETED, result)
+                return result
         except Exception as e:
             logger.error(f"[L2] 生成失败: {e}")
             self.update_status(PipelineStatus.FAILED, error=str(e))
@@ -693,8 +779,18 @@ class L3RunMatchPipeline(BasePipeline):
                 self.mysql, self.params.get("student_id"),
                 self.params.get("job_portrait_id") or self.params.get("job_id"), profile)
             from .verified_match_report import persist_match
-            result = persist_match(self, profile, sources)
-            self.update_status(PipelineStatus(result["status"]), result)
+            if isinstance(self.mysql, MySQLClient):
+                with self.mysql.engine.begin() as conn:
+                    transaction, current_profile, current_sources = _locked_l3_l4_sources(
+                        conn, self, sources)
+                    transaction_pipeline = SimpleNamespace(
+                        task_id=self.task_id, params=self.params,
+                        mysql=transaction)
+                    result = persist_match(transaction_pipeline, current_profile, current_sources)
+                    _commit_l3_l4_task_result(conn, self, result)
+            else:
+                result = persist_match(self, profile, sources)
+                self.update_status(PipelineStatus(result["status"]), result)
             return result
         except PipelineSourceUnavailable as exc:
             return source_blocked_result(self, exc)
@@ -713,14 +809,50 @@ class L4GenerateReportPipeline(BasePipeline):
                 self.mysql, self.params.get("student_id"),
                 self.params.get("job_portrait_id") or self.params.get("job_id"), profile)
             from .verified_match_report import persist_report
-            result = persist_report(self, sources)
-            self.update_status(PipelineStatus.PARTIAL, result)
+            if isinstance(self.mysql, MySQLClient):
+                with self.mysql.engine.begin() as conn:
+                    transaction, _, current_sources = _locked_l3_l4_sources(
+                        conn, self, sources, lock_match=True)
+                    transaction_pipeline = SimpleNamespace(
+                        task_id=self.task_id, params=self.params,
+                        mysql=transaction)
+                    result = persist_report(transaction_pipeline, current_sources)
+                    _commit_l3_l4_task_result(conn, self, result)
+            else:
+                result = persist_report(self, sources)
+                self.update_status(PipelineStatus.PARTIAL, result)
             return result
         except PipelineSourceUnavailable as exc:
             return source_blocked_result(self, exc)
         except Exception as exc:
             self.update_status(PipelineStatus.FAILED, error=str(exc))
             raise
+
+
+def _commit_l3_l4_task_result(conn, pipeline: BasePipeline, result: dict) -> None:
+    """Publish a match/report and its task result in the same MySQL commit."""
+    from sqlalchemy import text
+
+    status = PipelineStatus(result["status"])
+    if status not in (PipelineStatus.PARTIAL, PipelineStatus.COMPLETED):
+        raise ValueError("匹配/报告终态无效")
+    claim_token = getattr(pipeline, "claim_token", None)
+    claim_guard = (
+        " AND EXISTS (SELECT 1 FROM pipeline_match_dispatch d "
+        "WHERE d.task_id=pipeline_task.task_id AND d.claim_token=:claim_token)"
+        if claim_token is not None else ""
+    )
+    changed = conn.execute(text(
+        "UPDATE pipeline_task SET status=:status, completed_at=:completed_at, "
+        "result_json=:result WHERE task_id=:task_id AND student_id=:sid "
+        "AND status='running'" + claim_guard
+    ), {"status": status.value,
+        "completed_at": datetime.now() if status == PipelineStatus.COMPLETED else None,
+        "result": json.dumps(result, ensure_ascii=False),
+        "task_id": pipeline.task_id, "sid": pipeline.params["student_id"],
+        **({"claim_token": claim_token} if claim_token is not None else {})})
+    if changed.rowcount != 1:
+        raise RuntimeError("匹配/报告任务终态未通过权威行更新验证")
 
 
 class PipelineRunner:

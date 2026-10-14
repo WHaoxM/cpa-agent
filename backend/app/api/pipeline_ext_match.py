@@ -18,8 +18,26 @@ import json
 
 from flask import request, jsonify
 
-from ._helpers import clamp_pagination, safe_error
+from ._helpers import ScopeError, clamp_pagination, resolve_request_scope, safe_error, scope_error_response
+from ..config import Config
 from .pipeline_ext_common import pipeline_ext_bp, logger, _normalize_skills
+
+
+def _retired_legacy_l3_response():
+    """Caller-supplied scores cannot be promoted to authoritative L3 artifacts."""
+    if Config.DEMO_MODE:
+        return None
+    try:
+        resolve_request_scope()
+    except ScopeError as error:
+        return scope_error_response(error)
+    return jsonify({
+        "success": False,
+        "status": "legacy_disabled",
+        "error": "旧 L3 接口接受客户端提供的身份或评分，严格模式已停用",
+        "next_action": "use_verified_match_api",
+        "routes": {"run": "/api/match/run", "list": "/api/match/list/<student_id>"},
+    }), 410
 
 
 @pipeline_ext_bp.route('/save/match-result', methods=['POST'])
@@ -39,6 +57,9 @@ def save_match_result():
             "match_level": "良好"
         }
     """
+    retired = _retired_legacy_l3_response()
+    if retired is not None:
+        return retired
     data = request.get_json() or {}
 
     student_id = data.get('student_id', '')
@@ -127,6 +148,9 @@ def save_skill_gap():
             ]
         }
     """
+    retired = _retired_legacy_l3_response()
+    if retired is not None:
+        return retired
     data = request.get_json() or {}
 
     student_id = data.get('student_id', '')
@@ -199,6 +223,9 @@ def save_career_path():
             "path_json": {...}
         }
     """
+    retired = _retired_legacy_l3_response()
+    if retired is not None:
+        return retired
     data = request.get_json() or {}
 
     student_id = data.get('student_id', '')
@@ -265,6 +292,9 @@ def full_match_pipeline():
             "job_skills": [...]
         }
     """
+    retired = _retired_legacy_l3_response()
+    if retired is not None:
+        return retired
     data = request.get_json() or {}
 
     student_id = data.get('student_id', '')
@@ -373,6 +403,9 @@ def list_match_results():
     Query:
         ?student_id=xxx&limit=10&offset=0
     """
+    retired = _retired_legacy_l3_response()
+    if retired is not None:
+        return retired
     student_id = request.args.get('student_id', '')
     limit, offset = clamp_pagination(
         request.args.get('limit', type=int),
@@ -439,6 +472,9 @@ def get_match_trend():
     Query:
         ?student_id=stu_001
     """
+    retired = _retired_legacy_l3_response()
+    if retired is not None:
+        return retired
     student_id = request.args.get('student_id', '')
 
     if not student_id:
