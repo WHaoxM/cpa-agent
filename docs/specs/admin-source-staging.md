@@ -12,7 +12,7 @@
 
 `GET /api/admin/{dataset|knowledge-base}/<id>/content` 管理员回读完整暂存原文；每次回读检查固定 ID 路径、常规文件、大小、SHA-256，dataset 还检查解析条目数。旧元数据记录返回 409；来源文件缺失、路径不安全或摘要不符返回 503，不会把失效文件作为真值。`DELETE /api/admin/{dataset|knowledge-base}/<id>` 删除数据库行及对应私有文件；删除事务失败时恢复文件。所有这些路由均经过现有服务端管理员门禁。
 
-没有任何公开岗位目录、`job_posting`、`job_catalog_publication`、技能/知识图谱或 L3/L4 数据从该暂存区自动生成。`POST /api/admin/pipeline/build` 仍明确返回 503 且不创建任务。暂存文件的来源真实性与业务字段尚未审核；不能仅凭 JSON 可解析、SHA-256 或上传者管理员身份认定其为可信 JD。
+暂存不会**自动**生成公开岗位目录、`job_posting`、`job_catalog_publication`、技能/知识图谱或 L3/L4 数据。`POST /api/admin/pipeline/build` 仍明确返回 503 且不创建任务。暂存文件的来源真实性与业务字段尚未审核；不能仅凭 JSON 可解析、SHA-256 或上传者管理员身份认定其为可信 JD。明确选定的单条 dataset 记录现在可以进入独立的正式管理员预检→人工确认→发布流程；服务端两次重读来源并把 dataset/record 摘要写入发布快照，见 [dataset 来源绑定](admin-dataset-publication-binding.md)。这仍不表示暂存内容是官方来源或可以自动评分。
 
 ## 部署与恢复
 

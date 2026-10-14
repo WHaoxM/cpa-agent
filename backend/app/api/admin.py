@@ -726,6 +726,36 @@ def _preview_signer():
     return URLSafeTimedSerializer(current_app.secret_key, salt="cpa-job-publication-preview-v1")
 
 
+def _publication_source_candidate(body, *, publish=False):
+    """Keep staged dataset bytes separate from the legacy manual external source."""
+    from ..services.job_dataset_publication import (
+        resolve_staged_candidate, has_dataset_provenance,
+    )
+
+    if "source_dataset_id" not in body:
+        if any(key in body for key in ("source_record_index", "expected_dataset_sha256",
+                                       "expected_record_sha256")):
+            raise ValueError("dataset 来源参数须同时包含 source_dataset_id")
+        candidate = body.get("snapshot")
+        if has_dataset_provenance(candidate):
+            raise ValueError("dataset 来源绑定不得由客户端 snapshot 自报")
+        return candidate, None
+    if "snapshot" in body:
+        raise ValueError("dataset 来源模式不得提交客户端 snapshot；服务端会重读原文件")
+    reference = {
+        "dataset_id": body.get("source_dataset_id"),
+        "record_index": body.get("source_record_index"),
+        "expected_dataset_sha256": body.get("expected_dataset_sha256"),
+        "expected_record_sha256": body.get("expected_record_sha256"),
+    }
+    if publish and reference["expected_record_sha256"] is None:
+        raise ValueError("最终发布必须提供预检得到的 expected_record_sha256")
+    with get_mysql_client().engine.connect() as conn:
+        candidate, record_sha256 = resolve_staged_candidate(conn, **reference)
+    reference["expected_record_sha256"] = record_sha256
+    return candidate, reference
+
+
 @admin_bp.route('/job-reviews', methods=['GET'])
 def list_admin_job_source_reviews():
     """Read-only model audit queue; not an approval or source-currentness API."""
@@ -1017,6 +1047,7 @@ def get_admin_job_publication(publication_id):
 @admin_bp.route('/job-publications/preview', methods=['POST'])
 def preview_job_publication():
     from ..services.admin_job_publication import prepare_candidate, PublicationNotReady
+    from ..services.job_dataset_publication import DatasetCandidateChanged, DatasetCandidateUnavailable
 
     actor_id = _job_publication_admin()
     if actor_id is None:
@@ -1025,25 +1056,36 @@ def preview_job_publication():
     if body is None:
         return jsonify(safe_bad_request("请求体必须是至多 256 KB 的 JSON 对象")), 400
     try:
+        candidate, dataset_reference = _publication_source_candidate(body)
         prepared = prepare_candidate(job_portrait_id=body.get("job_portrait_id"),
                                      publication_version=body.get("publication_version"),
-                                     candidate=body.get("snapshot"), actor_id=actor_id)
+                                     candidate=candidate, actor_id=actor_id,
+                                     dataset_bound=dataset_reference is not None)
+    except DatasetCandidateChanged as exc:
+        return jsonify({"success": False, "error": str(exc)}), 409
+    except DatasetCandidateUnavailable:
+        return jsonify({"success": False, "error": "暂存数据集文件不可用或完整性校验失败"}), 503
     except PublicationNotReady as exc:
         return jsonify({"success": False, "error": str(exc),
                         "missing_job_fields": exc.missing}), 422
     except (ValueError, TypeError, OverflowError) as exc:
         return jsonify(safe_bad_request(str(exc))), 400
+    except SQLAlchemyError:
+        logger.exception("岗位数据集预检数据库暂不可用")
+        return jsonify({"success": False, "error": "岗位数据集数据库暂不可用"}), 503
     signed = _preview_signer().dumps({
         "actor": actor_id, "job": prepared["job_portrait_id"],
         "version": prepared["publication_version"],
         "candidate_sha256": prepared["candidate_sha256"],
         "source_text_sha256": prepared["source_text_sha256"],
+        "dataset_reference": dataset_reference,
     })
     response = jsonify({"success": True, "status": "preview_not_approved",
                         "job_portrait_id": prepared["job_portrait_id"],
                         "publication_version": prepared["publication_version"],
                         "candidate_sha256": prepared["candidate_sha256"],
                         "source_text_sha256": prepared["source_text_sha256"],
+                        "dataset_reference": dataset_reference,
                         "snapshot_for_review": prepared["preview_snapshot"],
                         "preview_token": signed, "expires_in_seconds": 600,
                         "vacancy_validity": "unknown"})
@@ -1057,6 +1099,7 @@ def publish_admin_job():
         prepare_candidate, publish_reviewed_candidate, PublicationNotReady,
         PublicationConflict, PublicationForbidden,
     )
+    from ..services.job_dataset_publication import DatasetCandidateChanged, DatasetCandidateUnavailable
 
     actor_id = _job_publication_admin()
     if actor_id is None:
@@ -1070,14 +1113,23 @@ def publish_admin_job():
     if not isinstance(confirmation, dict) or any(confirmation.get(k) is not True for k in required):
         return jsonify(safe_bad_request("缺少来源、要求、许可及精确摘要的明确审核确认")), 400
     try:
+        candidate, dataset_reference = _publication_source_candidate(body, publish=True)
         prepared = prepare_candidate(job_portrait_id=body.get("job_portrait_id"),
                                      publication_version=body.get("publication_version"),
-                                     candidate=body.get("snapshot"), actor_id=actor_id)
+                                     candidate=candidate, actor_id=actor_id,
+                                     dataset_bound=dataset_reference is not None)
+    except DatasetCandidateChanged as exc:
+        return jsonify({"success": False, "error": str(exc)}), 409
+    except DatasetCandidateUnavailable:
+        return jsonify({"success": False, "error": "暂存数据集文件不可用或完整性校验失败"}), 503
     except PublicationNotReady as exc:
         return jsonify({"success": False, "error": str(exc),
                         "missing_job_fields": exc.missing}), 422
     except (ValueError, TypeError, OverflowError) as exc:
         return jsonify(safe_bad_request(str(exc))), 400
+    except SQLAlchemyError:
+        logger.exception("岗位数据集发布前回读数据库暂不可用")
+        return jsonify({"success": False, "error": "岗位数据集数据库暂不可用"}), 503
     try:
         signed = _preview_signer().loads(body.get("preview_token", ""), max_age=600)
     except (BadSignature, TypeError):
@@ -1085,17 +1137,21 @@ def publish_admin_job():
     expected = {"actor": actor_id, "job": prepared["job_portrait_id"],
                 "version": prepared["publication_version"],
                 "candidate_sha256": prepared["candidate_sha256"],
-                "source_text_sha256": prepared["source_text_sha256"]}
+                "source_text_sha256": prepared["source_text_sha256"],
+                "dataset_reference": dataset_reference}
     if (signed != expected or body.get("expected_candidate_sha256") != prepared["candidate_sha256"]
             or body.get("expected_source_text_sha256") != prepared["source_text_sha256"]):
         return jsonify({"success": False, "error": "候选或来源已改变，请重新预检"}), 409
     try:
         result = publish_reviewed_candidate(get_mysql_client(), prepared=prepared,
-                                            candidate=body["snapshot"], actor_id=actor_id,
-                                            ip=request.remote_addr)
-    except (PublicationConflict, IntegrityError) as exc:
+                                            candidate=candidate, actor_id=actor_id,
+                                            ip=request.remote_addr,
+                                            dataset_reference=dataset_reference)
+    except (PublicationConflict, DatasetCandidateChanged, IntegrityError) as exc:
         return jsonify({"success": False, "error": str(exc) if isinstance(exc, PublicationConflict)
-                        else "该岗位发布版本已存在"}), 409
+                        else "岗位来源已改变或该发布版本已存在"}), 409
+    except DatasetCandidateUnavailable:
+        return jsonify({"success": False, "error": "暂存数据集文件不可用或完整性校验失败"}), 503
     except PublicationForbidden:
         return jsonify({"success": False, "error": "管理员账号不再有效"}), 403
     except SQLAlchemyError:

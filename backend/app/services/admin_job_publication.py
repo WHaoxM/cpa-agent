@@ -14,12 +14,15 @@ from sqlalchemy import text
 
 from .job_publication import (canonical_json, content_sha256,
                               scoring_readiness, validate_snapshot)
+from .job_dataset_publication import resolve_staged_candidate, has_dataset_provenance
 
 _CANDIDATE_FIELDS = frozenset({
     "position_name", "source_uri", "source_text", "source_text_sha256",
     "source_fetched_at", "source_closes_at", "source_license", "source_license_uri",
     "source_record_id", "source_record_sha256", "source_feed_sha256",
     "field_evidence", "required_skills", "job_profile",
+    "source_provenance_kind", "staged_dataset_id", "staged_dataset_record_index",
+    "staged_dataset_sha256", "staged_record_sha256",
 })
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -44,7 +47,8 @@ def _ident(value, name):
     return value.strip()
 
 
-def prepare_candidate(*, job_portrait_id, publication_version, candidate, actor_id):
+def prepare_candidate(*, job_portrait_id, publication_version, candidate, actor_id,
+                      dataset_bound=False):
     """Validate the untrusted exact candidate; never accept browser review metadata."""
     job_portrait_id = _ident(job_portrait_id, "job_portrait_id")
     if job_portrait_id.startswith("source_csb_"):
@@ -53,6 +57,8 @@ def prepare_candidate(*, job_portrait_id, publication_version, candidate, actor_
     _ident(actor_id, "reviewer")
     if not isinstance(candidate, dict) or set(candidate) - _CANDIDATE_FIELDS:
         raise ValueError("snapshot 含未知字段或客户端审核元数据")
+    if has_dataset_provenance(candidate) and not dataset_bound:
+        raise ValueError("dataset 来源绑定只能由服务端读取暂存文件生成")
     if not isinstance(candidate.get("source_text"), str) or len(candidate["source_text"]) > 200_000:
         raise ValueError("source_text 无效或超出 200000 字符")
     if (not isinstance(candidate.get("source_uri"), str)
@@ -95,11 +101,14 @@ def _require_current_admin(conn, actor_id):
 
 
 def _audit(conn, *, actor_id, action, job_id, publication_id, version,
-           content_digest, source_digest, candidate_digest=None, reason=None, ip=None):
+           content_digest, source_digest, candidate_digest=None, reason=None, ip=None,
+           dataset_reference=None):
     detail = {"publication_id": publication_id, "publication_version": version,
               "content_sha256": content_digest, "source_text_sha256": source_digest}
     if candidate_digest is not None:
         detail["candidate_sha256"] = candidate_digest
+    if dataset_reference is not None:
+        detail["dataset_reference"] = dataset_reference
     if reason is not None:
         detail["reason"] = reason
     conn.execute(text(
@@ -109,7 +118,8 @@ def _audit(conn, *, actor_id, action, job_id, publication_id, version,
          "detail": canonical_json(detail), "ip": ip})
 
 
-def publish_reviewed_candidate(mysql, *, prepared, candidate, actor_id, ip=None):
+def publish_reviewed_candidate(mysql, *, prepared, candidate, actor_id, ip=None,
+                               dataset_reference=None):
     """Atomic immutable version + audit; no UPSERT or user-controlled reviewer."""
     if prepared["candidate_sha256"] != content_sha256(candidate):
         raise PublicationConflict("岗位候选在预检后已改变")
@@ -124,6 +134,10 @@ def publish_reviewed_candidate(mysql, *, prepared, candidate, actor_id, ip=None)
     digest = content_sha256(snapshot)
     with mysql.engine.begin() as conn:
         _require_current_admin(conn, actor_id)
+        if dataset_reference is not None:
+            current, _ = resolve_staged_candidate(conn, **dataset_reference, lock=True)
+            if current != candidate or content_sha256(current) != prepared["candidate_sha256"]:
+                raise PublicationConflict("暂存数据集岗位记录在发布事务前已改变")
         existing = conn.execute(text(
             "SELECT id FROM job_catalog_publication WHERE job_portrait_id=:jid "
             "AND publication_version=:version FOR UPDATE"),
@@ -151,7 +165,8 @@ def publish_reviewed_candidate(mysql, *, prepared, candidate, actor_id, ip=None)
                job_id=prepared["job_portrait_id"], publication_id=publication_id,
                version=prepared["publication_version"], content_digest=digest,
                source_digest=candidate["source_text_sha256"],
-               candidate_digest=prepared["candidate_sha256"], ip=ip)
+               candidate_digest=prepared["candidate_sha256"], ip=ip,
+               dataset_reference=dataset_reference)
     return {"id": publication_id, "job_portrait_id": prepared["job_portrait_id"],
             "publication_version": prepared["publication_version"],
             "content_sha256": digest, "source_text_sha256": candidate["source_text_sha256"],

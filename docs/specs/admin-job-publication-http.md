@@ -33,6 +33,8 @@
 
 ### 请求形状
 
+2026-10-14 新增 **dataset 来源模式**：当请求含 `source_dataset_id` 时，不再接受客户端 `snapshot`，而按 [dataset 来源绑定](admin-dataset-publication-binding.md) 从私有暂存文件选一条记录预检，并在确认及发布事务内重读、核对文件与记录摘要。下述 `snapshot` 模式仍只适用于单独人工核对的外部来源候选；不能自报 `staged_dataset_*` 伪装成 dataset 绑定。dataset 上传和摘要本身不证明官方来源或批准。
+
 预检：`{"job_portrait_id":"…","publication_version":"v1","snapshot":{…}}`，snapshot 保留来源文本、摘要、许可证、获取/截止时间、逐字段证据、技能与硬约束；**不得**包含 `reviewed_by/reviewed_at/review_state/review_id/review_actor`。预检 200 返回 `candidate_sha256`、`source_text_sha256`、`snapshot_for_review` 与十分钟 `preview_token`，不写发布表。
 
 发布：重复提交完全相同的 job ID、版本和 snapshot，增加预检响应中的 `preview_token`、`expected_candidate_sha256`、`expected_source_text_sha256` 及 `confirm_review` 四个严格布尔真值：`source_checked`、`requirements_checked`、`license_checked`、`publish_exact_digest`。由管理员本人另发第二个 HTTP 请求。成功 201 返回 publication id 与正式内容摘要；缺确认 400，摘要/签名变化或同版重放 409，证据可评分性不足 422。

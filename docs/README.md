@@ -63,6 +63,7 @@ For open-source runnable hardening, keep these active and maintained:
 - `guides/open-source-hardening.md`
 - `specs/self-managed-account-auth.md` — 用户确认的平台自建账号窄闭环、Redis 会话/CSRF/管理员开户与未完成边界
 - `specs/admin-source-staging.md` — 管理员 dataset/KB 私有原文暂存、摘要回读、删除与迁移；不等于权威岗位入库或建图
+- `specs/admin-dataset-publication-binding.md` — 私有 dataset 单条记录经服务端来源重读、摘要绑定进入正式管理员人工岗位发布；不等于自动或官方来源认证
 - `guides/documentation-governance.md`
 - `guides/windows-powershell-encoding.md` — Windows/PS 5.1 下乱码是解码假象，文件均为 UTF-8；读写姿势与真损坏判定
 - `guides/attachment-completeness.md` — 上传附件到 Ask/Agent 的完整性标记、OCR 运行边界和回归步骤
