@@ -14,8 +14,10 @@ MySQL **新增结构变更**从 2026-10-14 起由 Alembic 的 `alembic_version` 
    D:\Miniconda\miniconda3\envs\mkg\python.exe -B -m alembic -c alembic.ini current
    ```
 
-   `current` 应等于 `heads`，目前为 `0005_school_tier_review`。第一次 `current` 为空表示尚未被 Alembic 管理，并不代表数据库为空。**不要直接 `stamp head`**：它只写版本号，不执行 DDL，可能造成假成功。新库也在 Docker 初始化完成后运行同一个 `upgrade head`。
+   `current` 应等于 `heads`，目前为 `0007_student_portrait_snapshot`。第一次 `current` 为空表示尚未被 Alembic 管理，并不代表数据库为空。**不要直接 `stamp head`**：它只写版本号，不执行 DDL，可能造成假成功。新库也在 Docker 初始化完成后运行同一个 `upgrade head`。
 3. 核验 `alembic_version` 只有预期 head；检查账号 `auth_epoch` 触发器、管理员暂存列、`job_catalog_source_listing`、Pipeline 事件表及投影表；再启动后端/worker 并走受影响 HTTP 业务路径。版本号不是业务验收。
+
+生产 Compose 候选层提供同一应用镜像的显式 `migrate` profile，可代替上面的宿主机 Python 命令，但**不能**跳过第 1 步维护窗口和备份。它的上传文件位于 `cpa-agent-prod_backend_uploads` 命名卷；下文 `backend/uploads/` 宿主机备份示例不可直接用于该卷，必须另有经过恢复演练的卷导出方案，否则不得升级已有 volume。先 `docker compose -f docker-compose.yml -f docker-compose.prod.yml build backend`，启动并等 MySQL healthy 后执行 `docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile ops run --rm migrate`；再以同一 `run --rm migrate python -B -m alembic -c alembic.ini current` 和 `heads` 比较版本。该服务不是 `up` 的依赖，也不自动迁移；详见 [DEPLOY.md](../../DEPLOY.md)。
 
 `0001` 幂等创建冻结快照中的缺表；`0002` 以有界存在性检查补账号撤销触发器、管理员私有来源列与来源专用岗位表；`0003` 补曾由分散安装命令创建的审阅/投影/事件表、Pipeline 触发器和章节视频列。它们不回填、不发布岗位、不改变已有业务行。MySQL DDL 会独立提交；中途失败可能留下部分对象，**不能通过回滚 SQL 事务恢复**。这些版本按缺失对象可重试，但在重试前应根据错误核对实际结构，不能无条件删表/列或修改旧迁移文件。
 
@@ -24,6 +26,10 @@ MySQL **新增结构变更**从 2026-10-14 起由 Alembic 的 `alembic_version` 
 `0004` 接管 L0 简历持久派发与 owner-scoped Agent trace 表；此前使用显式 `--install` 建表的环境由此版本验证并纳入版本账本，不删除已有任务或轨迹。
 
 `0005` 增加管理员学校档位审核/撤回账本 `school_tier_review`，不改写已确认的学生 L0 原文，也不自动把旧 partial 画像变为可评分。迁移前旧 L2 无审核引用的结果仍可读取/生成，管理员审核入口返回 503；迁移并完成正式账号与官方来源审核后才可用。当前 live 业务库尚未接管 Alembic，不能在运行中的 Flask/worker 上直接升级；仍按维护窗口备份、停写、恢复演练和业务链路验收操作。
+
+`0006` 增加确认后自动画像的 `pipeline_portrait_dispatch` 与简历诊断的 `resume_diagnostic_dispatch`。两表以 `pipeline_task.task_id` 为外键并随测试任务清理级联删除；迁移会验证所需列，并接管旧显式安装器创建的同名表及缺失外键，不改写已有成果或任务。当前 live 业务库曾用显式安装器加这两表作开发验证，**不等于**已完成统一 Alembic 接管；正式实例仍须在维护窗口升级 `head`。迁移完成、worker 与 Beat 均启动后，确认操作才能留下可消费的后续任务；缺表不能靠页面重试解决。
+
+`0007` 增加 `student_portrait_snapshot`：新生成的 L2 部分/完整结果以 `source_task_id` 唯一保存版本、来源确认任务、自述修订、原始画像 JSON 与内容摘要；空维度仍为空，不修改旧 `student_portrait_4d` 评分表。已有画像不自动回填，尤其不能把旧 `NOT NULL DEFAULT 0` 解释为已证实的零分。当前本机运行库用显式安装器先加了此表作开发验收，仍未完成 Alembic 账本接管；正式升级按同一维护窗口流程执行。新代码发布前必须先迁移，不能让 L2 在缺表时开始执行。
 
 ### 维护窗口的备份、验收与回退
 
@@ -87,3 +93,13 @@ D:\Miniconda\miniconda3\envs\mkg\python.exe -B -m pytest -q backend/tests/test_m
 ```
 
 该测试在 MySQL 内创建唯一的临时数据库、模拟旧库缺列与保留账号行、升级两次并核验版本/触发器/行/表，结束后仅删除自己创建的临时数据库；不修改配置的 `cpa_agent` 业务库。无 MySQL 时两个纯单测仍可运行，真实接管验收未完成。
+
+Celery/Beat 与迁移的隔离联验（真实 MySQL `localhost:13306`、Redis `localhost:16379` 可用，Redis 逻辑 DB 13、14 必须为空）：
+
+```powershell
+$env:CPA_TEST_LIVE_MYSQL='1'
+$env:CPA_TEST_LIVE_CELERY='1'
+D:\Miniconda\miniconda3\envs\mkg\python.exe -B -m pytest -q backend/tests/test_celery_deployment.py
+```
+
+该专项先检查生产 Beat 的 5 个任务已注册并路由到 `cpa.pipeline`，再用测试专用 schedule/队列验证真实 Beat 投递与 solo worker 消费；最后在唯一临时 MySQL 库投递生产 `cpa.pipeline.match`，核验缺 L2 画像时权威任务行变为 `partial`、派发次数为 1、`reason=confirmed_portrait_unavailable` 且没有匹配成果行。测试只删自身临时库与 Redis 测试键，不调用业务库，不向生产队列投递。它覆盖**传输和一个受阻业务分支**，不代表完整 L0/OCR/L2/L3 成功链路、现有业务库升级或生产 Compose 镜像的验收。

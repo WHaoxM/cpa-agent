@@ -144,7 +144,7 @@ class TestGenerateStudentPortraitExact:
         assert s["competitiveness_level"] == "unknown"
 
     def test_empty_skills(self, gen):
-        """零技能学生: D2=0, 但 D1/D3/D4 仍可计算"""
+        """简历没提技能不是技能能力为零；D2 与总分都待核对。"""
         result = gen.generate_student_portrait(
             student_id="stu_empty",
             skills=[],
@@ -152,11 +152,56 @@ class TestGenerateStudentPortraitExact:
         )
         s = result["summary"]
         d2 = result["D2_skill"]
-        # D2 维度分数 = 0
-        assert d2["dimension_score"] == 0
+        assert d2["dimension_score"] is None
+        assert d2["missing_fields"] == ["skills"]
+        assert "skills" in result["missing_fields"]
+        assert result["D4_potential"]["dimension_score"] is None
+        assert "growth_evidence" in result["missing_fields"]
         # 但 competitiveness 不应崩溃
         assert s["competitiveness_score"] is None
         assert s["competitiveness_level"] == "unknown"
+
+    def test_project_without_skills_keeps_project_evidence_but_not_d2_score(self, gen):
+        result = gen.generate_student_portrait(
+            student_id="stu_project_no_skills", skills=[],
+            student_profile={"degree": "本科", "school": "示例大学", "major": "计算机",
+                             "projects": [{"name": "课程项目"}]},
+        )
+        d2 = result["D2_skill"]
+        assert d2["project_count"] == 1
+        assert d2["evidence"] == ["1 个项目经验"]
+        assert d2["dimension_score"] is None
+        assert result["summary"]["competitiveness_score"] is None
+
+    def test_duplicate_skill_mentions_do_not_raise_d2_score(self, gen):
+        profile = {"projects": [{"name": "示例项目"}]}
+        once = gen._calc_d2_skill([{"name": "React"}], profile)
+        repeated = gen._calc_d2_skill([{"name": "React"}, {"name": " React "}], profile)
+        assert repeated["skill_count"] == once["skill_count"] == 1
+        assert repeated["skill_list"] == once["skill_list"]
+        assert repeated["sub_skill"] == once["sub_skill"]
+        assert repeated["dimension_score"] == once["dimension_score"]
+        assert repeated["evidence"][0] == "简历提及 1 个不同技术词"
+        assert gen._calc_d2_skill([{"name": "React"}, {"name": "ReAct"}], profile)["skill_count"] == 2
+
+    def test_growth_evidence_distinguishes_unknown_from_scored_zero(self, gen):
+        without_evidence = gen.generate_student_portrait(
+            student_id="stu_unknown_growth", skills=[],
+            student_profile={"degree": "本科", "school": "示例大学", "major": "计算机"},
+        )
+        assert without_evidence["D4_potential"]["dimension_score"] is None
+        assert without_evidence["D4_potential"]["evidence"] == []
+        assert without_evidence["D4_potential"]["missing_fields"] == ["growth_evidence"]
+        assert "growth_evidence" in without_evidence["missing_fields"]
+
+        with_evidence = gen.generate_student_portrait(
+            student_id="stu_known_growth", skills=[],
+            student_profile={"degree": "本科", "school": "示例大学", "major": "计算机",
+                             "competitions": [{"name": "程序设计竞赛", "level": "其他"}]},
+        )
+        assert with_evidence["D4_potential"]["dimension_score"] is not None
+        assert with_evidence["D4_potential"]["evidence"] == ["竞赛: 1 项"]
+        assert "growth_evidence" not in with_evidence["missing_fields"]
 
     def test_mid_student_中等_or_偏弱(self, gen):
         """混合档位: 普通学生 (普通本科+一般技能)"""

@@ -1,4 +1,5 @@
 __pycache__
+.pytest_cache/
 *.pyc
 *.pyo
 .env
@@ -12,6 +13,12 @@ build/
 logs/*
 uploads/*
 modelscope_cache/*
+# Local databases, OCR output, and scheduler state are runtime data, not image inputs.
+milvus_data/
+mineru_output/
+output/
+celerybeat-schedule
+celerybeat-schedule.*
 *.log
 .DS_Store
 Thumbs.db

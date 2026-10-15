@@ -80,7 +80,7 @@ def test_legacy_confirmed_wrong_school_category_still_stops_scoring():
     assert portrait["D1_basic"]["sub_major"] == 25
     assert portrait["D3_quality"]["dimension_score"] is not None
     assert portrait["status"] == "partial"
-    assert portrait["missing_fields"] == ["school_tier"]
+    assert portrait["missing_fields"] == ["school_tier", "growth_evidence"]
     assert portrait["summary"]["competitiveness_score"] is None
 
 
@@ -99,6 +99,7 @@ def test_match_partial_does_not_pass_or_invent_score(monkeypatch):
     result = calculate_match_score([{"name": "Python"}], [{"name": "Python"}],
                                    {"degree": "本科", "skills": ["Python"]}, {})
     assert result["total_score"] is None
+    assert result["d4_score"] is None
     assert result["match_result"] is False
     assert result["status"] == "partial"
     assert result["match_level"] == "unknown"

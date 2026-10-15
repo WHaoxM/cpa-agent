@@ -58,12 +58,20 @@ celery_app.conf.update(
                  "cpa.catalog.*": {"queue": PIPELINE_QUEUE}},
     imports=("app.services.personal_graph_jobs", "app.services.personal_entity_link_jobs",
              "app.services.pipeline_match_jobs", "app.services.pipeline_resume_jobs",
+             "app.services.pipeline_portrait_jobs",
+             "app.services.resume_diagnostic_jobs",
              "app.services.job_source_verification_jobs"),
     beat_schedule={"pipeline-match-replay": {
         "task": "cpa.pipeline.replay", "schedule": _pipeline_replay_interval(),
         "options": {"queue": PIPELINE_QUEUE},
     }, "pipeline-resume-replay": {
         "task": "cpa.pipeline.resume_replay", "schedule": _pipeline_replay_interval(),
+        "options": {"queue": PIPELINE_QUEUE},
+    }, "pipeline-portrait-replay": {
+        "task": "cpa.pipeline.portrait_replay", "schedule": _pipeline_replay_interval(),
+        "options": {"queue": PIPELINE_QUEUE},
+    }, "resume-diagnostic-replay": {
+        "task": "cpa.pipeline.diagnostic_replay", "schedule": _pipeline_replay_interval(),
         "options": {"queue": PIPELINE_QUEUE},
     }, "official-source-refresh": {
         "task": "cpa.catalog.refresh_source_feed", "schedule": 60,

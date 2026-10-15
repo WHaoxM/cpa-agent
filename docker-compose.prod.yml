@@ -1,52 +1,133 @@
 name: cpa-agent-prod
 
+# One image and the same runtime configuration for HTTP, delivery, recovery,
+# and the operator-triggered migration. Migrations are never automatic on up.
+x-backend-image: &backend-image "cpa-agent-backend:${CPA_IMAGE_TAG:-local}"
+x-backend-environment: &backend-environment
+  TZ: Asia/Shanghai
+  SECRET_KEY: "${SECRET_KEY:?SECRET_KEY is required}"
+  CPA_DEMO_MODE: "false"
+  CPA_AUTH_COOKIE_SECURE: "true"
+  CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:?Set explicit production CORS origins}"
+  FLASK_DEBUG: "false"
+  FLASK_HOST: "0.0.0.0"
+  FLASK_PORT: "5001"
+  LLM_PROVIDER: "${LLM_PROVIDER:-deepseek}"
+  LLM_API_KEY: "${LLM_API_KEY:?LLM_API_KEY is required}"
+  LLM_BASE_URL: "${LLM_BASE_URL:-}"
+  LLM_MODEL_NAME: "${LLM_MODEL_NAME:-}"
+  NEO4J_URI: "bolt://neo4j:7687"
+  NEO4J_USER: "${NEO4J_USER:-neo4j}"
+  NEO4J_PASSWORD: "${NEO4J_PASSWORD:?NEO4J_PASSWORD is required}"
+  MYSQL_HOST: "mysql"
+  MYSQL_PORT: "3306"
+  MYSQL_USER: "root"
+  MYSQL_PASSWORD: "${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}"
+  MYSQL_DATABASE: "${MYSQL_DATABASE:-cpa_agent}"
+  REDIS_URL: "redis://redis:6379/0"
+  CPA_MEDIA_BROKER_URL: "redis://redis:6379/0"
+  CPA_SESSION_TURN_LOCK_MODE: "redis_required"
+  CPA_MILVUS_URI: "/app/milvus_data/milvus.db"
+  EMBEDDING_MODEL: "${EMBEDDING_MODEL:-BAAI/bge-m3}"
+  EMBEDDING_DIM: "${EMBEDDING_DIM:-1024}"
+  MODELSCOPE_CACHE: "/app/modelscope_cache"
+  HF_HOME: "/app/embeddings_cache"
+  SENTENCE_TRANSFORMERS_HOME: "/app/embeddings_cache"
+
+x-backend-volumes: &backend-volumes
+  - backend_uploads:/app/uploads
+  - backend_logs:/app/logs
+  - backend_milvus_data:/app/milvus_data
+  - backend_modelscope_cache:/app/modelscope_cache
+  - backend_embeddings_cache:/app/embeddings_cache
+
+x-backend-depends: &backend-depends
+  mysql:
+    condition: service_healthy
+  neo4j:
+    condition: service_healthy
+  redis:
+    condition: service_healthy
+
 services:
   backend:
+    image: *backend-image
     build:
       context: ./backend
       dockerfile: Dockerfile
-    environment:
-      TZ: Asia/Shanghai
-      SECRET_KEY: "${SECRET_KEY:?SECRET_KEY is required}"
-      CPA_DEMO_MODE: "${CPA_DEMO_MODE:-false}"
-      FLASK_DEBUG: "false"
-      FLASK_HOST: "0.0.0.0"
-      FLASK_PORT: "5001"
-      LLM_PROVIDER: "${LLM_PROVIDER:-deepseek}"
-      LLM_API_KEY: "${LLM_API_KEY:?LLM_API_KEY is required}"
-      LLM_BASE_URL: "${LLM_BASE_URL:-}"
-      LLM_MODEL_NAME: "${LLM_MODEL_NAME:-}"
-      NEO4J_URI: "bolt://neo4j:7687"
-      NEO4J_USER: "${NEO4J_USER:-neo4j}"
-      NEO4J_PASSWORD: "${NEO4J_PASSWORD:?NEO4J_PASSWORD is required}"
-      MYSQL_HOST: "mysql"
-      MYSQL_PORT: "3306"
-      MYSQL_USER: "root"
-      MYSQL_PASSWORD: "${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}"
-      MYSQL_DATABASE: "${MYSQL_DATABASE:-cpa_agent}"
-      REDIS_URL: "redis://redis:6379/0"
-      CPA_SESSION_TURN_LOCK_MODE: "redis_required"
-      MILVUS_URI: "/app/milvus_data/milvus.db"
-      EMBEDDING_MODEL: "${EMBEDDING_MODEL:-BAAI/bge-m3}"
-      EMBEDDING_DIM: "${EMBEDDING_DIM:-1024}"
+    environment: *backend-environment
     ports:
-      - "${BACKEND_PORT:-5001}:5001"
-    volumes:
-      - backend_uploads:/app/uploads
-      - backend_logs:/app/logs
-      - backend_milvus_data:/app/milvus_data
-      - backend_modelscope_cache:/app/modelscope_cache
+      - "127.0.0.1:${BACKEND_PORT:-5001}:5001"
+    volumes: *backend-volumes
+    depends_on: *backend-depends
+    restart: unless-stopped
+
+  worker:
+    image: *backend-image
+    command:
+      - python
+      - -B
+      - -m
+      - celery
+      - -A
+      - app.services.agent_runtime.media.jobs:celery_app
+      - worker
+      - --pool=solo
+      - --concurrency=1
+      - --queues=cpa.pipeline,cpa.media,cpa.graph
+      - --loglevel=INFO
+    environment: *backend-environment
+    # The image's HTTP /health check is only valid for the Flask service.
+    healthcheck:
+      disable: true
+    volumes: *backend-volumes
+    depends_on: *backend-depends
+    stop_grace_period: 10m
+    restart: unless-stopped
+
+  beat:
+    image: *backend-image
+    command:
+      - python
+      - -B
+      - -m
+      - celery
+      - -A
+      - app.services.agent_runtime.media.jobs:celery_app
+      - beat
+      - --schedule=/app/logs/celerybeat-schedule
+      - --loglevel=INFO
+    environment: *backend-environment
+    healthcheck:
+      disable: true
+    volumes: *backend-volumes
+    depends_on: *backend-depends
+    restart: unless-stopped
+
+  # Explicit operator action after backup/stop-write; never an up dependency.
+  migrate:
+    profiles: ["ops"]
+    image: *backend-image
+    command:
+      - python
+      - -B
+      - -m
+      - alembic
+      - -c
+      - alembic.ini
+      - upgrade
+      - head
+    environment: *backend-environment
+    healthcheck:
+      disable: true
     depends_on:
       mysql:
         condition: service_healthy
-      neo4j:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
+    restart: "no"
 
 volumes:
   backend_uploads:
   backend_logs:
   backend_milvus_data:
   backend_modelscope_cache:
+  backend_embeddings_cache:

@@ -70,6 +70,17 @@ def _current(mysql, student_id: str) -> tuple[dict, dict, dict]:
         and result.get("status") == row.get("status")
         and result.get("task_id") in (None, row.get("task_id"))
     )
+    if valid:
+        from ..student_self_report import portrait_current
+        candidate = _payload(result.get("portrait" if row["status"] == "completed" else "portrait_candidate"))
+        valid = portrait_current(profile, candidate)
+    if valid and result.get("snapshot_id"):
+        from ..student_portrait_snapshot import read_snapshot_for_task
+        snapshot = read_snapshot_for_task(mysql, student_id=student_id,
+                                          source_task_id=row["task_id"])
+        if (not snapshot or snapshot["snapshot_id"] != result["snapshot_id"]
+                or snapshot["portrait"] != candidate):
+            raise ValueError("当前画像快照未通过权威记录校验")
     if valid and row["status"] == "completed":
         # Completed is only usable after persisted portrait readback.
         resolve_pipeline_task_ref(mysql, student_id=student_id, task_id=row["task_id"])

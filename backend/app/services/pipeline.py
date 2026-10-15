@@ -93,7 +93,8 @@ class BasePipeline(ABC):
         claim_token = getattr(self, "claim_token", None)
         if claim_token is not None:
             dispatch_table = getattr(self, "dispatch_table", "pipeline_match_dispatch")
-            if dispatch_table not in {"pipeline_match_dispatch", "pipeline_resume_dispatch"}:
+            if dispatch_table not in {"pipeline_match_dispatch", "pipeline_resume_dispatch",
+                                      "pipeline_portrait_dispatch"}:
                 raise ValueError("invalid dispatch table")
             statement += (
                 f" AND EXISTS (SELECT 1 FROM {dispatch_table} d "
@@ -308,7 +309,9 @@ def require_confirmed_profile(mysql, student_id: str) -> dict:
     result = json.loads(result) if isinstance(result, str) else result
     if (task.get("student_id") != student_id or task.get("pipeline") != PipelineLevel.L0_PARSE_RESUME
             or task.get("status") != "completed" or result.get("confirmed") is not True
-            or result.get("candidate_profile") != {k: v for k, v in profile.items() if k != "_resume_confirmation"}):
+            or result.get("candidate_profile") != {k: v for k, v in profile.items()
+                                                    if k not in {"_resume_confirmation", "_user_self_report",
+                                                                 "_skill_exploration"}}):
         raise ValueError("简历确认来源未通过校验，请重新核对确认")
     return profile
 
@@ -362,6 +365,9 @@ def require_authoritative_match_sources(mysql, student_id: str, job_portrait_id:
         valid = portrait_review_current(
             mysql, student_id=student_id, confirmation_task_id=confirmation_id,
             portrait=portrait)
+    if valid:
+        from .student_self_report import revision
+        valid = portrait.get("source_self_report_revision", 0) == revision(confirmed_profile)
     if not valid:
         raise PipelineSourceUnavailable("confirmed_portrait_unavailable", "generate_portrait",
             "缺少与当前已确认简历一致的已落库 L2 画像，请先生成画像", sources)
@@ -446,8 +452,30 @@ def confirm_resume_candidate(mysql, *, student_id: str, task_id: str, acknowledg
                               "AND student_id=:sid FOR UPDATE"), {"tid": task_id, "sid": student_id})
             result = _confirm_resume_candidate(ConfirmationTransaction(conn), student_id=student_id,
                 task_id=task_id, acknowledge_partial=acknowledge_partial)
+            from .pipeline_portrait_jobs import persist_portrait_intent_tx
+            portrait_task_id = persist_portrait_intent_tx(
+                conn, student_id=student_id, confirmation_task_id=task_id)
+            from .resume_diagnostic_jobs import persist_diagnostic_intent_tx
+            diagnostic_task_id = persist_diagnostic_intent_tx(
+                conn, student_id=student_id, confirmation_task_id=task_id)
         # Commit confirmation and its journal event BEFORE attempting broker
         # delivery. Broker/Neo4j failure must never undo successful consent.
+        try:
+            from .pipeline_portrait_jobs import enqueue_portrait_intent
+            result["portrait_analysis"] = {"task_id": portrait_task_id,
+                                           "delivery": enqueue_portrait_intent(mysql, portrait_task_id)}
+        except Exception:
+            logger.exception("已确认简历；画像任务等待持久重放")
+            result["portrait_analysis"] = {"task_id": portrait_task_id,
+                                           "delivery": "retry_pending"}
+        try:
+            from .resume_diagnostic_jobs import enqueue_diagnostic_intent
+            result["resume_diagnostic_analysis"] = {"task_id": diagnostic_task_id,
+                "delivery": enqueue_diagnostic_intent(mysql, diagnostic_task_id)}
+        except Exception:
+            logger.exception("已确认简历；简历诊断任务等待持久重放")
+            result["resume_diagnostic_analysis"] = {"task_id": diagnostic_task_id,
+                                                     "delivery": "retry_pending"}
         try:
             from .personal_graph_jobs import request_personal_graph_projection
             result["personal_graph_projection"] = request_personal_graph_projection(
@@ -619,6 +647,15 @@ class L2GeneratePortraitPipeline(BasePipeline):
 
         try:
             confirmed_profile = require_confirmed_profile(self.mysql, student_id)
+            expected_confirmation = self.params.get("source_confirmation_task_id")
+            if (expected_confirmation is not None
+                    and expected_confirmation != confirmed_profile["_resume_confirmation"]["task_id"]):
+                raise ValueError("画像任务源于旧版已确认简历，不生成当前画像")
+            expected_revision = self.params.get("source_self_report_revision")
+            if expected_revision is not None:
+                from .student_self_report import revision as self_report_revision
+                if expected_revision != self_report_revision(confirmed_profile):
+                    raise ValueError("画像任务源于旧版用户自述，不生成当前画像")
             from .school_tier_review import latest_review
             from .pipeline_events import ConfirmationTransaction
             current_school_review = latest_review(
@@ -635,9 +672,6 @@ class L2GeneratePortraitPipeline(BasePipeline):
             # are not a second source of authority.
             skills = [{"name": s} if isinstance(s, str) else s
                       for s in confirmed_profile.get("skills", []) if isinstance(s, (str, dict))]
-            if not skills:
-                raise ValueError("已确认简历没有技能，请补充后重新确认")
-
             # 获取 student_profile
             student_profile = confirmed_profile
 
@@ -650,7 +684,26 @@ class L2GeneratePortraitPipeline(BasePipeline):
                 official_school_tier_review=approved_school_review,
                 school_tier_review_revoked=bool(current_school_review and not approved_school_review),
             )
+            confirmation_evidence = confirmed_profile.get("_resume_confirmation", {}).get("source_evidence") or {}
+            missing_source_pages = (confirmation_evidence.get("missing_pages") or []) if isinstance(
+                confirmation_evidence, dict) else []
+            if missing_source_pages:
+                # A user may explicitly confirm the *readable* pages so the
+                # resume-scope report is usable. That consent is not evidence
+                # that the unseen pages contain no additional experience.
+                portrait["status"] = "partial"
+                portrait["missing_fields"] = list(dict.fromkeys([
+                    *(portrait.get("missing_fields") or []), "source_pages",
+                ]))
+                summary = portrait.get("summary")
+                if not isinstance(summary, dict):
+                    summary = {}
+                    portrait["summary"] = summary
+                summary["competitiveness_score"] = None
+                summary["competitiveness_level"] = None
             portrait["source_confirmation_task_id"] = confirmed_profile["_resume_confirmation"]["task_id"]
+            from .student_self_report import revision as self_report_revision
+            portrait["source_self_report_revision"] = self_report_revision(confirmed_profile)
             portrait["source_portrait_task_id"] = self.task_id
 
             # The legacy score columns are NOT NULL DEFAULT 0. Do not coerce
@@ -666,21 +719,63 @@ class L2GeneratePortraitPipeline(BasePipeline):
                 isinstance(score, (int, float)) and not isinstance(score, bool) and math.isfinite(score)
                 for score in scores
             ):
+                missing_behavior = any(
+                    key in (portrait.get("missing_fields") or [])
+                    for key in ("communication", "teamwork", "stress_tolerance", "responsibility"))
+                missing_skills = "skills" in (portrait.get("missing_fields") or [])
                 result = {
                     "status": "partial", "resource_type": "pipeline_task",
                     "resource_id": self.task_id, "portrait_id": None,
                     "source_confirmation_task_id": portrait["source_confirmation_task_id"],
                     "portrait_candidate": portrait,
                     "missing_fields": portrait.get("missing_fields") or [],
-                    "next_action": "confirm_semantic_facts",
-                    # No semantic-fact review writer is currently exposed. Keep
-                    # the machine-readable missing-fact code, but do not imply
-                    # that a user can complete an unavailable recovery action.
-                    "action_available": False,
-                    "resume_state": "not_available",
-                    "summary": "画像所需事实或分数缺证据，已保留候选；未写入完成画像",
+                    "next_action": ("reupload_resume" if missing_source_pages or missing_skills else
+                                    "supplement_self_report" if missing_behavior
+                                    else "confirm_semantic_facts"),
+                    "action_available": not missing_source_pages and not missing_skills and missing_behavior,
+                    "resume_state": ("new_upload_required" if missing_source_pages or missing_skills else
+                                     "ready_for_supplement" if missing_behavior
+                                     else "not_available"),
+                    "summary": ("原文件仍有未提取页面，已保留画像候选；请补传清晰文件后重新核对"
+                                if missing_source_pages else
+                                "已确认简历没有可核对的技能条目，保留已有事实；可补充原简历后重新上传"
+                                if missing_skills else
+                                "画像所需事实或分数缺证据，已保留候选；未写入完成画像"),
                 }
-                self.update_status(PipelineStatus.PARTIAL, result)
+                if isinstance(self.mysql, MySQLClient):
+                    # The supplement writer locks this owner row first. Hold
+                    # the same lock through terminal task commit so an L2
+                    # computed from an older self-report cannot surface even
+                    # briefly as the result of this HTTP request.
+                    from sqlalchemy import text
+                    with self.mysql.engine.begin() as conn:
+                        row = conn.execute(text(
+                            "SELECT profile_json FROM student_profile WHERE student_id=:sid FOR UPDATE"
+                        ), {"sid": student_id}).mappings().first()
+                        current = row.get("profile_json") if row else None
+                        current = json.loads(current) if isinstance(current, str) else current
+                        from .student_self_report import portrait_current
+                        if not isinstance(current, dict) or not portrait_current(current, portrait):
+                            raise ValueError("已确认简历或用户自述在画像生成期间发生变化，请重新生成")
+                        from .student_portrait_snapshot import persist_portrait_snapshot_tx
+                        result["snapshot_id"] = persist_portrait_snapshot_tx(
+                            conn, student_id=student_id, source_task_id=self.task_id,
+                            portrait=portrait, status="partial", target_job_id=job_id)
+                        fence = (" AND EXISTS (SELECT 1 FROM pipeline_portrait_dispatch d "
+                                 "WHERE d.task_id=pipeline_task.task_id AND d.claim_token=:claim_token)"
+                                 if getattr(self, "dispatch_table", None) == "pipeline_portrait_dispatch" else "")
+                        changed = conn.execute(text(
+                            "UPDATE pipeline_task SET status='partial', completed_at=NULL, "
+                            "result_json=:result WHERE task_id=:tid AND student_id=:sid "
+                            "AND status='running'" + fence
+                        ), {"result": json.dumps(result, ensure_ascii=False),
+                            "tid": self.task_id, "sid": student_id,
+                            "claim_token": getattr(self, "claim_token", None)})
+                        if changed.rowcount != 1:
+                            raise RuntimeError("画像候选任务终态未通过权威行更新验证")
+                    self.status = PipelineStatus.PARTIAL
+                else:
+                    self.update_status(PipelineStatus.PARTIAL, result)
                 return result
 
             # 写入 MySQL student_portrait_4d (v2.0 Schema)
@@ -742,6 +837,10 @@ class L2GeneratePortraitPipeline(BasePipeline):
                     current_confirmation = (current_profile or {}).get("_resume_confirmation") if isinstance(current_profile, dict) else None
                     if not isinstance(current_confirmation, dict) or current_confirmation.get("task_id") != portrait["source_confirmation_task_id"]:
                         raise ValueError("已确认简历在画像生成期间发生变化，请重新生成")
+                    current_self_report = (current_profile or {}).get("_user_self_report") if isinstance(current_profile, dict) else None
+                    current_revision = (current_self_report or {}).get("revision", 0) if isinstance(current_self_report, dict) else 0
+                    if current_revision != portrait["source_self_report_revision"]:
+                        raise ValueError("用户自述在画像生成期间发生变化，请重新生成")
                     latest_school_review = latest_review(
                         ConfirmationTransaction(conn), student_id=student_id,
                         confirmation_task_id=portrait["source_confirmation_task_id"], lock=True,
@@ -778,12 +877,20 @@ class L2GeneratePortraitPipeline(BasePipeline):
                         "ORDER BY id DESC LIMIT 1"
                     ), {"sid": student_id, "jid": job_id}).mappings().first()
                     result = completed_result(dict(saved) if saved else {})
+                    from .student_portrait_snapshot import persist_portrait_snapshot_tx
+                    result["snapshot_id"] = persist_portrait_snapshot_tx(
+                        conn, student_id=student_id, source_task_id=self.task_id,
+                        portrait=portrait, status="completed", target_job_id=job_id)
+                    fence = (" AND EXISTS (SELECT 1 FROM pipeline_portrait_dispatch d "
+                             "WHERE d.task_id=pipeline_task.task_id AND d.claim_token=:claim_token)"
+                             if getattr(self, "dispatch_table", None) == "pipeline_portrait_dispatch" else "")
                     changed = conn.execute(text(
                         "UPDATE pipeline_task SET status='completed', completed_at=NOW(), "
                         "result_json=:result WHERE task_id=:task_id AND student_id=:sid "
-                        "AND status='running'"
+                        "AND status='running'" + fence
                     ), {"result": json.dumps(result, ensure_ascii=False),
-                        "task_id": self.task_id, "sid": student_id})
+                        "task_id": self.task_id, "sid": student_id,
+                        "claim_token": getattr(self, "claim_token", None)})
                     if changed.rowcount != 1:
                         raise RuntimeError("画像任务终态未通过权威行更新验证")
                 return result

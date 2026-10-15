@@ -14,7 +14,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![Vue](https://img.shields.io/badge/Vue-3.5-42b883?style=flat-square&logo=vue.js&logoColor=white)](https://vuejs.org/)
 [![Flask](https://img.shields.io/badge/Flask-3.x-000000?style=flat-square&logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
-[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
+[![Docker](https://img.shields.io/badge/Docker-Dev%20DB%20Stack-2496ED?style=flat-square&logo=docker&logoColor=white)](./DEPLOY.md)
 
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-GitHub%20Pages-6E40C9?style=flat-square&logo=github&logoColor=white)](https://whaoxm.github.io/cpa-xingtu/)
 [![Frontend](https://img.shields.io/badge/Frontend-cpa--xingtu-42b883?style=flat-square&logo=vue.js&logoColor=white)](https://github.com/WHaoxM/cpa-xingtu)
@@ -23,28 +23,15 @@
 
 </div>
 
-## 📸 系统截图
+## 📸 界面预览
 
-<div align="center">
-<table>
-<tr>
-<td><img src="./docs/screenshots/career-analysis.png" alt="职业分析" width="100%"/></td>
-<td><img src="./docs/screenshots/career-ability.png" alt="能力图谱" width="100%"/></td>
-</tr>
-<tr>
-<td><img src="./docs/screenshots/career-report.png" alt="职业报告" width="100%"/></td>
-<td><img src="./docs/screenshots/talent-portrait.png" alt="人才画像" width="100%"/></td>
-</tr>
-</table>
-</div>
-
-> 截图为前端演示效果，实际界面以 [在线 Demo](https://whaoxm.github.io/cpa-xingtu/) 为准。
+主仓未分发截图文件；请打开[独立前端仓库](https://github.com/WHaoxM/cpa-xingtu)的 Mock 演示，或按下文在本机运行查看。不要把在线静态演示当成后端真实数据验收。
 
 ## ⚡ 项目概述
 
 **职导星图（CPA-Agent）** 是一个面向大学生的多智能体职业规划决策平台——不是单一的岗位推荐页，而是从简历解析到职业报告生成的**完整决策闭环**。
 
-它将复杂版式简历解析、七维能力画像、岗位需求建模、职业知识图谱、向量检索、检索增强生成与多智能体编排结合在一起，帮助学生在「诊断 → 匹配 → 学习 → 报告」全链路中获得数据驱动的职业指导。
+它将简历解析、四维能力画像、岗位需求建模、职业知识图谱、向量检索、检索增强生成与多智能体编排结合在一起，帮助学生在「诊断 → 匹配 → 学习 → 报告」链路中获得数据驱动的职业指导。各环节的真实数据与外部依赖须按下文分别复现和验收。
 
 > 你只需：上传一份 PDF 简历，或在对话中描述你的背景与目标
 > CPA-Agent 将返回：结构化的四维能力画像、可解释的人岗匹配结果、可执行的职业发展报告
@@ -69,14 +56,16 @@
 
 | 角色 | 用户名 | 密码 |
 |------|--------|------|
-| 学生 | 123456 | 123456 |
-| 管理员 | 123456 | 123456 |
+| 学生 | student001 | 123456 |
+| 管理员 | admin001 | 123456 |
+
+以上账号只属于前端 Mock/Pages 演示；真实后端 strict 模式没有内置演示账号。
 
 ## ✨ 核心亮点
 
 两个能力决定了 CPA-Agent 与通用 Chatbot 的本质差异：
 
-- 🧭 **L0–L4 分层管线。** 简历解析、图谱构建、画像生成、人岗匹配、报告生成有独立业务边界与 `pipeline_task` 状态追踪。当前主链仍以同步入口执行；专用 L0 简历导入与 L3 匹配入口具备 MySQL 持久意图、Celery 消费和重放。其余旧异步触发入口在 strict 模式返回 503，不创建永久等待任务；L1/L2/L4 的可靠异步调度仍待完成。
+- 🧭 **L0–L4 分层管线。** 简历解析、图谱构建、画像生成、人岗匹配、报告生成有独立业务边界与 `pipeline_task` 状态追踪。专用 L0 简历导入与 L3 匹配具备 MySQL 持久意图、Celery 消费和重放；确认后的 L2 画像、简历范围诊断及画像快照是下文所述需核对 `0006`/`0007` 迁移与代码版本的扩展。通用旧 Pipeline 入口仍以同步为主，其他旧异步触发入口在 strict 模式返回 503；L1/L4 的可靠异步调度仍待完成。
 - 🤖 **多模式 Agent + 13 工具。** 默认运行时为 **Supervisor 编排器**（Ask / Agent / Experts 三种交互模式，Plan 步骤 + 黑板 + 记忆分库 + PreToolUse 门禁）。旧 LangGraph（单体）/ ReAct 引擎默认关闭，仅 demo 开关显式启用。Agent 可调用图谱查询、语义检索、管线触发等 13 个工具，在推理与确定性业务逻辑之间保持边界清晰。
 
 ## 🔄 工作流程
@@ -123,13 +112,19 @@ cd backend
 python run.py      # http://localhost:5001
 ```
 
-严格模式的专用 `POST /api/pipeline/l3/run-match` 使用 MySQL 持久意图和 `cpa.pipeline` Celery 队列，不随 Flask 进程内执行。先按 [MySQL 统一迁移](docs/runbooks/mysql-migrations.md) 在 `backend/` 运行 `python -B -m alembic -c alembic.ini upgrade head`；再分别启动 `python -B -m celery -A app.services.agent_runtime.media.jobs:celery_app worker --pool=solo --concurrency=1 --queues=cpa.pipeline --loglevel=INFO` 和 `python -B -m celery -A app.services.agent_runtime.media.jobs:celery_app beat --loglevel=INFO`。Beat 默认每 60 秒触发有界 MySQL 恢复扫描；缺 Beat 时故障任务只能按 [Pipeline 派发与恢复边界](docs/guides/pipeline-dispatch-boundary.md) 手动重放。其他旧启动入口仍不可用。当前真实岗位发布目录为空，不能把接口可运行理解为已有可匹配岗位。
+严格模式的专用 `POST /api/pipeline/l3/run-match` 使用 MySQL 持久意图和 `cpa.pipeline` Celery 队列，不随 Flask 进程内执行。先按 [MySQL 统一迁移](docs/runbooks/mysql-migrations.md) 在 `backend/` 运行 `python -B -m alembic -c alembic.ini upgrade head`；再分别启动 `python -B -m celery -A app.services.agent_runtime.media.jobs:celery_app worker --pool=solo --concurrency=1 --queues=cpa.pipeline,cpa.media,cpa.graph --loglevel=INFO` 和 `python -B -m celery -A app.services.agent_runtime.media.jobs:celery_app beat --loglevel=INFO`。后两个队列分别消费 Agent 附件和个人图任务。Beat 默认每 60 秒触发有界 MySQL 恢复扫描；缺 Beat 时故障任务只能按 [Pipeline 派发与恢复边界](docs/guides/pipeline-dispatch-boundary.md) 手动重放。其他旧启动入口仍不可用。当前真实岗位发布目录为空，不能把接口可运行理解为已有可匹配岗位。
 
-职途导航的真实简历导入另有专用 `POST /api/profile/student/upload?async=1`：文件或粘贴文字经同一 L0 持久任务进入 `cpa.pipeline` worker，由文档、结构、实体、证据四个实际职责接力；`GET /api/pipeline/trace/<task_id>` 提供归属校验后的交接轨迹和四个已完成检查点百分比。解析前沿用演示版页面布局，处理中在原预览/仪表盘位置动态呈现；候选仍须人工核对，轨迹/百分比不代表已评分。首次启用须完成 Alembic 迁移，详见 [L0 多 Agent 轨迹](docs/guides/resume-agent-team-trace.md)。
+职途导航的真实简历导入另有专用 `POST /api/profile/student/upload?async=1`：文件或粘贴文字经同一 L0 持久任务进入 `cpa.pipeline` worker，由文档、结构、实体、证据四个实际职责接力；`GET /api/pipeline/trace/<task_id>` 提供归属校验后的交接轨迹和四个已完成检查点百分比。**只启动 `run.py` 不会执行异步解析**，还须按上段启动 `cpa.pipeline` worker；未接单的已保存任务会保留编号，页面等待一段时间后提示检查解析服务，无需重复上传。Beat 负责异常后的定时重派，不能代替 worker。解析前沿用演示版页面布局，处理中在原预览/仪表盘位置动态呈现；候选仍须人工核对，轨迹/百分比不代表已评分。首次启用须完成 Alembic 迁移，详见 [L0 多 Agent 轨迹](docs/guides/resume-agent-team-trace.md)。
+
+确认简历后的 L2 画像、简历范围诊断任务及画像只追加快照属于需单独核对版本的扩展；**新克隆不能仅凭本页假定已经包含**。只有检出的版本同时包含对应后端代码和 `0006`/`0007` Alembic 迁移，且已实际迁移数据库并运行 worker/Beat，才能按 `GET /api/profile/student/workbench`、`GET /api/profile/student/portrait-snapshots` 验收 owner 范围的两份成果、`analysis_run` 与新画像快照。未知维度继续留空，不伪造综合分；旧版快照只读对照，不参与当前评分。历史遗留画像的安全迁移与真实逐条工具过程仍在后续阶段，见 [状态契约](docs/specs/student-workbench-state-contract.md) 与 [迁移手册](docs/runbooks/mysql-migrations.md)。
+
+这条简历上传的 multipart 临时文件会溢写到 `backend/uploads/` 所在卷，而不是依赖系统临时目录的剩余容量；该卷仍须为最大 50 MB 请求及解析产物留足空间。存储耗尽时返回明确错误且不创建解析任务，不能把上传 500/202 当成已经开始 OCR。扫描 PDF 还须运行真实 OCR Sidecar，详见 [附件完整性与 OCR](docs/guides/attachment-completeness.md)。
+
+已确认简历若缺少职业素养的原文证据，`cpa-xingtu` 职途导航允许学生另行填写并撤回四项具体经历；服务端明确标记为“用户自述”，重新计算候选画像，但不把它写回简历原文，也不替代缺失页面、学校档位或专业类别的核验。岗位正式匹配仍依赖可验证的画像和岗位发布来源。
 
 旧版二进制 `.doc` 简历需预装 Java 17+，并为 Flask 和 Pipeline worker 配置 `CPA_L0_DOC_TIKA_JAR` 指向已核验的 Apache Tika 独立 JAR；缺组件会明确失败，不会误按 DOCX 处理。Tika 只抽取文本，图片与页码仍标记未核验。安装、校验和重传方法见 [旧版 DOC 简历](docs/guides/legacy-doc-resume.md)。
 
-仓库根目录 `.env` 的 `CPA_DEMO_MODE=false` 表示 strict 身份模式：默认不会从请求体、查询参数或内置学号自动推断用户。平台自建账号的 `/api/auth/csrf`、`/register`、`/login`、`/change-password`、`/logout`、`/me` 使用 MySQL `user_account` 与 Redis 服务端会话；已登录改密须提供当前密码，成功后所有设备重新登录。启用前须设置随机、至少 32 字符的 `SECRET_KEY`，生产须使用 HTTPS、`FLASK_DEBUG=false`、`CPA_AUTH_COOKIE_SECURE=true`（默认）。仅本机 HTTP 调试时才将 `CPA_AUTH_COOKIE_SECURE=false`；管理员使用可信本机 CLI `flask --app app provision-admin --username <name>` 开户，不提供公开管理员注册。详情和未覆盖边界见 [自建账号规格](docs/specs/self-managed-account-auth.md)。只有**未配置正式账号认证适配器**的本机调试环境，显式设置 `CPA_DEV_AUTH=1` 后，loopback 请求才可通过 `X-Dev-Student-Id` 注入临时学生 Principal；账号适配器一旦启用，该开发头无效，不能获得管理员权限。
+仓库根目录 `.env` 的 `CPA_DEMO_MODE=false` 表示 strict 身份模式：默认不会从请求体、查询参数或内置学号自动推断用户。平台自建账号的 `/api/auth/csrf`、`/register`、`/login`、`/change-password`、`/logout`、`/me` 使用 MySQL `user_account` 与 Redis 服务端会话；已登录改密须提供当前密码，成功后所有设备重新登录。启用前须设置随机、至少 32 字符的 `SECRET_KEY`，生产须使用 HTTPS、`FLASK_DEBUG=false`、`CPA_AUTH_COOKIE_SECURE=true`（默认），并将 `CORS_ALLOWED_ORIGINS` 设为真实前端 HTTPS Origin、不得为 `*`。现有 Cookie 为 `SameSite=Lax`，生产优先同源或同站 HTTPS 代理；跨站前端不能只靠配置 CORS 接通账号会话。仅本机 HTTP 调试时才将 `CPA_AUTH_COOKIE_SECURE=false`；管理员使用可信本机 CLI `flask --app app provision-admin --username <name>` 开户，不提供公开管理员注册。详情和未覆盖边界见 [自建账号规格](docs/specs/self-managed-account-auth.md)。只有**未配置正式账号认证适配器**的本机调试环境，显式设置 `CPA_DEV_AUTH=1` 后，loopback 请求才可通过 `X-Dev-Student-Id` 注入临时学生 Principal；账号适配器一旦启用，该开发头无效，不能获得管理员权限。
 
 岗位发布的正式账号管理端提供 `/api/admin/job-publications` 的预检、精确摘要确认、版本回读与撤回；见 [HTTP 发布契约](docs/specs/admin-job-publication-http.md)。这不是原网页真实性或招聘有效期的自动证明。旧本机 `backend/scripts/mysql/publish_job_catalog.py` 仍可直接发布，但 `reviewed_by/reviewed_at` 来自其 JSON 输入，**不经过账号审核或新的原子审计**；只限可信运维环境与独立人工核对，不能与正式 HTTP 审核记录等价。
 正式管理员还可经只读 `/api/admin/job-reviews` 查看模型岗位审查的来源、阻断原因和候选摘要；它不授予发布权，不自动核实当前招聘是否仍开放，见 [岗位模型审查](docs/guides/job-catalog-model-review.md)。
@@ -160,104 +155,15 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mysql neo4j
 
 ## 🚀 快速开始
 
-### 一、在线体验（推荐首次使用）
+先选复现范围，不要把静态演示与真实后端混为一条路径：
 
-直接访问 [在线 Demo](https://whaoxm.github.io/cpa-xingtu/)，使用演示账号登录即可体验全部前端功能。
+| 路径 | 步骤 | 能证明什么 |
+|---|---|---|
+| 纯前端演示 | 克隆独立的 [cpa-xingtu](https://github.com/WHaoxM/cpa-xingtu)，Node `^20.19.0 || >=22.12.0`，在该仓库执行 `npm ci`、`npm run dev:mock` | `http://localhost:5173` 的 fixture/Mock 页面；不需要 Docker、LLM 或本仓后端 |
+| 本机后端基础检查 | 从本仓 `.env.example` 复制 `.env`；用 Python 3.10 安装 `backend/requirements.txt`；启动 MySQL/Neo4j/Redis，执行 Alembic 迁移，然后在 `backend/` 运行 `python -B run.py` | `http://127.0.0.1:5001/health` 与路由可用；不等于异步/模型/真实业务成功 |
+| 真实前后端联调 | 在上述基础上设 `CPA_DEMO_MODE=false`、强 `SECRET_KEY`、LLM 凭据；按 [DEPLOY.md](DEPLOY.md) 启动三队列 worker 和 Beat；前端用 `npm run dev:backend` | 通过注册/登录后按 owner 核验简历、任务和最终成果；未发布可信岗位时无法复现正式匹配 |
 
-### 二、本地部署（完整功能）
-
-#### 前置要求
-
-| 工具 | 版本 | 说明 | 安装检查 |
-|------|------|------|---------|
-| **Python** | 3.10+ | 后端运行环境（本机开发用 conda 环境 `mkg` = 3.10） | `python --version` |
-| **Node.js** | ^20.19.0 \|\| >=22.12.0 | 前端运行环境 | `node -v` |
-| **Conda** | 推荐 | 环境管理 | `conda --version` |
-| **Docker** | 最新 | 数据库依赖 | `docker --version` |
-
-#### 1. 配置环境变量
-
-```bash
-# 复制示例配置文件
-cp .env.example .env
-# Windows PowerShell:
-# Copy-Item .env.example .env
-
-# 编辑 .env 文件，填入必要的 API 密钥与数据库密码
-```
-
-**必需的环境变量：**
-
-```env
-# LLM API 配置（支持 OpenAI SDK 格式的任意 LLM API）
-# 推荐：DeepSeek / Qwen / Kimi / Ollama
-LLM_API_KEY=your_api_key
-LLM_BASE_URL=https://api.deepseek.com/v1
-LLM_MODEL_NAME=deepseek-chat
-
-# 数据库配置
-MYSQL_PASSWORD=your_password
-NEO4J_PASSWORD=your_password
-REDIS_URL=redis://localhost:16379/0
-
-# 向量数据库（默认使用 Lite 嵌入式模式，无需额外部署）
-CPA_MILVUS_URI=./milvus_data/milvus.db
-EMBEDDING_MODEL=BAAI/bge-m3
-```
-
-#### 2. 启动数据库依赖
-
-```bash
-# 启动 MySQL + Neo4j + Redis
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mysql neo4j redis
-```
-
-#### 3. 启动后端
-
-```bash
-conda activate mkg  # 或你的环境名
-cd backend
-pip install -r requirements.txt
-
-# 初始化数据库与图谱
-python scripts/neo4j/init_neo4j.py
-python scripts/milvus/init_milvus.py
-
-# 启动服务
-python run.py
-# → http://localhost:5001
-```
-
-#### 4. 启动前端
-
-前端为独立仓库 [cpa-xingtu](https://github.com/WHaoxM/cpa-xingtu)：
-
-```bash
-git clone https://github.com/WHaoxM/cpa-xingtu.git
-cd cpa-xingtu
-npm install
-Copy-Item .env.example .env.local
-# .env.local 中 VITE_API_BASE_URL=http://127.0.0.1:5001
-npm run dev
-# → http://localhost:5173
-```
-
-### 三、Docker 部署（数据库层）
-
-```bash
-# 开发环境（仅数据库）
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
-
-# 生产环境（含后端）
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-```
-
-**端口映射：**
-- 前端：`5173`（开发）/ `3000`（Docker）
-- 后端 API：`5001`
-- MySQL：`13306`
-- Neo4j Bolt：`17687` / HTTP：`17668`
-- Redis：`16379`
+**可复制的环境变量、命令顺序、验证点与生产层限制统一见 [DEPLOY.md](DEPLOY.md)。** 新克隆时模板 `.env.example` 默认为 demo，当前工作机的私有 `.env` 为 strict；两者不能混用推断。前端是独立仓库，不在本仓的 Git 跟踪范围内。开发 Compose 只负责数据库；生产候选层已含显式迁移、HTTP、worker、Beat，但缺 HTTPS、备份与完整业务验收，不是一键上线方案。
 
 ## 🏗️ 架构概览
 
@@ -361,7 +267,7 @@ cpa-agent/                  # 主仓库（后端 + 文档）
 - **简历解析** MinerU + YOLOv10 布局检测 + Qwen3-SFT NER + 实体归一化（auto 阶梯 = Parse Sidecar → PyMuPDF，MinerU 仅显式启用）
 - **Agent 工具** 图谱查询、DB 查询、语义检索、管线触发、LLM 推理、JD 清洗、技能工具集等 13 个
 - **输出模式** 四维画像、人岗匹配、技能差距、六章职业发展报告、SSE 流式对话
-- **部署** Dev Docker Compose 只拉起 MySQL + Neo4j + Redis；后端本机运行，前端可独立部署至 GitHub Pages
+- **部署** Dev Docker Compose 只拉起 MySQL + Neo4j + Redis；生产候选 Compose 可显式迁移并分进程运行 HTTP/worker/Beat，但尚未完成 HTTPS 与恢复演练；前端独立部署至 GitHub Pages
 
 ## 💡 一个具体例子
 
@@ -369,7 +275,7 @@ cpa-agent/                  # 主仓库（后端 + 文档）
 
 > 我是计算机专业大三学生，做过两个 Spring Boot 后端项目，熟悉 MySQL 和 Redis，想毕业后做后端开发，但不太确定该冲大厂还是先去创业公司积累经验。
 
-系统经过管线与 Agent 协同后，可能返回：
+以下是产品展示用的**示意输出**，不是新克隆仓库自带数据可重复得到的分数或岗位；真实结果取决于已确认简历、模型、图谱和经审核发布的岗位：
 
 ```text
 【画像摘要】D2 职业技能 72/100 · D4 发展潜力 68/100

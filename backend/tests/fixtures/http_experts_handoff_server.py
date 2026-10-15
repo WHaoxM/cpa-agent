@@ -33,6 +33,7 @@ def main():
     from app.services.agent_runtime.session_coordinator import SessionCoordinator
     from app.services.db import mysql_client
     from app.services import langgraph_agent
+    from app.services import pipeline
     from app.services.agent_runtime import evidence_retrieval
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
     from langchain_core.tools import tool
@@ -66,7 +67,10 @@ def main():
             pipeline = {"profile": "L2_generate_portrait", "match": "L3_run_match",
                         "report": "L4_generate_report"}[role]
             if role == "profile":
-                value = {"source_portrait_task_id": task_id, "summary": "confirmed profile"}
+                value = {"source_portrait_task_id": task_id,
+                         "source_confirmation_task_id": "http-resume",
+                         "source_self_report_revision": 0,
+                         "summary": "confirmed profile"}
                 result = {"portrait_id": result_id, "portrait": value}
             elif role == "match":
                 from app.services.job_publication import content_sha256
@@ -99,6 +103,8 @@ def main():
             return []
 
     mysql = DomainRows()
+    pipeline.require_confirmed_profile = lambda _mysql, owner: {
+        "_resume_confirmation": {"task_id": "http-resume", "student_id": owner}}
     db.get_mysql_client = lambda: mysql
     mysql_client.get_mysql_client = lambda: mysql
     schema_ensure.ensure_runtime_schema = lambda: None

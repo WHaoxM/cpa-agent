@@ -1,21 +1,25 @@
 # cpa-xingtu 前端设计文档
 
 Status: active  
-Last updated: 2026-07-18  
-Scope: 设计文档 + fixtures / dual client + **主路径页面已接线**（含 backend-gap 的 fixture 回退）。
+Last reviewed for reproduction: 2026-10-15
+Scope: 前端产品契约与 fixtures / dual client；页面 HTTP 覆盖仍按实际路由逐项核验，不以理想契约代表全部落地。
 
 面向 `cpa-xingtu` 的前端产品契约：全路由入册、理想 FE API、操作级样例、Mock/Pages 约定。
+
+`cpa-xingtu` 是[独立前端仓库](https://github.com/WHaoxM/cpa-xingtu)，不随 CPA-Agent 主仓克隆；本目录是主仓中的设计/契约资料，不是前端运行入口。要运行页面，请按前端仓库 README/DEPLOY 克隆并选择 Mock 或 HTTP 模式。
+
+> 新一轮学生工作台产品决策与分工见 [`../../specs/student-workbench-experience.md`](../../specs/student-workbench-experience.md)。该文档是待落地目标，不覆盖各页面记录的当前 HTTP 行为与验收事实。
 
 ## Grill 摘要（已决）
 
 | 项 | 决定 |
 |----|------|
-| 页面清单 | 以 [`cpa-xingtu/src/router/routes.ts`](../../../cpa-xingtu/src/router/routes.ts) 全量为准；redirect 合并进目标页 |
+| 页面清单 | 以[前端仓库 `src/router/routes.ts`](https://github.com/WHaoxM/cpa-xingtu/blob/main/src/router/routes.ts) 当前版本为准；redirect 合并进目标页 |
 | Mock 形态 | 静态 JSON fixtures + 薄 loader；Git 可管，供 GitHub Pages demo |
-| 运行时切换 | 统一 client：`mockAdapter` / `httpAdapter`（本轮只写约定） |
+| 运行时切换 | `npm run dev:mock` 为离线 Mock；普通 `npm run dev` 按 `.env.development` 默认 HTTP；严格账号联调用 `npm run dev:backend`（5174） |
 | 契约权威 | **理想 FE 产品契约**；每条 API 标四态（见 [status-legend](contracts/status-legend.md)） |
 | 文档深度 | 每操作：UI → method/path → req/res → fixture 路径 → BE 状态 |
-| 身份 | Demo 固定 `student_001`（登录仍 mock，无 `/api/auth`） |
+| 身份 | Mock fixture 固定 `student_001`；HTTP 模式走 `/api/auth/*` 的正式账号，`acct_*` 不继承 `student_001` |
 
 ## 阅读顺序
 
@@ -42,7 +46,7 @@ docs/frontend/cpa-xingtu/
     landing.md … not-found.md
 ```
 
-约定 fixture 根路径（后续实现）：
+已实现的 fixture 根路径：
 
 `cpa-xingtu/public/fixtures/{domain}/{name}.json`
 
@@ -84,7 +88,7 @@ Redirect 不单独成文：`student/career` → dashboard；`courses` → learni
 
 本目录以 **cpa-xingtu 路由/产品视角** 重写理想契约；后端状态标签复用并细化 matrix 结论。若两者冲突，以本目录 + 当前后端路由为准，并回写 matrix 备注（不在本轮改 matrix）。
 
-注意：matrix 曾写「`backend.ts` 已接」——仓库中 **无** `cpa-xingtu/src/api/backend.ts`；多数页面仍为 mock。文档状态按「理想契约 + 后端可用性」标注，不假装已接线。
+注意：matrix 曾写「`backend.ts` 已接」——仓库中 **无** `cpa-xingtu/src/api/backend.ts`。文档状态按「理想契约 + 后端可用性」标注；当前 HTTP 链路须以页面请求和服务端 owner 范围结果复核，不从历史备注推断所有页面仍为 Mock。
 
 ## 当前实现对照（只读）
 

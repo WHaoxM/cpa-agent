@@ -5,6 +5,7 @@
 
 import uuid
 import re
+import errno
 from flask import request, jsonify
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -42,16 +43,29 @@ def mask_phone(phone: str) -> str:
     return f"{phone[:3]}****{phone[-4:]}"
 
 
+def _resume_storage_error(exc: OSError, stage: str):
+    logger.error("简历上传存储不可用 stage=%s errno=%s: %s", stage, exc.errno, exc)
+    full = exc.errno == errno.ENOSPC
+    return jsonify({"success": False,
+                    "code": "upload_storage_full" if full else "upload_storage_unavailable",
+                    "error": ("服务端上传空间不足，尚未创建解析任务；请稍后重试或联系管理员"
+                              if full else "简历文件暂无法保存，尚未创建解析任务；请稍后重试")}), 507 if full else 503
+
+
 @profile_bp.route('/student/upload', methods=['POST'])
 def upload_resume():
     """上传简历文件, 保存到持久化目录, 触发 L0 解析管线"""
-    if 'file' not in request.files:
+    try:
+        files = request.files
+    except OSError as exc:
+        return _resume_storage_error(exc, "multipart")
+    if 'file' not in files:
         return jsonify({
             "success": False,
             "error": "未上传文件"
         }), 400
 
-    file = request.files['file']
+    file = files['file']
     session_id = request.form.get('session_id')
 
     try:
@@ -81,9 +95,18 @@ def upload_resume():
     import os
     from ..config import Config
     upload_dir = os.path.join(Config.UPLOAD_FOLDER, student_id)
-    os.makedirs(upload_dir, exist_ok=True)
     save_path = os.path.join(upload_dir, f"resume_{uuid.uuid4().hex[:8]}{os.path.splitext(filename)[1] or '.pdf'}")
-    file.save(save_path)
+    try:
+        os.makedirs(upload_dir, exist_ok=True)
+        file.save(save_path)
+    except OSError as exc:
+        try:
+            os.remove(save_path)
+        except FileNotFoundError:
+            pass
+        except OSError as cleanup_error:
+            logger.warning("简历上传残留清理失败: %s", cleanup_error)
+        return _resume_storage_error(exc, "durable_file")
 
     logger.info(f"简历上传: student_id={student_id}, filename={filename}, saved={save_path}")
 
@@ -192,6 +215,100 @@ def upload_resume():
     })
 
 
+@profile_bp.route('/student/workbench', methods=['GET'])
+def get_student_workbench():
+    """Read current import, resume report and portrait as independent states."""
+    try:
+        scope = resolve_request_scope()
+        from ..services.student_workbench import read_student_workbench
+        state = read_student_workbench(get_mysql_client(), student_id=scope.student_id)
+        return jsonify({"success": True, "data": state})
+    except ScopeError as error:
+        return scope_error_response(error)
+    except Exception as error:
+        from ..services.student_workbench import WorkbenchSourceInvalid
+        if isinstance(error, WorkbenchSourceInvalid):
+            return jsonify({"success": False, "error": str(error)}), 409
+        return jsonify(safe_error("读取学生工作台", error)), 500
+
+
+def _portrait_snapshot_summary(snapshot: dict, current_id: str | None,
+                               *, include_portrait: bool = False) -> dict:
+    portrait = snapshot["portrait"]
+    dimensions = {}
+    for public, source in (("D1", "D1_basic"), ("D2", "D2_skill"),
+                           ("D3", "D3_quality"), ("D4", "D4_potential")):
+        item = portrait.get(source)
+        dimensions[public] = item.get("dimension_score") if isinstance(item, dict) else None
+    response = {"snapshot_id": snapshot["snapshot_id"],
+                "source_task_id": snapshot["source_task_id"],
+                "source_confirmation_task_id": snapshot["source_confirmation_task_id"],
+                "source_self_report_revision": snapshot["source_self_report_revision"],
+                "target_job_id": snapshot["target_job_id"],
+                "state": "ready_scored" if snapshot["status"] == "completed" else "ready_with_unknowns",
+                "scoring_eligible": snapshot["status"] == "completed" and
+                                    snapshot["snapshot_id"] == current_id,
+                "is_current": snapshot["snapshot_id"] == current_id,
+                "dimensions": dimensions, "missing_fields": portrait.get("missing_fields") or [],
+                "created_at": snapshot["created_at"]}
+    if include_portrait:
+        response["portrait"] = portrait
+    return response
+
+
+@profile_bp.route('/student/portrait-snapshots', methods=['GET'])
+def get_student_portrait_snapshots():
+    """List owner-bound analysis versions; historical rows never grant scoring."""
+    try:
+        scope = resolve_request_scope()
+        raw_limit = request.args.get("limit", "20")
+        if not raw_limit.isdecimal() or not 1 <= int(raw_limit) <= 50:
+            return jsonify({"success": False, "error": "画像历史条数无效"}), 400
+        mysql = get_mysql_client()
+        from ..services.student_workbench import read_student_workbench
+        from ..services.student_portrait_snapshot import list_portrait_snapshots
+        current = read_student_workbench(mysql, student_id=scope.student_id)["portrait"].get("snapshot_id")
+        items = list_portrait_snapshots(mysql, student_id=scope.student_id, limit=int(raw_limit))
+        return jsonify({"success": True, "data": {
+            "current_snapshot_id": current,
+            "items": [_portrait_snapshot_summary(item, current) for item in items]}})
+    except ScopeError as error:
+        return scope_error_response(error)
+    except Exception as error:
+        from ..services.student_portrait_snapshot import PortraitSnapshotInvalid
+        from ..services.student_workbench import WorkbenchSourceInvalid
+        if isinstance(error, (PortraitSnapshotInvalid, WorkbenchSourceInvalid)):
+            return jsonify({"success": False, "error": str(error)}), 409
+        return jsonify(safe_error("读取画像历史", error)), 500
+
+
+@profile_bp.route('/student/portrait-snapshots/<snapshot_id>', methods=['GET'])
+def get_student_portrait_snapshot(snapshot_id: str):
+    """Read one verified historical version without making it current."""
+    try:
+        scope = resolve_request_scope()
+        if not re.fullmatch(r"ps_[0-9a-f]{32}", snapshot_id):
+            return jsonify({"success": False, "error": "画像快照编号无效"}), 400
+        mysql = get_mysql_client()
+        from ..services.student_workbench import read_student_workbench
+        from ..services.student_portrait_snapshot import read_portrait_snapshot
+        snapshot = read_portrait_snapshot(mysql, student_id=scope.student_id,
+                                          snapshot_id=snapshot_id)
+        current = read_student_workbench(mysql, student_id=scope.student_id)["portrait"].get("snapshot_id")
+        return jsonify({"success": True, "data": _portrait_snapshot_summary(
+            snapshot, current, include_portrait=True)})
+    except ScopeError as error:
+        return scope_error_response(error)
+    except LookupError:
+        return jsonify({"success": False, "error": "画像快照不存在"}), 404
+    except Exception as error:
+        from ..services.student_portrait_snapshot import PortraitSnapshotInvalid
+        from ..services.student_workbench import WorkbenchSourceInvalid
+        if isinstance(error, (PortraitSnapshotInvalid, WorkbenchSourceInvalid)):
+            return jsonify({"success": False, "error": str(error)}), 409
+        return jsonify(safe_error("读取画像快照", error)), 500
+
+
 @profile_bp.route('/student/candidate/<task_id>', methods=['GET'])
 def get_student_resume_candidate(task_id: str):
     """Replay an owned L0 candidate or its *current* confirmed workflow.
@@ -232,6 +349,13 @@ def get_student_resume_candidate(task_id: str):
                 return jsonify({"success": False, "error": "此简历候选已被后续确认替代"}), 409
             public["confirmed"] = True
             public["profile_ready"] = True
+            from ..services.student_self_report import (
+                revision as self_report_revision, portrait_scoring_current,
+            )
+            public["user_self_report"] = profile.get("_user_self_report")
+            from ..services.student_skill_exploration import current_report as current_skill_exploration
+            public["skill_exploration"] = current_skill_exploration(profile)
+            public["portrait_needs_refresh"] = False
             linked = mysql.fetch_all(
                 "SELECT task_id, student_id, pipeline, status, result_json FROM pipeline_task "
                 "WHERE student_id=:student_id AND pipeline='L2_generate_portrait' "
@@ -242,9 +366,15 @@ def get_student_resume_candidate(task_id: str):
                 portrait_row = linked[0]
                 portrait = parse_json_field(portrait_row.get("result_json"))
                 portrait = portrait if isinstance(portrait, dict) else {}
+                candidate_portrait = portrait.get("portrait") or portrait.get("portrait_candidate") or {}
+                if candidate_portrait and not portrait_scoring_current(candidate_portrait):
+                    public["portrait_needs_refresh"] = True
                 if (portrait_row.get("student_id") == scope.student_id
                         and portrait_row.get("pipeline") == "L2_generate_portrait"
                         and portrait.get("source_confirmation_task_id") == task_id
+                        and isinstance(candidate_portrait, dict)
+                        and portrait_scoring_current(candidate_portrait)
+                        and candidate_portrait.get("source_self_report_revision", 0) == self_report_revision(profile)
                         and portrait.get("status") == portrait_row.get("status")):
                     if portrait_row["status"] == "completed":
                         from ..services.agent_runtime.pipeline_reference import resolve_pipeline_task_ref
@@ -259,7 +389,8 @@ def get_student_resume_candidate(task_id: str):
                             "next_action", "summary", "missing_fields", "portrait_candidate",
                             "portrait_id", "portrait", "resource_type", "resource_id",
                             "action_available", "resume_state")}}
-                    if portrait_row["status"] == "partial":
+                    if (portrait_row["status"] == "partial"
+                            and portrait.get("next_action") == "confirm_semantic_facts"):
                         # Historical L2 rows predate these explicit capability
                         # fields; the semantic-fact writer is still unavailable.
                         public["portrait_task"]["action_available"] = False
@@ -271,6 +402,107 @@ def get_student_resume_candidate(task_id: str):
         return scope_error_response(e)
     except Exception as e:
         return jsonify(safe_error("读取简历候选", e)), 500
+
+
+@profile_bp.route('/student/self-report', methods=['POST'])
+def save_student_self_report():
+    """Save owner-authored facts separately from resume evidence and re-evaluate L2."""
+    try:
+        scope = resolve_request_scope()
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or set(data) != {"task_id", "expected_revision", "items"}:
+            return jsonify({"success": False, "error": "补充请求格式不正确"}), 400
+        task_id = data["task_id"]
+        if not isinstance(task_id, str) or not re.fullmatch(r"task_[A-Za-z0-9]+", task_id):
+            return jsonify({"success": False, "error": "简历任务引用无效"}), 400
+        from ..services.student_self_report import save_self_report
+        report = save_self_report(get_mysql_client(), student_id=scope.student_id,
+                                  task_id=task_id, expected_revision=data["expected_revision"],
+                                  items=data["items"])
+        return jsonify({"success": True, "data": report})
+    except ScopeError as e:
+        return scope_error_response(e)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 409
+    except Exception as e:
+        return jsonify(safe_error("保存自述补充", e)), 500
+
+
+@profile_bp.route('/student/skill-exploration', methods=['POST'])
+def save_student_skill_exploration():
+    """Persist owner-authored technical skills outside resume/scoring facts."""
+    try:
+        scope = resolve_request_scope()
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or set(data) != {"task_id", "expected_revision", "skills"}:
+            return jsonify({"success": False, "error": "技能补充请求格式不正确"}), 400
+        task_id = data["task_id"]
+        if not isinstance(task_id, str) or not re.fullmatch(r"task_[A-Za-z0-9]+", task_id):
+            return jsonify({"success": False, "error": "简历任务引用无效"}), 400
+        from ..services.student_skill_exploration import save_skill_exploration
+        report = save_skill_exploration(get_mysql_client(), student_id=scope.student_id,
+                                        task_id=task_id, expected_revision=data["expected_revision"],
+                                        skills=data["skills"])
+        return jsonify({"success": True, "data": report})
+    except ScopeError as e:
+        return scope_error_response(e)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 409
+    except Exception as e:
+        return jsonify(safe_error("保存技能自述", e)), 500
+
+
+@profile_bp.route('/student/skill-exploration/roles', methods=['POST'])
+def infer_student_skill_exploration_roles():
+    """Use only the persisted self-report to explore directions, never score L2."""
+    try:
+        scope = resolve_request_scope()
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or not set(data) <= {"task_id", "preferred_role"} or "task_id" not in data:
+            return jsonify({"success": False, "error": "方向探索请求格式不正确"}), 400
+        task_id = data["task_id"]
+        if not isinstance(task_id, str) or not re.fullmatch(r"task_[A-Za-z0-9]+", task_id):
+            return jsonify({"success": False, "error": "简历任务引用无效"}), 400
+        preferred = data.get("preferred_role")
+        if preferred is not None and (not isinstance(preferred, str) or len(preferred.strip()) > 200):
+            return jsonify({"success": False, "error": "兴趣方向格式不正确"}), 400
+        from ..services.student_skill_exploration import infer_skill_exploration
+        result = infer_skill_exploration(get_mysql_client(), student_id=scope.student_id,
+                                         task_id=task_id, preferred_role=preferred.strip() if preferred else None)
+        return jsonify({"success": True, "data": result})
+    except ScopeError as e:
+        return scope_error_response(e)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 409
+    except Exception as e:
+        return jsonify(safe_error("技能自述方向探索", e)), 500
+
+
+@profile_bp.route('/student/confirmed-resume/roles', methods=['POST'])
+def infer_student_confirmed_resume_roles():
+    """Explore roles using the current owner's confirmed resume, not request skills."""
+    try:
+        scope = resolve_request_scope()
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or not set(data) <= {"task_id", "preferred_role"} or "task_id" not in data:
+            return jsonify({"success": False, "error": "方向探索请求格式不正确"}), 400
+        task_id = data["task_id"]
+        if not isinstance(task_id, str) or not re.fullmatch(r"task_[A-Za-z0-9]+", task_id):
+            return jsonify({"success": False, "error": "简历任务引用无效"}), 400
+        preferred = data.get("preferred_role")
+        if preferred is not None and (not isinstance(preferred, str) or len(preferred.strip()) > 200):
+            return jsonify({"success": False, "error": "兴趣方向格式不正确"}), 400
+        from ..services.student_confirmed_role_inference import infer_confirmed_resume_roles
+        result = infer_confirmed_resume_roles(
+            get_mysql_client(), student_id=scope.student_id, task_id=task_id,
+            preferred_role=preferred.strip() if preferred else None)
+        return jsonify({"success": True, "data": result})
+    except ScopeError as e:
+        return scope_error_response(e)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 409
+    except Exception as e:
+        return jsonify(safe_error("已确认简历方向探索", e)), 500
 
 
 @profile_bp.route('/student/confirm', methods=['POST'])
@@ -440,11 +672,13 @@ def get_student_4d(student_id: str):
         portrait['portrait_json'] = parse_json_field(portrait.get('portrait_json'))
         from ..services.pipeline import require_confirmed_profile
         from ..services.school_tier_review import portrait_review_current
+        from ..services.student_self_report import portrait_current
         current_profile = require_confirmed_profile(mysql, student_id)
         current_confirmation = current_profile['_resume_confirmation']['task_id']
         payload = portrait['portrait_json']
         if (not isinstance(payload, dict)
                 or payload.get('source_confirmation_task_id') != current_confirmation
+                or not portrait_current(current_profile, payload)
                 or not portrait_review_current(
                     mysql, student_id=student_id,
                     confirmation_task_id=current_confirmation, portrait=payload)):

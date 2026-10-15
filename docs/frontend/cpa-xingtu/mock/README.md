@@ -1,12 +1,12 @@
 # Mock / Fixtures / Adapter 约定
 
 Status: active  
-Last updated: 2026-07-18  
+Last reviewed for reproduction: 2026-10-15
 Fixtures + dual client：**已落地**（见 `cpa-xingtu/public/fixtures/`、`cpa-xingtu/src/api/`）。
 
 ## 目标
 
-GitHub Pages demo 与本地开发共用同一套静态 fixtures；切 `http` 时走真实后端，无需改页面。
+GitHub Pages 与 `npm run dev:mock` 共用静态 fixtures；普通 `npm run dev` 按 `.env.development` 默认 HTTP，正式账号联调用 `npm run dev:backend`。不是所有页面都已接真实后端；未接线页面的 Mock 展示不代表服务端状态。
 
 ## Fixture 根路径
 
@@ -85,7 +85,7 @@ public/fixtures/agent/chat.demo.json
 | 展示名 | 钟同学（见现有 `src/mock/data.ts`） |
 | 样例岗位 / 报告 / 课程 | `job_001` / `report_001` / `course_001` |
 
-Admin demo 账号沿用现有 `mockUsers` 中 admin 条目（fixtures `auth/users.json` 落地时一并迁出）。
+Admin Mock 账号为 `admin001` / `123456`，见已落地的 `public/fixtures/auth/users.json`；这不是正式后端管理员凭据。
 
 ### 统一 client（已实现）
 
@@ -112,14 +112,14 @@ VITE_API_MODE=http   # 本地联调
 VITE_API_BASE_URL=
 VITE_API_PROXY_TARGET=http://127.0.0.1:5001
 
-# 或直连任意 origin（不经 proxy）
-# VITE_API_BASE_URL=http://192.168.1.10:8080
+# 正式账号联调推荐独立的 .env.backend-dev + dev:backend；
+# 不建议用跨 origin 直连替代同源代理与 Cookie/CSRF 验证。
 ```
 
 `mockAdapter`：`fetch(`${import.meta.env.BASE_URL}fixtures/...`)`。  
 `httpAdapter`：`BASE` 为空时请求同源 `/api/...`；否则直连 `VITE_API_BASE_URL`。
 
-## 与现有 `src/mock/*.ts` 的关系
+## 与仍在使用的 `src/mock/*.ts` 的关系
 
 | 现有文件 | 迁移方向 |
 |----------|----------|
@@ -129,7 +129,7 @@ VITE_API_PROXY_TARGET=http://127.0.0.1:5001
 | `aiAnalysis.ts` | agent / 本地分析；无后端则 backend-gap |
 | `resumeSeed.ts` | pipeline parse 样例 + localStorage seed 说明 |
 
-迁移完成前，页文档「后续实现备注」指向现有 TS；fixtures 路径仍按本 README 预留。
+fixtures 已落地，但部分页面仍混用本地 TS 数据。上表是整理方向，不是已完成清单；判断某页面是否读真实后端，以当前 API 调用和服务端结果为准。
 
 ## Pages 注意
 

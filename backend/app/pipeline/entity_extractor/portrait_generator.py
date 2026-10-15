@@ -199,7 +199,9 @@ class PortraitGenerator:
 
         return {
             "status": "completed" if known else "partial",
-            "missing_fields": d1.get("missing_fields", []) + d3.get("missing_fields", []),
+            "missing_fields": (d1.get("missing_fields", []) + d2.get("missing_fields", [])
+                               + d3.get("missing_fields", [])
+                               + d4.get("missing_fields", [])),
             "student_id": student_id,
             "name": (student_profile or {}).get("name", ""),
             "D1_basic": d1,
@@ -327,8 +329,19 @@ class PortraitGenerator:
 
     def _calc_d2_skill(self, skills: List[Dict], profile: Optional[Dict] = None, target_job_skills: Optional[List[Dict]] = None) -> Dict:
         profile = profile or {}
+        # Keep the confirmed resume untouched; repeated mentions of the same
+        # technical term are one scoring input, not extra skill evidence.
+        unique_skills = []
+        seen_names = set()
+        for skill in skills:
+            name = skill.get("name", "")
+            name = name.strip() if isinstance(name, str) else ""
+            if not name or name in seen_names:
+                continue
+            seen_names.add(name)
+            unique_skills.append({**skill, "name": name})
         skill_list = []
-        for s in skills:
+        for s in unique_skills:
             match_type = s.get("match_type", "unmatched")
             if match_type not in ("exact", "semantic", "unmatched"):
                 match_type = "unmatched"
@@ -339,7 +352,7 @@ class PortraitGenerator:
                 "match_type": match_type,
             })
 
-        skill_count = len(skills)
+        skill_count = len(unique_skills)
         project_count = len(profile.get("projects", []))
         internship_months = profile.get("internship_months", 0)
 
@@ -347,18 +360,22 @@ class PortraitGenerator:
         skill_coverage = self._calc_skill_coverage(skills, target_job_skills)
 
         d2_max = self._scoring["d2_sub_max"]
-        sub_skill = min(self._score_skill_depth(skills), d2_max["sub_skill"])
+        sub_skill = min(self._score_skill_depth(unique_skills), d2_max["sub_skill"])
         sub_project = min(project_count * 14, d2_max["sub_project"])
         sub_internship = min(int(internship_months) * 3, d2_max["sub_internship"]) if internship_months else 0
 
-        dimension_score = min(sub_skill + sub_project + sub_internship, 100)
+        # Projects and internships remain visible evidence, but they cannot
+        # establish a D2 skill score when the confirmed resume names no skill.
+        dimension_score = min(sub_skill + sub_project + sub_internship, 100) if skill_count else None
 
         evidence = []
-        if skills: evidence.append(f"掌握 {skill_count} 项技能")
+        if skill_count: evidence.append(f"简历提及 {skill_count} 个不同技术词")
         if project_count: evidence.append(f"{project_count} 个项目经验")
         if internship_months: evidence.append(f"{internship_months} 个月实习")
 
         return {
+            "status": "completed" if skill_count else "partial",
+            "missing_fields": [] if skill_count else ["skills"],
             "skill_list": skill_list,
             "skill_count": skill_count,
             "project_count": project_count,
@@ -367,7 +384,7 @@ class PortraitGenerator:
             "sub_skill": round(sub_skill, 1),
             "sub_project": round(sub_project, 1),
             "sub_internship": round(sub_internship, 1),
-            "dimension_score": round(dimension_score, 1),
+            "dimension_score": round(dimension_score, 1) if dimension_score is not None else None,
             "evidence": evidence,
         }
 
@@ -414,6 +431,19 @@ class PortraitGenerator:
         candidate, approved = self._assessment_state(profile)
         for key in dimensions:
             values[key]["provenance"] = {"kind": "confirmed_self_description"} if values[key]["score"] is not None else None
+            report = profile.get("_user_self_report")
+            item = (report.get("items") or {}).get(key) if isinstance(report, dict) else None
+            if (values[key]["score"] is None and isinstance(report, dict)
+                    and report.get("source_kind") == "user_self_report"
+                    and type(report.get("revision")) is int and report["revision"] > 0
+                    and report.get("source_confirmation_task_id") ==
+                    (profile.get("_resume_confirmation") or {}).get("task_id")
+                    and isinstance(item, dict) and item.get("level") in ("强", "中", "弱")
+                    and isinstance(item.get("example"), str)
+                    and 12 <= len(item["example"].strip()) <= 500):
+                values[key].update(self._score_quality_item(key, item["level"], []))
+                values[key]["evidence"] = item["example"]
+                values[key]["provenance"] = {"kind": "user_self_report", "revision": report.get("revision")}
             if candidate:
                 assessment = candidate["assessment"][key]
                 values[key]["assessment_candidate"] = assessment
@@ -500,13 +530,18 @@ class PortraitGenerator:
         if rank_pct: evidence.append(f"排名: 前{rank_pct}%")
         if leadership_roles: evidence.append(f"领导角色: {len(leadership_roles)} 个")
 
+        # A resume with no growth-related evidence is not proof that the
+        # student has zero potential. Keep this dimension unknown instead of
+        # publishing a candidate 0 or folding it into a complete total.
+        missing = [] if evidence else ["growth_evidence"]
         return {
             "sub_competition": sub_competition,
             "sub_research": sub_research,
             "sub_academic": sub_academic,
             "sub_leadership": sub_leadership,
-            "dimension_score": round(dimension_score, 1),
+            "dimension_score": round(dimension_score, 1) if evidence else None,
             "evidence": evidence,
+            "missing_fields": missing,
         }
 
     def _score_competitions(self, competitions: list) -> int:

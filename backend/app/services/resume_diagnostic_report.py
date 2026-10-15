@@ -34,7 +34,7 @@ _DISPLAY = {
     "skills": "技能", "certificates": "证书", "competitions": "竞赛",
     "research": "研究", "semantic_facts": "语义事实",
 }
-_META = {"_resume_confirmation", "source", "source_sha256", "raw_text_chars",
+_META = {"_resume_confirmation", "_user_self_report", "_skill_exploration", "source", "source_sha256", "raw_text_chars",
          "structure_path", "chunk_count", "error", "failed_offsets", "next_action",
          "semantic_fact_issues", "semantic_fact_conflicts", "semantic_fact_next_action",
          "skill_mentions", "entity_linking", "structure_calls", "entity_extraction_call",
@@ -343,8 +343,13 @@ class ResumeReportStale(Exception):
     pass
 
 
-def create_or_read_resume_diagnostic(mysql, *, student_id: str, llm_client=None) -> dict:
+def create_or_read_resume_diagnostic(mysql, *, student_id: str, llm_client=None,
+                                     expected_confirmation_task_id: str | None = None,
+                                     writer_claim: dict | None = None) -> dict:
     profile = _require_current(mysql, student_id)
+    if (expected_confirmation_task_id is not None
+            and profile["_resume_confirmation"]["task_id"] != expected_confirmation_task_id):
+        raise ResumeReportStale("报告任务源于旧版已确认简历")
     report = build_resume_diagnostic_report(profile, student_id=student_id)
     existing = mysql.fetch_all(
         "SELECT report_id, student_id, source_confirmation_task_id, status, report_json, content_sha256 "
@@ -360,15 +365,36 @@ def create_or_read_resume_diagnostic(mysql, *, student_id: str, llm_client=None)
         return read_resume_diagnostic(mysql, student_id=student_id, report_id=report["report_id"])
     report = _synthesize(report, llm_client=llm_client)
     report = _synthesize_role_directions(report, llm_client=llm_client)
-    mysql.execute(
+    statement = (
         "INSERT INTO resume_diagnostic_report "
         "(report_id,student_id,source_confirmation_task_id,status,report_json,content_sha256) "
         "VALUES (:rid,:sid,:tid,:status,:payload,:sha) "
         "ON DUPLICATE KEY UPDATE status=VALUES(status),report_json=VALUES(report_json),"
-        "content_sha256=VALUES(content_sha256)",
-        {"rid": report["report_id"], "sid": student_id,
-         "tid": report["source_confirmation_task_id"], "status": report["status"],
-         "payload": canonical_json(report), "sha": content_sha256(report)}, commit=True)
+        "content_sha256=VALUES(content_sha256)")
+    values = {"rid": report["report_id"], "sid": student_id,
+              "tid": report["source_confirmation_task_id"], "status": report["status"],
+              "payload": canonical_json(report), "sha": content_sha256(report)}
+    if writer_claim is None:
+        mysql.execute(statement, values, commit=True)
+    else:
+        from sqlalchemy import text
+        from .pipeline_events import ConfirmationTransaction
+        with mysql.engine.begin() as conn:
+            claimed = conn.execute(text(
+                "SELECT d.claim_token,t.status,t.student_id FROM resume_diagnostic_dispatch d "
+                "JOIN pipeline_task t ON t.task_id=d.task_id "
+                "WHERE d.task_id=:task_id FOR UPDATE"),
+                {"task_id": writer_claim["task_id"]}).mappings().first()
+            if (not claimed or claimed["student_id"] != student_id
+                    or claimed["status"] != "running"
+                    or claimed["claim_token"] != writer_claim["claim_token"]):
+                raise ResumeReportStale("报告任务执行权已转移，请重新读取")
+            conn.execute(text("SELECT student_id FROM student_profile "
+                              "WHERE student_id=:sid FOR UPDATE"), {"sid": student_id}).first()
+            current = require_confirmed_profile(ConfirmationTransaction(conn), student_id)
+            if current["_resume_confirmation"]["task_id"] != report["source_confirmation_task_id"]:
+                raise ResumeReportStale("报告任务源于旧版已确认简历")
+            conn.execute(text(statement), values)
     return read_resume_diagnostic(mysql, student_id=student_id, report_id=report["report_id"])
 
 

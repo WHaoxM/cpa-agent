@@ -10,6 +10,7 @@ warnings.filterwarnings("ignore", message=".*resource_tracker.*")
 from flask import Flask
 
 from .config import Config
+from .upload_request import CareerUploadRequest
 from .utils.logger import setup_logger, get_logger
 from .middleware import LoggingMiddleware, ErrorHandler, CorsMiddleware, DevAuthMiddleware
 
@@ -17,6 +18,7 @@ from .middleware import LoggingMiddleware, ErrorHandler, CorsMiddleware, DevAuth
 def create_app(config_class=Config):
     """Flask 应用工厂函数"""
     app = Flask(__name__)
+    app.request_class = CareerUploadRequest
     app.config.from_object(config_class)
 
     if hasattr(app, 'json'):

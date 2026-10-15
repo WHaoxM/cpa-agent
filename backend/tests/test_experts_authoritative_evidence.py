@@ -158,7 +158,16 @@ def test_invalid_model_template_never_rescued_by_keywords():
 
 class DB:
     def __init__(self, *, owner="owner", status="completed", tamper=False):
-        self.portrait = {"source_portrait_task_id": "task_current", "summary": "无法这个词可以合法出现在字段里"}
+        self.portrait = {"source_portrait_task_id": "task_current",
+                         "source_confirmation_task_id": "task_resume",
+                         "source_self_report_revision": 0,
+                         "summary": "无法这个词可以合法出现在字段里"}
+        self.candidate = {"name": "测试同学", "skills": ["Python"]}
+        self.profile = {**self.candidate, "_resume_confirmation": {
+            "task_id": "task_resume", "student_id": "owner"}}
+        self.resume_task = {"task_id": "task_resume", "student_id": "owner",
+                            "pipeline": "L0_parse_resume", "status": "completed",
+                            "result_json": {"confirmed": True, "candidate_profile": self.candidate}}
         self.task = {"task_id": "task_current", "student_id": owner, "status": status,
                      "pipeline": "L2_generate_portrait", "result_json": {"portrait_id": "8", "portrait": dict(self.portrait)}}
         if tamper:
@@ -167,10 +176,14 @@ class DB:
 
     def fetch_all(self, sql, params):
         self.calls.append((sql, params))
-        assert params["sid"] == "owner"
+        assert params.get("sid", "owner") == "owner"
         if "FROM school_tier_review" in sql:
             return []
+        if "FROM student_profile" in sql:
+            return [{"profile_json": self.profile}]
         if "FROM pipeline_task" in sql:
+            if params.get("task_id") == "task_resume":
+                return [self.resume_task]
             return [self.task]
         if "FROM student_portrait_4d" in sql:
             return [{"portrait_json": self.portrait}]

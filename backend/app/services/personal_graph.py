@@ -30,7 +30,8 @@ def confirmed_projection(mysql, owner_student_id):
 
     profile = require_confirmed_profile(mysql, owner_student_id)
     task = profile["_resume_confirmation"]["task_id"]
-    candidate = {k: v for k, v in profile.items() if k != "_resume_confirmation"}
+    candidate = {k: v for k, v in profile.items()
+                 if k not in {"_resume_confirmation", "_user_self_report", "_skill_exploration"}}
     values = candidate.get("skills")
     if not isinstance(values, list) or len(values) > MAX_SKILLS:
         raise ValueError("已确认技能列表缺失或超过发布上限，请核对资料")

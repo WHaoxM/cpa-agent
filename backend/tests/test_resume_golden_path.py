@@ -141,6 +141,42 @@ def test_partial_pages_require_explicit_acknowledgement(monkeypatch, parsed):
     assert db.profile["_resume_confirmation"]["partial_acknowledged"] is True
 
 
+def test_acknowledged_missing_pages_can_be_reviewed_but_not_published_as_full_portrait(monkeypatch, parsed):
+    db = MemoryDB()
+    parsed.blocks.pop()
+    candidate = _candidate(db, monkeypatch, parsed)
+    pipeline.confirm_resume_candidate(db, student_id="owner", task_id=candidate["task_id"], acknowledge_partial=True)
+    from app.pipeline.entity_extractor.portrait_generator import PortraitGenerator
+
+    monkeypatch.setattr(PortraitGenerator, "generate_student_portrait", lambda self, **kwargs: {
+        "status": "completed",
+        "D1_basic": {"dimension_score": 60},
+        "D2_skill": {"dimension_score": 65, "skill_coverage": 0.65},
+        "D3_quality": {"dimension_score": 62},
+        "D4_potential": {"dimension_score": 65},
+        "summary": {"competitiveness_score": 63},
+    })
+    result = pipeline.PipelineRunner().run("L2_generate_portrait", {"student_id": "owner"})
+    assert result["status"] == "partial"
+    assert result["portrait_id"] is None
+    assert result["portrait_candidate"]["summary"]["competitiveness_score"] is None
+    assert "source_pages" in result["missing_fields"]
+    assert db.portrait is None
+    from app.api import profile as api
+    monkeypatch.setattr(api, "get_mysql_client", lambda: db)
+    app = Flask(__name__)
+    app.register_blueprint(api.profile_bp, url_prefix="/api/profile")
+
+    @app.before_request
+    def principal():
+        g.cpa_principal = {"principal_id": "owner", "student_id": "owner"}
+
+    replay = app.test_client().get(f"/api/profile/student/candidate/{candidate['task_id']}")
+    assert replay.status_code == 200
+    assert replay.json["data"]["portrait_task"]["next_action"] == "reupload_resume"
+    assert replay.json["data"]["portrait_task"]["resume_state"] == "new_upload_required"
+
+
 def test_confirmed_l2_uses_server_profile_and_returns_real_record(monkeypatch, parsed):
     db = MemoryDB()
     candidate = _candidate(db, monkeypatch, parsed)
@@ -295,7 +331,20 @@ def test_confirmed_candidate_replay_links_only_current_partial_portrait(monkeypa
     assert state["portrait_task"]["portrait_id"] is None
     assert state["portrait_task"]["portrait_candidate"]["D2_skill"]["dimension_score"] == 70
     assert state["portrait_task"]["portrait_candidate"]["summary"]["competitiveness_score"] is None
-    assert state["portrait_task"]["action_available"] is False
+    assert state["portrait_task"]["action_available"] is True
+    assert state["portrait_task"]["next_action"] == "supplement_self_report"
+    assert state["portrait_task"]["resume_state"] == "ready_for_supplement"
+
+    # Old persisted L2 snapshots could score an absent growth dimension as 0.
+    # Keep the confirmed resume readable, but hide the unsupported portrait so
+    # the user can run L2 again under the current evidence rule.
+    partial["portrait_candidate"]["D4_potential"] = {"dimension_score": 0, "evidence": []}
+    db.tasks[partial["task_id"]]["result_json"] = json.dumps(partial, ensure_ascii=False)
+    stale = client.get(f"/api/profile/student/candidate/{candidate['task_id']}")
+    assert stale.status_code == 200
+    assert stale.json["data"]["confirmed"] is True
+    assert stale.json["data"]["portrait_task"] is None
+    assert stale.json["data"]["portrait_needs_refresh"] is True
 
     replacement = pipeline.PipelineRunner().run("L0_parse_resume", {"student_id": "owner", "text": parsed.text})
     pipeline.confirm_resume_candidate(db, student_id="owner", task_id=replacement["task_id"])

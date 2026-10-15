@@ -41,6 +41,8 @@ class BusinessRepo:
             "task_id": self.portrait_task, "status": "partial",
             "source_confirmation_task_id": self.resume_task,
             "portrait_candidate": {
+                "source_confirmation_task_id": self.resume_task,
+                "source_self_report_revision": 0,
                 "D1_basic": {"dimension_score": None, "evidence": []},
                 "D2_skill": {"dimension_score": 85, "evidence": ["Python 项目", "Redis 项目", "SQL 项目", "Vue 项目"]},
                 "D3_quality": {"dimension_score": None, "evidence": []},

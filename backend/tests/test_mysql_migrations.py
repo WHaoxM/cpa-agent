@@ -30,7 +30,8 @@ def test_baseline_rejects_editing_old_init_sql(tmp_path, monkeypatch):
 
 @pytest.mark.skipif(os.getenv("CPA_TEST_LIVE_MYSQL") != "1",
                     reason="Set CPA_TEST_LIVE_MYSQL=1 for disposable real-MySQL migration test")
-def test_clean_and_legacy_upgrade_on_disposable_mysql_database():
+@pytest.mark.parametrize("preinstalled_dispatch", [False, True])
+def test_clean_and_legacy_upgrade_on_disposable_mysql_database(preinstalled_dispatch):
     import pymysql
     from app.config import Config
 
@@ -63,11 +64,37 @@ def test_clean_and_legacy_upgrade_on_disposable_mysql_database():
                 cursor.execute("ALTER TABLE job_dataset DROP COLUMN staged_record_count, "
                                "DROP COLUMN content_sha256")
                 cursor.execute("DROP TABLE job_catalog_source_listing")
+                if preinstalled_dispatch:
+                    # Earlier explicit installers created these tables outside
+                    # Alembic. Adopt both, preserving rows and adding FK fences.
+                    cursor.execute("INSERT INTO pipeline_task(task_id,student_id,pipeline,status) "
+                                   "VALUES ('task_migration_probe','migration_probe',"
+                                   "'L2_generate_portrait','pending')")
+                    for table in ("pipeline_portrait_dispatch", "resume_diagnostic_dispatch"):
+                        cursor.execute(f"CREATE TABLE {table} ("
+                                       "task_id VARCHAR(64) NOT NULL PRIMARY KEY,"
+                                       "claim_token CHAR(32) DEFAULT NULL,"
+                                       "lease_until DATETIME(6) DEFAULT NULL,"
+                                       "attempts INT NOT NULL DEFAULT 0,"
+                                       "last_enqueued_at DATETIME(6) DEFAULT NULL,"
+                                       "created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),"
+                                       "KEY idx_replay (lease_until,last_enqueued_at)"
+                                       ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+                        cursor.execute(f"INSERT INTO {table}(task_id) "
+                                       "VALUES ('task_migration_probe')")
+                    from app.services.student_portrait_snapshot import SNAPSHOT_DDL
+                    cursor.execute(SNAPSHOT_DDL)
+                    cursor.execute("INSERT INTO student_portrait_snapshot "
+                                   "(snapshot_id,student_id,source_task_id,"
+                                   "source_confirmation_task_id,source_self_report_revision,"
+                                   "status,portrait_json,content_sha256) VALUES "
+                                   "('ps_migration_probe','migration_probe','task_migration_probe',"
+                                   "'task_resume_probe',0,'partial','{}',REPEAT('0',64))")
             alembic("upgrade", "head")
             alembic("upgrade", "head")
             with database.cursor() as cursor:
                 cursor.execute("SELECT version_num FROM alembic_version")
-                assert cursor.fetchone() == ("0005_school_tier_review",)
+                assert cursor.fetchone() == ("0007_student_portrait_snapshot",)
                 cursor.execute("SELECT username, auth_epoch FROM user_account "
                                "WHERE id='migration_probe'")
                 assert cursor.fetchone() == ("migration_probe", 0)
@@ -98,6 +125,28 @@ def test_clean_and_legacy_upgrade_on_disposable_mysql_database():
                 assert cursor.fetchone() is not None
                 cursor.execute("SHOW TABLES LIKE 'school_tier_review'")
                 assert cursor.fetchone() is not None
+                for table in ("pipeline_portrait_dispatch", "resume_diagnostic_dispatch"):
+                    cursor.execute(f"SHOW TABLES LIKE '{table}'")
+                    assert cursor.fetchone() is not None
+                    if preinstalled_dispatch:
+                        cursor.execute(f"SELECT attempts FROM {table} "
+                                       "WHERE task_id='task_migration_probe'")
+                        assert cursor.fetchone() == (0,)
+                    cursor.execute("SELECT DELETE_RULE FROM information_schema.REFERENTIAL_CONSTRAINTS "
+                                   "WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = %s "
+                                   "AND REFERENCED_TABLE_NAME = 'pipeline_task'", (table,))
+                    assert cursor.fetchone() == ("CASCADE",)
+                cursor.execute("SHOW TABLES LIKE 'student_portrait_snapshot'")
+                assert cursor.fetchone() is not None
+                if preinstalled_dispatch:
+                    cursor.execute("SELECT source_task_id FROM student_portrait_snapshot "
+                                   "WHERE snapshot_id='ps_migration_probe'")
+                    assert cursor.fetchone() == ("task_migration_probe",)
+                cursor.execute("SELECT DELETE_RULE FROM information_schema.REFERENTIAL_CONSTRAINTS "
+                               "WHERE CONSTRAINT_SCHEMA = DATABASE() "
+                               "AND TABLE_NAME = 'student_portrait_snapshot' "
+                               "AND REFERENCED_TABLE_NAME = 'pipeline_task'")
+                assert cursor.fetchone() == ("CASCADE",)
         finally:
             database.close()
     finally:

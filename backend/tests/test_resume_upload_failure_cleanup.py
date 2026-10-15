@@ -1,6 +1,7 @@
 """An L0 async upload without a durable task must not retain an orphaned file."""
 
 from io import BytesIO
+import errno
 import os
 import threading
 
@@ -10,18 +11,19 @@ from werkzeug.serving import make_server
 
 from app import create_app
 from app.api import profile as profile_api
+from app import upload_request
 from app.config import Config
 from app.services import pipeline_resume_jobs
 
 
-def _post_resume_over_http(app):
+def _post_resume_over_http(app, content=b"fictional resume"):
     server = make_server("127.0.0.1", 0, app, threaded=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
         return requests.post(
             f"http://127.0.0.1:{server.server_port}/api/profile/student/upload?async=1",
-            files={"file": ("resume.txt", BytesIO(b"fictional resume"), "text/plain")},
+            files={"file": ("resume.txt", BytesIO(content), "text/plain")},
             timeout=10,
         )
     finally:
@@ -47,6 +49,71 @@ def test_async_upload_intent_failure_removes_only_its_untracked_file(monkeypatch
 
     assert response.status_code == 503
     assert response.json()["success"] is False
+    assert list(tmp_path.rglob("resume_*.txt")) == []
+
+
+def test_resume_multipart_spool_full_returns_explicit_failure_before_task(monkeypatch, tmp_path):
+    monkeypatch.setattr(Config, "DEMO_MODE", True)
+    monkeypatch.setattr(Config, "UPLOAD_FOLDER", str(tmp_path))
+    app = create_app()
+
+    def no_spool(**_kwargs):
+        raise OSError(errno.ENOSPC, "simulated upload volume full")
+
+    monkeypatch.setattr(upload_request, "SpooledTemporaryFile", no_spool)
+    response = _post_resume_over_http(app, b"x" * 600_000)
+
+    assert response.status_code == 507
+    assert response.json()["code"] == "upload_storage_full"
+    assert "task_id" not in response.json()
+    assert list(tmp_path.rglob("resume_*.txt")) == []
+
+
+def test_resume_save_full_removes_partial_file_without_task(monkeypatch, tmp_path):
+    from pathlib import Path
+    from werkzeug.datastructures import FileStorage
+
+    monkeypatch.setattr(Config, "DEMO_MODE", True)
+    monkeypatch.setattr(Config, "UPLOAD_FOLDER", str(tmp_path))
+    app = create_app()
+
+    def partial_save(_self, destination, **_kwargs):
+        Path(destination).write_bytes(b"partial")
+        raise OSError(errno.ENOSPC, "simulated durable upload full")
+
+    monkeypatch.setattr(FileStorage, "save", partial_save)
+    response = _post_resume_over_http(app)
+
+    assert response.status_code == 507
+    assert response.json()["code"] == "upload_storage_full"
+    assert "task_id" not in response.json()
+    assert list(tmp_path.rglob("resume_*.txt")) == []
+
+
+def test_resume_multipart_spool_uses_upload_volume_not_system_temp(monkeypatch, tmp_path):
+    from tempfile import SpooledTemporaryFile
+
+    monkeypatch.setattr(Config, "DEMO_MODE", True)
+    monkeypatch.setattr(Config, "UPLOAD_FOLDER", str(tmp_path))
+    app = create_app()
+    seen = []
+
+    def controlled_spool(**kwargs):
+        seen.append(kwargs)
+        return SpooledTemporaryFile(**kwargs)
+
+    monkeypatch.setattr(upload_request, "SpooledTemporaryFile", controlled_spool)
+    class MissingIntentDb:
+        def fetch_one(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(profile_api, "get_mysql_client", lambda: MissingIntentDb())
+    monkeypatch.setattr(pipeline_resume_jobs, "persist_resume_intent", lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        RuntimeError("simulated unavailable durable intent")))
+    response = _post_resume_over_http(app, b"x" * 600_000)
+
+    assert response.status_code == 503
+    assert seen and all(item["dir"] == str(tmp_path) for item in seen)
     assert list(tmp_path.rglob("resume_*.txt")) == []
 
 

@@ -14,7 +14,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![Vue](https://img.shields.io/badge/Vue-3.5-42b883?style=flat-square&logo=vue.js&logoColor=white)](https://vuejs.org/)
 [![Flask](https://img.shields.io/badge/Flask-3.x-000000?style=flat-square&logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
-[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
+[![Docker](https://img.shields.io/badge/Docker-Dev%20DB%20Stack-2496ED?style=flat-square&logo=docker&logoColor=white)](./DEPLOY.md)
 
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-GitHub%20Pages-6E40C9?style=flat-square&logo=github&logoColor=white)](https://whaoxm.github.io/cpa-xingtu/)
 [![Frontend](https://img.shields.io/badge/Frontend-cpa--xingtu-42b883?style=flat-square&logo=vue.js&logoColor=white)](https://github.com/WHaoxM/cpa-xingtu)
@@ -50,14 +50,16 @@ Experience the frontend online demo (primarily uses Mock data, no backend requir
 
 | Role | Username | Password |
 |------|----------|----------|
-| Student | 123456 | 123456 |
-| Admin | 123456 | 123456 |
+| Student | student001 | 123456 |
+| Admin | admin001 | 123456 |
+
+These accounts belong to the frontend Mock/Pages demo only. Strict backend mode has no built-in demo accounts.
 
 ## ✨ Core Highlights
 
 Two capabilities define the fundamental difference between CPA-Agent and general chatbots:
 
-- 🧭 **L0–L4 Layered Pipeline.** Resume parsing, graph building, portrait generation, job matching, and report generation are each independent yet can be chained. Each layer has clear inputs/outputs and `pipeline_task` state tracking, suitable for batch processing and async tasks in university scenarios.
+- 🧭 **L0–L4 Layered Pipeline.** Resume parsing, graph building, portrait generation, job matching, and report generation have separate boundaries and `pipeline_task` state tracking. Dedicated L0 resume ingestion and L3 matching use durable Celery delivery; confirmed-portrait/diagnostic extensions require a checkout containing their `0006`/`0007` migrations and matching code, as noted below. This does not make every legacy pipeline entry point reliably asynchronous.
 - 🤖 **Multi-Mode Agent + 13 Tools.** The default runtime is a **Supervisor orchestrator** (Ask / Agent / Experts interaction modes; Plan steps + blackboard + per-student memory store + PreToolUse gating). The legacy LangGraph monolith / ReAct engines are disabled by default and enabled only via a demo switch. The Agent can invoke graph queries, semantic search, pipeline triggers, and more—maintaining clear boundaries between reasoning and deterministic business logic.
 
 ## 🔄 Workflow
@@ -68,106 +70,17 @@ Two capabilities define the fundamental difference between CPA-Agent and general
 4. **Job Matching (L3)**: Student Portrait + Job Portrait → Weighted Match Score + Skill Gap + Promotion Path
 5. **Report Generation (L4)**: Student + Target Job → Six-Chapter `career_report` (with Learning Path & Assessment Cycle)
 
-## 🚀 Quick Start
+## 🚀 Reproduce Locally
 
-### Option 1: Online Demo (Recommended for First Use)
+Choose the scope before starting services:
 
-Visit the [Live Demo](https://whaoxm.github.io/cpa-xingtu/) directly and log in with the demo account to experience all frontend features.
+| Path | Steps | What it verifies |
+|---|---|---|
+| Frontend-only demo | Clone the separate [cpa-xingtu](https://github.com/WHaoxM/cpa-xingtu) repo; use Node `^20.19.0 || >=22.12.0`; run `npm ci` and `npm run dev:mock` there | Fixture/Mock UI at `http://localhost:5173`; no backend, databases, or LLM |
+| Backend startup | Copy `.env.example` to `.env`; install `backend/requirements.txt` with Python 3.10; start MySQL/Neo4j/Redis, run Alembic, then run `python -B run.py` from `backend/` | `/health` and route registration; **not** asynchronous or business-result acceptance |
+| Real frontend/backend integration | Set `CPA_DEMO_MODE=false`, a strong `SECRET_KEY`, and LLM credentials; start the `cpa.pipeline`, `cpa.media`, and `cpa.graph` Celery worker and Beat as described in [DEPLOY.md](DEPLOY.md); run `npm run dev:backend` in the frontend repo | Register/login and check owner-scoped resume, task, and final result state; trusted job matching additionally needs published job data |
 
-### Option 2: Local Deployment (Full Features)
-
-#### Prerequisites
-
-| Tool | Version | Description | Check |
-|------|---------|-------------|-------|
-| **Python** | 3.10+ | Backend runtime (dev env: conda `mkg` = 3.10) | `python --version` |
-| **Node.js** | ^20.19.0 \|\| >=22.12.0 | Frontend runtime | `node -v` |
-| **Conda** | Recommended | Environment management | `conda --version` |
-| **Docker** | Latest | Database dependencies | `docker --version` |
-
-#### 1. Configure Environment Variables
-
-```bash
-# Copy the example configuration file
-cp .env.example .env
-# Windows PowerShell:
-# Copy-Item .env.example .env
-
-# Edit the .env file, fill in the required API keys and database passwords
-```
-
-**Required Environment Variables:**
-
-```env
-# LLM API Configuration (supports any OpenAI SDK compatible LLM API)
-# Recommended: DeepSeek / Qwen / Kimi / Ollama
-LLM_API_KEY=your_api_key
-LLM_BASE_URL=https://api.deepseek.com/v1
-LLM_MODEL_NAME=deepseek-chat
-
-# Database Configuration
-MYSQL_PASSWORD=your_password
-NEO4J_PASSWORD=your_password
-REDIS_URL=redis://localhost:6379/0
-
-# Vector Database (uses Lite embedded mode by default, no extra deployment needed)
-MILVUS_URI=./milvus_data/milvus.db
-EMBEDDING_MODEL=BAAI/bge-m3
-```
-
-#### 2. Start Database Dependencies
-
-```bash
-# Start MySQL + Neo4j + Redis
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mysql neo4j redis
-```
-
-#### 3. Start Backend
-
-```bash
-conda activate mkg  # or your environment name
-cd backend
-pip install -r requirements.txt
-
-# Initialize database and graph
-python scripts/neo4j/init_neo4j.py
-python scripts/milvus/init_milvus.py
-
-# Start service
-python run.py
-# → http://localhost:5001
-```
-
-#### 4. Start Frontend
-
-Frontend lives in the separate repo [cpa-xingtu](https://github.com/WHaoxM/cpa-xingtu):
-
-```bash
-git clone https://github.com/WHaoxM/cpa-xingtu.git
-cd cpa-xingtu
-npm install
-Copy-Item .env.example .env.local
-# In .env.local: VITE_API_BASE_URL=http://127.0.0.1:5001
-npm run dev
-# → http://localhost:5173
-```
-
-### Option 3: Docker Deployment (Database Layer)
-
-```bash
-# Development environment (databases only)
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
-
-# Production environment (with backend)
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-```
-
-**Port Mapping:**
-- Frontend: `5173` (dev) / `3000` (Docker)
-- Backend API: `5001`
-- MySQL: `13306`
-- Neo4j Bolt: `17687` / HTTP: `17668`
-- Redis: `16379`
+The authoritative commands, environment variables, checks, and production limitations are in [DEPLOY.md](DEPLOY.md). A fresh copy of `.env.example` defaults to demo mode; the maintainer's private `.env` may use strict mode. Production Compose additionally requires `CORS_ALLOWED_ORIGINS` set to the actual frontend HTTPS Origin, never `*`; the existing `SameSite=Lax` account cookie should be served through a same-origin or at least same-site HTTPS entry, not an unrelated cross-site frontend. The frontend is a separate repository. Dev Compose runs databases only; the production **candidate** now has an explicit migration job plus separate HTTP, worker, and Beat processes, but still lacks HTTPS, backup/recovery validation, and full business acceptance. It is not a one-command production release. New workbench portrait/diagnostic capabilities also require a checkout that actually contains the corresponding backend code and `0006`/`0007` migrations; `current=head` alone cannot prove an absent migration is present.
 
 ## 🏗️ Architecture Overview
 
@@ -246,7 +159,7 @@ A student uploads a resume and says to the AI assistant:
 
 > I'm a junior CS student. I've done two Spring Boot backend projects and I'm familiar with MySQL and Redis. I want to do backend development after graduation, but I'm not sure whether to aim for a big tech company or gain experience at a startup first.
 
-After pipeline and Agent collaboration, the system may return:
+The following is **illustrative product output**, not a deterministic result from a fresh clone. Real results depend on a confirmed resume, model services, graph data, and reviewed published jobs:
 
 ```text
 [Portrait Summary] D2 Professional Skills 72/100 · D4 Development Potential 68/100

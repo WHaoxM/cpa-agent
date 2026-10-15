@@ -59,6 +59,13 @@ def resolve_pipeline_task_ref(mysql, *, student_id: str, task_id: str) -> dict:
             saved = portraits[0] if portraits else {}
             if str(saved.get("id") or "") != portrait_id or _payload(saved.get("portrait_json")) != result.get("portrait"):
                 raise ValueError("画像结果未通过业务记录回读")
+            if result.get("snapshot_id"):
+                from ..student_portrait_snapshot import read_snapshot_for_task
+                snapshot = read_snapshot_for_task(mysql, student_id=student_id,
+                                                  source_task_id=task_id)
+                if (not snapshot or snapshot["snapshot_id"] != result["snapshot_id"]
+                        or snapshot["portrait"] != result["portrait"]):
+                    raise ValueError("画像快照未通过业务记录回读")
             from ..school_tier_review import portrait_review_current
             portrait = result["portrait"]
             if not portrait_review_current(
@@ -67,6 +74,10 @@ def resolve_pipeline_task_ref(mysql, *, student_id: str, task_id: str) -> dict:
                 portrait=portrait,
             ):
                 raise ValueError("学校档位审核已变更或撤回，画像须重新生成")
+            from ..pipeline import require_confirmed_profile
+            from ..student_self_report import portrait_current
+            if not portrait_current(require_confirmed_profile(mysql, student_id), portrait):
+                raise ValueError("用户自述已更新，画像须重新生成")
         elif pipeline == "L0_parse_resume":
             if result.get("confirmed") is not True:
                 raise ValueError("简历候选尚未得到用户确认")

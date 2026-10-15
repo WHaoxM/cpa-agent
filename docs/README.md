@@ -12,6 +12,8 @@ Use this order when documents disagree:
 4. Focused guides, runbooks, specs, and architecture docs under the active folders below.
 5. Historical logs, generated diagrams, and archived drafts.
 
+For fresh-clone reproduction, start with [../README.md](../README.md) (scope/runtime) and [../DEPLOY.md](../DEPLOY.md) (ordered commands and checks). The frontend is a separate repository whose own README/DEPLOY govern Mock/Pages and local HTTP modes. An older smoke snapshot or green test count does not supersede current runtime behavior.
+
 ## Active Documentation Layers
 
 | Layer | Directory | Purpose | Update trigger |
@@ -123,11 +125,14 @@ For open-source runnable hardening, keep these active and maintained:
 - `reports/2026-10-10-general-agent-guide-architecture-audit.md` — 用户通用 Agent 指南的逐页架构映射、三模型交叉核验、本轮 JSON/SSE 输入边界改造与后续缺口
 - `reports/2026-10-10-agent-guide-core-decisions.md` — 指南 14 页的必须做/值得做/已有/不适用取舍、两个 worktree 的选择性接收与拒绝、规划 HTTP 实测及请求幂等实施合同
 - `specs/ai-native-agent-platform.md` — 主 Agent + 受控领域能力的目标数据流、开源选型与阶段验收
+- `specs/student-workbench-experience.md` — 2026-10-14 已确认的学生私人工作台产品目标、画像/诊断/Agent 过程分层和并行任务交接；目标不等于当前运行能力
+- `specs/student-workbench-state-contract.md` — 学生工作台任务/成果/版本/逐条过程的后端调查与 P0–P3 迁移任务；P0 只读投影、P2 后台分析及 P1 新画像历史快照首切片已实施，旧数据安全迁移、P3 与完整故障验收待实施
+- `specs/school-context-skill.md` — 院校背景上下文认知 Skill 的主动解读、事实/社会印象/评分分层与接入验收；未上线
 - `specs/runnable-demo-hardening.md`
 - `specs/pending-code-quality.md`
 - `specs/frontend-api-contract-matrix.md` — 真库冒烟快照（非 cpa-xingtu 产品契约权威）
 - `frontend/cpa-xingtu/README.md` — cpa-xingtu 全路由设计文档入口
-- `runbooks/local-smoke-test.md`
+- `runbooks/local-smoke-test.md` — historical startup smoke commands; its older frontend HTTP/demo examples must be reconciled with `../DEPLOY.md` before use
 - `runbooks/mysql-migrations.md` — MySQL Alembic 版本迁移的备份、升级、核验和旧库接管；旧单次 SQL 与初始化快照不再作为增量变更入口
 
 ## Archive Policy
@@ -161,7 +166,7 @@ Monthly:
 
 - Move superseded generated diagrams and old notes into `docs/archive/YYYY-MM/`.
 - Check `README.md` claims against runnable code.
-- Check `DEPLOY.md` against `docker-compose.yml` and `.env.example`.
+- Check `../DEPLOY.md` against both Compose overlays, `.env.example`, current Alembic head, and the frontend mode defaults.
 
 Before release or public demo:
 

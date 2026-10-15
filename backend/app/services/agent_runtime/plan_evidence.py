@@ -92,6 +92,10 @@ def verify_plan_updates(mysql, student_id, packet, out):
                         mysql, student_id=student_id,
                         confirmation_task_id=value.get("source_confirmation_task_id"),
                         portrait=value)
+                if valid:
+                    from ..pipeline import require_confirmed_profile
+                    from ..student_self_report import portrait_current
+                    valid = portrait_current(require_confirmed_profile(mysql, student_id), value)
             elif packet.subagent == "match":
                 rows = mysql.fetch_all("SELECT result_json FROM match_result WHERE id=:rid AND student_id=:sid",
                                        {"rid": rid, "sid": student_id})

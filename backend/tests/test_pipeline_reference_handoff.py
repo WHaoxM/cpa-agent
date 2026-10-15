@@ -41,8 +41,10 @@ def test_reference_owner_and_unverified_status():
         resolve_pipeline_task_ref(mysql, student_id="alice", task_id="task_fake")
 
 
-def test_completed_portrait_requires_owned_row_and_exact_payload():
-    portrait = {"source_confirmation_task_id": "task_old"}
+def test_completed_portrait_requires_owned_row_and_exact_payload(monkeypatch):
+    monkeypatch.setattr("app.services.pipeline.require_confirmed_profile", lambda _mysql, _sid: {
+        "_resume_confirmation": {"task_id": "task_old"}})
+    portrait = {"source_confirmation_task_id": "task_old", "source_self_report_revision": 0}
     result = {"task_id": "task_abc", "student_id": "alice", "status": "completed",
               "resource_id": "7", "portrait_id": "7", "portrait": portrait}
     mysql = FakeMysql({"task_abc": task(status="completed", result=result,
@@ -74,7 +76,8 @@ def test_only_completed_verified_l0_l2_receive_canonical_resource_family(monkeyp
         FakeMysql({"task_abc": l0}), student_id="alice", task_id="task_abc")
     assert resume_ref["canonical_resource_uri"] == "career://me/resume"
 
-    portrait = {"D2_skill": {"dimension_score": 80}}
+    portrait = {"D2_skill": {"dimension_score": 80},
+                "source_confirmation_task_id": "task_abc", "source_self_report_revision": 0}
     l2 = task(status="completed", result={
         "task_id": "task_abc", "student_id": "alice", "status": "completed",
         "resource_id": "7", "portrait_id": "7", "portrait": portrait,
@@ -136,7 +139,10 @@ def test_prepare_turn_keeps_partial_portrait_as_status_only(monkeypatch):
 
 
 def test_prepare_turn_binds_completed_portrait_only_to_current_portrait_version(monkeypatch):
-    portrait = {"D2_skill": {"dimension_score": 80}}
+    monkeypatch.setattr("app.services.pipeline.require_confirmed_profile", lambda _mysql, _sid: {
+        "_resume_confirmation": {"task_id": "task_abc"}})
+    portrait = {"D2_skill": {"dimension_score": 80},
+                "source_confirmation_task_id": "task_abc", "source_self_report_revision": 0}
     mysql = FakeMysql({"task_abc": task(status="completed", pipeline="L2_generate_portrait", result={
         "task_id": "task_abc", "student_id": "alice", "status": "completed",
         "resource_id": "7", "portrait_id": "7", "portrait": portrait,

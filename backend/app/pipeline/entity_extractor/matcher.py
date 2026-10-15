@@ -21,7 +21,7 @@ class MatchResult:
     d1_score: float
     d2_score: float
     d3_score: float
-    d4_score: float
+    d4_score: Optional[float]
     skill_coverage: float
     matched_skills: List[str]
     missing_skills: List[str]
@@ -271,7 +271,7 @@ class SkillMatcher:
             d2_adjusted * self.DIMENSION_WEIGHTS["D2"] +
             d3_score * self.DIMENSION_WEIGHTS["D3"] +
             d4_score * self.DIMENSION_WEIGHTS["D4"]
-        ) if d3_score is not None else None
+        ) if d3_score is not None and d4_score is not None else None
 
         # ── 匹配判定 (R-08) ──
         # D1硬约束不通过 → match_result=false
@@ -296,7 +296,7 @@ class SkillMatcher:
             d1_score=round(d1_score, 1),
             d2_score=round(d2_adjusted, 1),
             d3_score=round(d3_score, 1) if d3_score is not None else None,
-            d4_score=round(d4_score, 1),
+            d4_score=round(d4_score, 1) if d4_score is not None else None,
             skill_coverage=round(skill_coverage, 2),
             matched_skills=list(seen_matched),
             missing_skills=missing,
