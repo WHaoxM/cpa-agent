@@ -80,3 +80,9 @@ docker exec cpaq1restore20261017b-worker-1 python -B -m celery -A app.services.a
 为区分桥接网络与上游大文件瓶颈，进一步对同一固定 PyTorch URL 做了 1 MiB 容器 range 探针：bridge 约 4.51 秒、host 网络约 3.00 秒。随后只改变构建网络为 `--network host`，再次从同一干净第三候选执行 `--no-cache --pull=false --progress=plain`；仍停留在第 9 阶段的 178.6 MB wheel 下载，超过 15 分钟无新阶段输出后中断。**没有产出新的无缓存镜像，也没有证据说版本约束本身失败。**在未建立带哈希的受控 wheelhouse、可续传的可信分发缓存或更可靠构建网络前，不应反复盲试相同下载；现有缓存命中的 `sha256:44e993...` 仍只是本机候选。
 
 补充实测：主机对 PyTorch 完整 URL 的 90 秒传输仅收到 25.66 MB（约 0.285 MB/s），说明上述 10–15 分钟静默不足以判定卡死。给予更长窗口后，第三次无缓存 host 网络构建的 PyTorch 步骤在 **1196.3 秒**完成，进入第 10 步，依次下载 PyArrow 50.1 MB、Faiss 18.8 MB、NumPy 16.8 MB、SciPy 37.7 MB 等包。用户询问耗时后立即终止该长时构建；未等到第 10 步安装完成，**没有成功的无缓存镜像或依赖核验**。不能继续把最新诊断写成“停在 PyTorch”；实际限制是这台本机到依赖仓库的多包低吞吐。后续需先准备可审计、可复用的依赖分发输入，再安排有进度上报的受控重建，避免再次长时间无反馈。
+
+## 续验：不触发大文件下载的候选哈希锁（同日）
+
+为把“仅版本约束”推进到可验证的分发输入，使用本机 `uv 0.9.18` 对当前 `requirements.txt` 加 139 项 constraints，在 CPython 3.10 / Linux x86_64 manylinux 2.40 目标、仅二进制包及 PyPI + PyTorch CPU 双索引下生成**候选** `backend/requirements-linux-amd64-py310.lock`（266,980 字节，SHA-256 `2cb6cd133f3e91dad550371e3c49a7c2e9f635c9eb58a6ed6fc27edd29eb9b56`）。它有 139 个精确版本、2,937 个候选 wheel/分发文件 SHA-256；程序比对与原 constraints 的规范化包名/版本 **139/139 一致**，包括 `torch==2.6.0+cpu`。文件没有本地路径、可编辑安装或直接 URL。求解器因 PyTorch 附加索引和 PyPI 的同名包交叉可见而使用 `unsafe-best-match`；锁定哈希并不能取代索引来源与发行身份审查。
+
+先把部署静态回归改成要求 Dockerfile 使用哈希锁，原候选 **2 failed**；然后将 Dockerfile 的两次仅版本约束安装收敛为一次 `pip install --require-hashes --only-binary=:all:`，显式 PyPI 和 PyTorch CPU 索引，只安装上述 lock。静态测试现在 **3 passed**，七个部署/迁移专项合计 **50 passed, 4 skipped in 11.10s**；跳过项依赖选择性启用的真实服务条件。用既有第三候选镜像、`--network none --no-index --dry-run --require-hashes` 读取完整 lock 退出 0，只证明文件语法与**既有已安装版本**可匹配，**不会重新下载并核验 wheel 哈希**。新 Dockerfile/lock/测试仍是主仓未提交部署候选；没有据此构建新镜像，不沿用第三候选的运行回放结论为新候选背书。下一门槛是受控干净构建器实际执行 hash 模式安装、核对轮子来源和实装版本，再以**新镜像 digest**重放上述服务/业务验收；在大文件分发可控前不启动另一轮长时盲构建。
