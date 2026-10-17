@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 import uuid
 
 import pytest
@@ -34,6 +35,7 @@ def test_baseline_rejects_editing_old_init_sql(tmp_path, monkeypatch):
 def test_clean_and_legacy_upgrade_on_disposable_mysql_database(preinstalled_dispatch):
     import pymysql
     from app.config import Config
+    from production_wsgi import require_schema_head
 
     name = "cpa_migration_test_" + uuid.uuid4().hex[:12]
     admin = pymysql.connect(host=Config.MYSQL_HOST, port=Config.MYSQL_PORT,
@@ -51,6 +53,13 @@ def test_clean_and_legacy_upgrade_on_disposable_mysql_database(preinstalled_disp
         with admin.cursor() as cursor:
             cursor.execute(f"CREATE DATABASE `{name}` CHARACTER SET utf8mb4")
         alembic("upgrade", "0001_legacy_schema_baseline")
+        probe_config = SimpleNamespace(
+            MYSQL_HOST=Config.MYSQL_HOST, MYSQL_PORT=Config.MYSQL_PORT,
+            MYSQL_USER=Config.MYSQL_USER, MYSQL_PASSWORD=Config.MYSQL_PASSWORD,
+            MYSQL_DATABASE=name,
+        )
+        with pytest.raises(RuntimeError, match="Alembic head"):
+            require_schema_head(probe_config)
         database = pymysql.connect(host=Config.MYSQL_HOST, port=Config.MYSQL_PORT,
                                    user=Config.MYSQL_USER, password=Config.MYSQL_PASSWORD,
                                    database=name, autocommit=True)
@@ -92,6 +101,7 @@ def test_clean_and_legacy_upgrade_on_disposable_mysql_database(preinstalled_disp
                                    "'task_resume_probe',0,'partial','{}',REPEAT('0',64))")
             alembic("upgrade", "head")
             alembic("upgrade", "head")
+            require_schema_head(probe_config)
             with database.cursor() as cursor:
                 cursor.execute("SELECT version_num FROM alembic_version")
                 assert cursor.fetchone() == ("0007_student_portrait_snapshot",)

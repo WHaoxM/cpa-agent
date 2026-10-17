@@ -1,0 +1,6 @@
+# Optional override for a reverse proxy installed on the Ubuntu host.
+# This is never a public HTTP entrypoint; set an explicit free loopback port.
+services:
+  backend:
+    ports:
+      - "127.0.0.1:${BACKEND_BIND_PORT:?Set a free loopback port for the host HTTPS proxy}:5001"

@@ -14,10 +14,10 @@ MySQL **新增结构变更**从 2026-10-14 起由 Alembic 的 `alembic_version` 
    D:\Miniconda\miniconda3\envs\mkg\python.exe -B -m alembic -c alembic.ini current
    ```
 
-   `current` 应等于 `heads`，目前为 `0007_student_portrait_snapshot`。第一次 `current` 为空表示尚未被 Alembic 管理，并不代表数据库为空。**不要直接 `stamp head`**：它只写版本号，不执行 DDL，可能造成假成功。新库也在 Docker 初始化完成后运行同一个 `upgrade head`。
+   `current` 应等于**本次固定检出版本**的 `heads`；包含 `0006`/`0007` 扩展的工作树会显示 `0007_student_portrait_snapshot`，但旧提交或未包含这些迁移的克隆可能只到 `0005`。第一次 `current` 为空表示尚未被 Alembic 管理，并不代表数据库为空。**不要直接 `stamp head`**：它只写版本号，不执行 DDL，可能造成假成功。新库也在 Docker 初始化完成后运行同一个 `upgrade head`。
 3. 核验 `alembic_version` 只有预期 head；检查账号 `auth_epoch` 触发器、管理员暂存列、`job_catalog_source_listing`、Pipeline 事件表及投影表；再启动后端/worker 并走受影响 HTTP 业务路径。版本号不是业务验收。
 
-生产 Compose 候选层提供同一应用镜像的显式 `migrate` profile，可代替上面的宿主机 Python 命令，但**不能**跳过第 1 步维护窗口和备份。它的上传文件位于 `cpa-agent-prod_backend_uploads` 命名卷；下文 `backend/uploads/` 宿主机备份示例不可直接用于该卷，必须另有经过恢复演练的卷导出方案，否则不得升级已有 volume。先 `docker compose -f docker-compose.yml -f docker-compose.prod.yml build backend`，启动并等 MySQL healthy 后执行 `docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile ops run --rm migrate`；再以同一 `run --rm migrate python -B -m alembic -c alembic.ini current` 和 `heads` 比较版本。该服务不是 `up` 的依赖，也不自动迁移；详见 [DEPLOY.md](../../DEPLOY.md)。
+生产 Compose 候选层提供与 HTTP/worker/Beat **同一 digest** 的显式 `migrate` profile，可代替宿主机 Python 迁移命令，但**不能**跳过维护窗口、停写、备份及恢复演练。上传文件位于 `${CPA_COMPOSE_PROJECT_NAME}_backend_uploads` 命名卷；下文 `backend/uploads/` 宿主机备份示例不可用于该卷。生产层已不允许现场 `docker compose build backend`；先完成 [生产级镜像改造计划](../specs/production-image-hardening.md) 中的来源与镜像验收，才按 [DEPLOY.md](../../DEPLOY.md) 的发布门禁和具体环境编排。`migrate` 不是 `up` 的依赖，也不自动运行；运行后必须比较 Alembic `current` 与本次镜像 `heads`，再做真实业务回读。
 
 `0001` 幂等创建冻结快照中的缺表；`0002` 以有界存在性检查补账号撤销触发器、管理员私有来源列与来源专用岗位表；`0003` 补曾由分散安装命令创建的审阅/投影/事件表、Pipeline 触发器和章节视频列。它们不回填、不发布岗位、不改变已有业务行。MySQL DDL 会独立提交；中途失败可能留下部分对象，**不能通过回滚 SQL 事务恢复**。这些版本按缺失对象可重试，但在重试前应根据错误核对实际结构，不能无条件删表/列或修改旧迁移文件。
 
@@ -34,6 +34,8 @@ MySQL **新增结构变更**从 2026-10-14 起由 Alembic 的 `alembic_version` 
 ### 维护窗口的备份、验收与回退
 
 `current` 为空的既有库可能已经有全部业务表和触发器；这只说明没有版本账本，**不能**据此直接 `stamp`。在不停业务的只读预检中，先查 `information_schema` 中的表、必要列及触发器；如需验证迁移兼容性，仅把 `SHOW CREATE TABLE` 和触发器定义复制到唯一命名的临时库，在该临时库运行 `-x database=<临时库名> upgrade head`，核对版本及对象后只删除这个临时库。结构副本不含业务行，不能替代下述备份或业务验收。
+
+单机生产 Compose 的 MySQL 与上传均在 Docker 命名卷，**不能使用下方宿主机 `backend/uploads/` 复制示例**。先按 [DEPLOY.md 的冷卷快照与全新项目恢复演练](../../DEPLOY.md) 停所有写入者及数据库，再处理已有生产卷；快照工具拒绝仍被运行中容器占用的源卷、校验归档及恢复后的逐文件摘要，但尚未完成真实卷恢复演练。缺此验收时不得升级已有生产卷。下述 `mysqldump`/宿主机目录流程仅适用于非 Compose 本地部署。
 
 实际接管必须安排停写窗口：阻止新请求，停止 Flask 和 Beat，待 `cpa.pipeline` worker 的在途任务完成后停止 worker；核对三个进程都已停止，再备份。不要仅停止前端，或在 worker 仍可能写 `pipeline_task` 时导出。备份应成对覆盖目标 MySQL 库及 `backend/uploads/`（含简历、Agent 附件、管理员私有来源）；文件与 SQL 放到空间足够的非系统盘。Windows 上使用 MySQL 8 `mysqldump.exe` 的 `--result-file`，不要用 PowerShell 5.1 的文本重定向写 SQL，以免改变编码。示例（在维护窗口人工替换数据库账号、主机与端口；`--password` 在终端交互输入，不将密码写进命令行）：
 

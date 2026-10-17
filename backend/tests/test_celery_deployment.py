@@ -1,4 +1,4 @@
-"""Opt-in real Redis / worker / Beat delivery smoke without business DB writes."""
+"""Opt-in Redis / worker / Beat smoke without writes to existing business DBs."""
 
 import json
 import os

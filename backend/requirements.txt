@@ -7,6 +7,7 @@
 
 # ============= 核心框架 =============
 flask>=3.0.0
+gunicorn==23.0.0  # Linux production WSGI server; local run.py remains a dev entrypoint
 flask-cors>=6.0.0
 Flask-Login>=0.6.3,<1  # DB-backed account identity, never client-supplied role
 Flask-Session>=0.8,<1  # Redis server-side, revocable sessions
@@ -39,7 +40,9 @@ redis>=5.0.0
 celery>=5.3,<6.0  # durable media/OCR delivery via the existing Redis service
 
 # Milvus (嵌入式版本, pip install 即用)
-pymilvus[milvus_lite]>=2.4.0
+# milvus-lite is installed explicitly below; current pymilvus no longer
+# declares the old milvus_lite extra.
+pymilvus>=2.4.0
 milvus-lite>=2.4.0
 
 # ============= Embedding =============
