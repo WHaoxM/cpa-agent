@@ -9,7 +9,7 @@ Q1/Q3/Q4 的逐项证据、未达门槛和外部停止项见[下一阶段验收�
 | 要做什么 | 最短入口 | 不要误用 |
 |---|---|---|
 | 在主仓改后端 | [`AGENTS.md`](../AGENTS.md) → [`README.md`](../README.md) 的“运行环境”一节 → 相关 [`CONTEXT.md`](../CONTEXT.md) 段落 | 不从旧报告推断今天的路由和服务状态 |
-| 本机启动、部署或恢复 | [`DEPLOY.md`](../DEPLOY.md) → [MySQL 迁移手册](runbooks/mysql-migrations.md)；本机未提交的镜像提案见 `docs/specs/production-image-hardening.md` | 提案、Compose 静态检查和 `/health` 均不是上线批准 |
+| 本机启动、部署或恢复 | [`DEPLOY.md`](../DEPLOY.md) → [MySQL 迁移手册](runbooks/mysql-migrations.md)；镜像加固提案见 [`production-image-hardening.md`](specs/production-image-hardening.md)，本机回放见 [Q1 证据](reports/2026-10-17-q1-hash-image-offline-replay.md) | 提案、Compose 静态检查和 `/health` 均不是上线批准 |
 | 学生工作台与简历链路 | [产品目标](specs/student-workbench-experience.md) → [状态/迁移契约](specs/student-workbench-state-contract.md) → [最近一次后端验收](reports/2026-10-13-secondary-backend-acceptance.md) | 目标契约、旧测试计数不等于当前真实服务已通过 |
 | 前端页面与接口 | [前端文档入口](frontend/cpa-xingtu/README.md) → 独立仓库 `cpa-xingtu/README.md` | 主仓文档不代替前端仓库的实际路由；Mock 页面不是真实后端验收 |
 | Agent 通用能力改造 | [上游复用记录](architecture/agent-upstream-adaptation.md) → [平台能力架构](architecture/platform-agent-capability-architecture.md) | 本地 `opencode/` 是参考快照，不是本项目运行时依赖 |
@@ -56,7 +56,7 @@ Q1–Q5 是不同交付单元；本页只提供入口和停机条件，不自动
 | `docs/current-work.md` | 1 | 本轮当前入口；保留，后续按日期刷新。 |
 | `docs/reports/2026-10-17-*-triage.md` | 2 | 本轮 Agent/部署分流证据；保留为限时报告。 |
 | `docs/reports/2026-10-10-*` | 2 | 既有真实 PDF/语义探针证据；保留审计，不提升为现行运行保证。 |
-| `backend/production_wsgi.py`、`backend/scripts/ops/*`、四个 `backend/tests/test_{production_wsgi,release_preflight,volume_archive,volume_snapshot}.py`、`docker-compose.prod.host-proxy.yml`、`docs/specs/production-image-hardening.md` | 10 | 部署候选源码、测试、配置及提案；**待确认归属及 Q1 验收**，不与本轮整理混合提交。 |
+| `backend/production_wsgi.py`、`backend/scripts/ops/*`、四个 `backend/tests/test_{production_wsgi,release_preflight,volume_archive,volume_snapshot}.py`、`docker-compose.prod.host-proxy.yml`、`docs/specs/production-image-hardening.md` | 10 | 主工作树原件继续保留；已从白名单独立冻结为 Q1 干净候选并推送审阅分支，**只通过本机窄验收，尚非正式发行**；不与整理分支混合提交。 |
 | `backend/app/services/agent_runtime/{agent_loop_integration,session_compaction,session_input,session_runner,tool_registry}.py`、`backend/app/utils/` 中 17 个未跟踪 `.py` | 22 | Agent 基础能力实验；保持隔离，按 [专项核查](reports/2026-10-17-untracked-agent-modules-triage.md)逐一取舍，不整包接线。 |
 | `.opencode/MIGRATION_PLAN.md` | 1 | 旧迁移草案；留作候选思路，不作为执行指令或现行架构。 |
 | `.ulpi/design/{DESIGN,landing-revamp}.md` | 2 | 落地页设计稿；待前端归属确认，不搬入后端主线。 |
