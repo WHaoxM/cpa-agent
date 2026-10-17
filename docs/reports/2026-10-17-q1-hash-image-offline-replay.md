@@ -2,6 +2,8 @@
 
 **判定：本机隔离门槛取得明确进展，但不是正式发布批准。**从固定基础镜像、干净源码和整份哈希锁取得全部分发输入，两次断网/无缓存构建在时间戳规范化后生成**逐字节相同**的 OCI 归档；该归档加载的镜像在全新冷恢复 project 上完成数据库、HTTP/worker/Beat、HTTPS 正式账号 owner-bound 收藏写删的窄链。随后将 `--no-compile` 修正冻结成新的干净源码身份、再次完成两次字节级构建，并在**另一个全新冷恢复 project** 用新镜像重放上述窄链。正式 registry/服务器/可信域名及完整简历解析成果仍缺。不要把本报告与先前第三候选镜像混作一个产物；历史回放见[第三候选及前序门槛](2026-10-17-q1-candidate-runtime-replay.md)。
 
+**清理后的现场：**下文的旧 worktree、旧 OCI 包和 `a`–`h` 隔离 Docker project 是当时证据，已按用户要求清理；不要按历史命令重用已不存在的目标。当前只保留新候选的干净 worktree、149 个 wheel、一个已验 OCI 包、本机回放脚本/插值文件及 WSL 冷快照。清单与复核边界见文末“本机临时产物清理”。
+
 ## 输入身份与分发文件
 
 - 应用源码：旧来源干净提交 `7353dd7fd864a21700af7e961e5d6448b5864854`，tree `09fa0d25495496a2917bc98c0c5bdf4acbba5047`，独立 worktree `output/q1-source-20261017-hash/`；该树来自 **23 个部署候选文件白名单**，未审 22 个 Agent `.py` 交集为 0。该提交当时仅在本机，现作为新候选 `91b6e45` 的父提交随独立审阅分支可达，不是单独发布物。基础镜像固定 `python:3.10-slim@sha256:6ff506466f8b1e981719b468cc0023b8ef000b983cdec0eafe119d01f379e31d`，实际为 Linux/amd64、Python 3.10.22、glibc 2.41。
@@ -17,7 +19,7 @@
 
 禁用预编译后，同样输入**独立执行两次**断网、无缓存完整构建：`q1-hash-nopyc-one.oci.tar` 与 `q1-hash-nopyc-two.oci.tar` 各 **439,511,552 字节**，两者归档 SHA-256 均为 `32f6b28aa816001349af37d7f587b104cf3bb0886ee881d82c6f7e953e0dcd22`；OCI manifest 均为 `sha256:72ca6374ac644f6fe37fec4237ee9211182153bf16161845332ba67148a533b8`。加载首份归档得到同 ID 本机镜像 `cpa-q1-hash-repro:20261017`，`USER=10001:10001`，默认命令为 fail-closed Gunicorn；`pip check` 为 `No broken requirements found`，镜像内 139 项实装版本与锁 **0 差异**，抽查未审 Agent 文件不存在。**这是同一台本机、同一 wheelhouse 与构建器的字节级复现，不是跨机器/registry 复现。**
 
-最小构建命令（PowerShell，仓库根目录，需先核验本机 wheelhouse 的 149 个文件；`output/` 均为本机忽略产物）：
+以下是**旧来源的历史构建命令**；其 `output/q1-source-20261017-hash/` 已在清理时移除，不能直接执行。今后应改用新候选 `output/q1-source-20261017-hash-nopyc/backend/`、`SOURCE_DATE_EPOCH=1792237004`，并核对下述新 OCI 身份（PowerShell，仓库根目录；`output/` 均为本机忽略产物）：
 
 ```powershell
 $src = (Resolve-Path 'output/q1-source-20261017-hash/backend').Path
@@ -57,3 +59,9 @@ docker buildx build --platform linux/amd64 --no-cache --pull=false --network non
 3. 本轮正式业务结果是 owner-bound 收藏岗位写删；L0 简历只在旧镜像的另一隔离 project 验到持久 `pending` 入队。真实模型、OCR、Milvus 数据写入、L0 最终解析与后续 L2/L3/L4 成果、完整故障恢复及真实旧卷内部权限仍未通过。不得从 Beat 空队列成功或 `/health` 推断这些项。
 
 本机脚本和 OCI/轮子产物均在 `output/` 下被忽略；不删除、提交或推送归属不明材料。主仓技术文档可单独提交，部署源码仍按上述新来源门槛继续隔离。
+
+## 本机临时产物清理（验收完成后）
+
+按用户要求，在**再次验证** WSL 冷快照和最终 OCI SHA-256、确认新来源 worktree 干净及 149 个 wheel 完整后，移除 4 个旧干净 worktree、7 个重复/失败/时间戳探针 OCI 包、两组下载分段、旧备用 Git index、失败的 Windows 不完整快照与缓存探针。按删除前文件大小合计约 **2.98 GB**；不是对整个 `output/` 的清扫。8 个明确标记为 `cpaq1isolated20261017a`、`cpaq1restore20261017{b,c,d,e,f,g,h}` 的**已停止**测试 project，经逐容器/卷/网络标签和名称核对后，移除 **43 容器、69 隔离卷、8 网络**；移除 9 个旧 `cpa-q1-*` 镜像标签，未使用全局 prune。原业务卷、其他项目 Docker 对象和未知归属文件未动。前文“隔离卷保留”等语句均是**回放时状态**，不再代表清理后现场。
+
+清理后仍可用于本机复验的最小集合：干净 Git 候选 `91b6e45` 的 `output/q1-source-20261017-hash-nopyc/`；`output/q1-wheelhouse-20261017/` 的 **149 个 wheel + `Dockerfile.offline` + `q1-nopyc-source-build-a.oci.tar`**（OCI SHA-256 `36fef2746ea9e47ab690dfd8177b4f09275f4a588e0b0583c8e3fc65dbf911f8`，该目录现约 **850,650,102 字节**）；`output/q1-proxy-20261017/` 的本机脚本/证书与 `output/q1-isolated-20261017.env`；WSL `/var/tmp/cpa-q1-snapshot-20261017b/`（`snapshot.json` SHA-256 `f78ccc76d605f7a9a0bf3d9c54c4f1a1199cf62518f08d39dd52b816f40741d4`，**清理后再次 `verify` 通过**）。Docker 仅保留新镜像本机标签 `cpa-q1-nopyc-source:20261017` / ID `75a08ee3...`。再次恢复必须使用**新的 project 名**，先核对目标卷不存在；不能对已清理的 `h` 直接 `up` 假装仍是此前的业务状态。自签测试证书有效期至 2026-10-18 08:15 UTC，过期后重新生成仅供本机信任的证书。

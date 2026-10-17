@@ -1,5 +1,7 @@
 # Q1 隔离卷冷备份与异项目恢复实证（2026-10-17）
 
+**清理后提示：**本报告的隔离源/目标卷是当时的运行证据；按用户后续要求，`cpaq1isolated20261017a` 与 `cpaq1restore20261017{b,c,d,e,f,g,h}` 的测试容器/卷/网络已清理。早期失败的 Windows `output/q1-snapshot-20261017a/` 也已移除；已验证的 WSL 冷快照 `/var/tmp/cpa-q1-snapshot-20261017b/` 保留。当前保留集和重放边界见[哈希锁镜像报告的清理清单](2026-10-17-q1-hash-image-offline-replay.md#本机临时产物清理验收完成后)。
+
 **结论：**五个必需卷在全新 Docker Compose project 中，经停写、冷备份、校验、恢复到另一全新 project、重新启动并读取原始标记，已走通一轮。此证据仅覆盖卷归档/恢复与 MySQL、Neo4j、Redis 数据可读；**没有**可归属当前提交的应用镜像、HTTP/worker/Beat、HTTPS、正式账号或 owner-bound 业务结果，不是部署批准。
 
 ## 隔离边界与产物
