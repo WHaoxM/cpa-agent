@@ -26,7 +26,7 @@
 | 生产部署与恢复 | `main` 基线之上有 Dockerfile、Compose、DEPLOY、迁移手册及测试等未提交改动；另有 WSGI、运维脚本和恢复测试新文件。[部署分流核查](reports/2026-10-17-deployment-worktree-triage.md)记录静态预检；[隔离卷恢复实证](reports/2026-10-17-q1-isolated-volume-recovery.md)已用新卷回读 MySQL/Neo4j/Redis 与文件标记，并修正本机候选归档脚本的 MySQL socket 排除缺口。 | 冻结干净来源和产物身份，在同一应用镜像上复验，再验 HTTP/worker/Beat、HTTPS 与正式身份的 owner-bound 结果；不要把 helper 镜像或卷演练称为正式发布物。 |
 | 学生工作台 | 最近提交 `a8ef1f1` 涉及持久分析和部署检查；[状态契约](specs/student-workbench-state-contract.md)记录 P0、P2、P1 首切片及旧数据迁移、P3、故障矩阵等缺口。 | 具体任务开始时重新核对路由、迁移、worker/Beat 与 owner-bound 成果，不直接沿用文档中的历史测试数字。 |
 | Agent 运行时实验 | `backend/app/services/agent_runtime/` 和 `backend/app/utils/` 有 22 个未跟踪模块；[分流核查](reports/2026-10-17-untracked-agent-modules-triage.md)记录了平行内核与自动改配置风险。当前默认 HTTP 会话用确定性 Supervisor/存储替身回放 `1 passed`，仍未见候选接线证据；不等于真实模型验收或动态不可达。 | 保持未接线；以具体缺陷而非整份迁移草案决定取舍，先过开源复用与真实链路门槛，再讨论接入或归档。 |
-| 前端 | `cpa-xingtu/` 是独立 Git 仓库，本地主仓不跟踪其源码；页面 Mock 与 HTTP 模式需分开验收。 | 在前端仓库单独检查状态；主仓 `AGENTS.md` 提及的 `cpa-xingtu/AGENTS.md` 本地目前不存在，此处先标为待核，不擅自补造规则。 |
+| 前端 | `cpa-xingtu/` 是独立 Git 仓库，本地主仓不跟踪其源码；[Q4 分流回放](reports/2026-10-17-q4-frontend-worktree-review.md)核对了 13 个未跟踪文件，并在独立前端分支修正一条 Mock 岗位介绍串用前端文案的实际页面缺陷。 | Mock 与后端 HTTP 分开验收；13 个旧稿/截图/脚本仍待归属。该仓本地没有 `AGENTS.md`，不擅自补造规则。 |
 | 竞赛与知识产权交付 | 根目录竞赛文档和 `ip-materials/` 属另一条交付线；后者有自己的说明及分件入口。 | 与代码发布分开管理版本、权属与对外承诺；不按“根目录杂物”自动移动。 |
 
 ## 待办队列（建议处理顺序，非已获授权的产品优先级）
@@ -37,7 +37,7 @@
 | Q1 部署候选 | 隔离卷恢复已实证；其余待验 | 确认部署文件来源/责任人，冻结可复现应用镜像与依赖；在同一镜像上复验恢复、HTTP/worker/Beat、HTTPS 和 owner-bound 结果。 | [部署核查](reports/2026-10-17-deployment-worktree-triage.md)的 41 个静态/替身测试及[新卷恢复](reports/2026-10-17-q1-isolated-volume-recovery.md)不能替代应用/外部入口验收；代码修正仍在本机候选中。 |
 | Q2 学生工作台 | 待现场重验 | 选一条有用户结果的路径，从 HTTP 入口到持久状态重放；随后按[状态契约](specs/student-workbench-state-contract.md)逐项领取缺口。 | 真 MySQL/Redis/Neo4j、worker/Beat、归属回读和失败收束均须标清是否实际可用；不继承旧报告测试数字。 |
 | Q3 Agent 候选模块 | 待归属与取舍 | 与现有实现及上游库逐项对照，只针对已复现缺陷选择薄适配、退回或继续隔离。 | 22 个文件尚无当前主 HTTP 链路接线证据；接入前须满足开源复用、预算/截断显式化和真实请求链路门槛。 |
-| Q4 前端独立仓 | 待该仓维护者处理 | 单独盘点 `cpa-xingtu/` 的未跟踪设计图、工具和状态；核对其缺失的本地 `AGENTS.md` 应否恢复或修正文档声明。 | 不把该仓文件合并到主仓；Mock 与真实接口分别验收。 |
+| Q4 前端独立仓 | 13 件已分流；一条 Mock 缺陷已在独立分支修正 | 按[Q4 报告](reports/2026-10-17-q4-frontend-worktree-review.md)认领旧设计、G6 截图及两个脚本；尤其先定三类缺失岗位介绍的正确数据合同，处理已跟踪包入口指向未跟踪且红灯的检查脚本。 | 前端分支 `codex/q4-role-intro-mock-boundary` 的浏览器回放和构建只验 Mock；不并入主仓，也不宣称 HTTP/正式账号验收。 |
 | Q5 竞赛 / 知识产权 | 待权属与版本确认 | 按 `ip-materials/README.md` 分件检查源码快照、作者/协议和对外材料；根目录四件竞赛文件单独定归属。 | 不把校稿 PDF、竞赛描述或未冻结工作树当作可提交事实；不替他人决定申请主体。 |
 
 Q1–Q5 是不同交付单元；本页只提供入口和停机条件，不自动开启部署、重构或对外递交。
