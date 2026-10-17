@@ -1,6 +1,6 @@
 # Q1 哈希锁镜像：本机离线复现与恢复回放（2026-10-17）
 
-**判定：本机隔离门槛取得明确进展，但不是正式发布批准。**从固定基础镜像、干净源码和整份哈希锁取得全部分发输入，两次断网/无缓存构建在时间戳规范化后生成**逐字节相同**的 OCI 归档；该归档加载的镜像在全新冷恢复 project 上完成数据库、HTTP/worker/Beat、HTTPS 正式账号 owner-bound 收藏写删的窄链。随后将 `--no-compile` 修正冻结成新的干净源码身份并再次完成两次字节级构建，**新身份镜像尚未重复完整业务回放**。正式 registry/服务器/可信域名及完整简历解析成果仍缺。不要把本报告与先前第三候选镜像混作一个产物；历史回放见[第三候选及前序门槛](2026-10-17-q1-candidate-runtime-replay.md)。
+**判定：本机隔离门槛取得明确进展，但不是正式发布批准。**从固定基础镜像、干净源码和整份哈希锁取得全部分发输入，两次断网/无缓存构建在时间戳规范化后生成**逐字节相同**的 OCI 归档；该归档加载的镜像在全新冷恢复 project 上完成数据库、HTTP/worker/Beat、HTTPS 正式账号 owner-bound 收藏写删的窄链。随后将 `--no-compile` 修正冻结成新的干净源码身份、再次完成两次字节级构建，并在**另一个全新冷恢复 project** 用新镜像重放上述窄链。正式 registry/服务器/可信域名及完整简历解析成果仍缺。不要把本报告与先前第三候选镜像混作一个产物；历史回放见[第三候选及前序门槛](2026-10-17-q1-candidate-runtime-replay.md)。
 
 ## 输入身份与分发文件
 
@@ -30,7 +30,7 @@ docker buildx build --platform linux/amd64 --no-cache --pull=false --network non
   --progress plain -f $dockerfile $src
 ```
 
-## 最终镜像的全新冷恢复运行回放
+## 旧来源镜像 `72ca...` 的全新冷恢复运行回放
 
 从原 WSL 冷快照 `/var/tmp/cpa-q1-snapshot-20261017b/` 再次 `verify`（`snapshot.json` SHA-256 `f78ccc76d605f7a9a0bf3d9c54c4f1a1199cf62518f08d39dd52b816f40741d4`）并恢复到此前不存在的 `cpaq1restore20261017g`。恢复器只创建该 project 的五个目标卷；在进程启动前，核对两文件卷标签、无运行占用及顶层 `0:0` 后，只对 uploads/Milvus **顶层**改为 `10001:10001`，没有递归改文件或碰原业务卷。三数据库健康；Alembic `current` 迁移前为空，显式迁移后为 `0007_student_portrait_snapshot (head)`。
 
@@ -40,13 +40,19 @@ docker buildx build --platform linux/amd64 --no-cache --pull=false --network non
 
 ## 新干净来源的独立复现（未代替上述运行回放）
 
-为消除旧镜像“仓内 Dockerfile 缺少 `--no-compile`”的来源缺口，仅把该 Dockerfile 修正及对应测试从脏工作树写入独立 Git index，以 `7353dd7` 为父提交得到本机**未推送**候选 `91b6e453cd9447ef5cc4f900b8543c64c650639c`、tree `94ba4f87946f577d65da14893024d8ccbec338aa`。相对父提交恰好只变更 `backend/Dockerfile` 和 `backend/tests/test_compose_deployment.py`；独立干净 worktree 是 `output/q1-source-20261017-hash-nopyc/`，未纳入主仓其他未提交内容或 22 个 Agent 草案。在该副本运行 `mkg` 的部署/迁移三组专项为 **12 passed, 4 skipped**。
+为消除旧镜像“仓内 Dockerfile 缺少 `--no-compile`”的来源缺口，仅把该 Dockerfile 修正及对应测试从脏工作树写入独立 Git index，以 `7353dd7` 为父提交得到候选 `91b6e453cd9447ef5cc4f900b8543c64c650639c`、tree `94ba4f87946f577d65da14893024d8ccbec338aa`。相对父提交恰好只变更 `backend/Dockerfile` 和 `backend/tests/test_compose_deployment.py`；独立干净 worktree 是 `output/q1-source-20261017-hash-nopyc/`，未纳入主仓其他未提交内容或 22 个 Agent 草案。在该副本用 `mkg` 执行七组部署/迁移专项为 **50 passed, 4 skipped in 10.08s**。候选提交已单独推送到 `origin/codex/q1-hash-locked-local-acceptance`，远端 ref 核对为同一完整 SHA；该分支是**本机验收后的代码审阅候选，不是正式发布**。
 
-同一轮子集和哈希锁、同一固定基础镜像下，新的本机离线派生 Dockerfile 只将**仓内已有**的索引安装换成只读 `/wheels`，其 SHA-256 为 `a73dedadebb5f71d5a87fce5c433c156c8e646c32c021b1c00e007d57b38dd2b`。以新提交时间 `SOURCE_DATE_EPOCH=1792237004` 分别执行两次 `--no-cache --pull=false --network none` 的 Linux/amd64 OCI 构建：`q1-nopyc-source-build-{a,b}.oci.tar` 各 **439,512,576 字节**，两者 SHA-256 同为 `36fef2746ea9e47ab690dfd8177b4f09275f4a588e0b0583c8e3fc65dbf911f8`；manifest/本机镜像 ID 同为 `sha256:75a08ee3acc5915679967317e934bdd0da6bd8cb92d83b59dd11cddbc171d989`。加载首份归档核对 `USER=10001:10001`、Linux/amd64；镜像内 `pip check` 无破损，抽查 `torch=2.6.0+cpu`、`flask=3.1.3`。新 OCI 与旧 `72ca...` **不是同一个产物**；尚未在新的冷恢复 project 上复演 HTTPS owner-bound 业务，因此不能把旧镜像的 `g` 运行结论移植给它。
+同一轮子集和哈希锁、同一固定基础镜像下，新的本机离线派生 Dockerfile 只将**仓内已有**的索引安装换成只读 `/wheels`，其 SHA-256 为 `a73dedadebb5f71d5a87fce5c433c156c8e646c32c021b1c00e007d57b38dd2b`。以新提交时间 `SOURCE_DATE_EPOCH=1792237004` 分别执行两次 `--no-cache --pull=false --network none` 的 Linux/amd64 OCI 构建：`q1-nopyc-source-build-{a,b}.oci.tar` 各 **439,512,576 字节**，两者 SHA-256 同为 `36fef2746ea9e47ab690dfd8177b4f09275f4a588e0b0583c8e3fc65dbf911f8`；manifest/本机镜像 ID 同为 `sha256:75a08ee3acc5915679967317e934bdd0da6bd8cb92d83b59dd11cddbc171d989`。加载首份归档核对 `USER=10001:10001`、Linux/amd64；镜像内 `pip check` 无破损，抽查 `torch=2.6.0+cpu`、`flask=3.1.3`。新 OCI 与旧 `72ca...` **不是同一个产物**；下面的 `h` 项目是独立重放，不沿用旧镜像的 `g` 结论。
+
+### 新身份镜像的全新冷恢复 `h` 回放
+
+新目标 `cpaq1restore20261017h` 在恢复前无卷、无容器。原 WSL 冷快照再次 `verify` 通过、`snapshot.json` SHA-256 仍为 `f78ccc76d605f7a9a0bf3d9c54c4f1a1199cf62518f08d39dd52b816f40741d4`；恢复器只创建该 project 的五个快照卷。按标签、停机状态和 `0:0/0755` 顶层权限核对后，仅对本 project 的 uploads/Milvus 卷顶层改属 `10001:10001`，没有递归变更或碰原业务卷。三数据库均 healthy；迁移前 Alembic `current` 为空，显式迁移后为 `0007_student_portrait_snapshot (head)`。HTTP、worker、Beat 全部实际使用新镜像 `sha256:75a08ee3acc5915679967317e934bdd0da6bd8cb92d83b59dd11cddbc171d989`，均为只读根、`CapDrop=[ALL]`、`no-new-privileges`；HTTP `/health` 200、Celery inspect 1 节点在线。六处预期可写位置可写/回读/删探针，`/app` 与 `/home/cpa` 拒写；五类冷快照 marker 在业务请求前后均 `PASS`。
+
+临时 Nginx 仅监听 `127.0.0.1:18443`；系统默认信任拒绝自签 `localhost.crt`，显式指定该本机证书时 HTTPS `/health` 200，没有关闭证书验证。两套新注册/登录的正式学生 Cookie 会话通过 CSRF 流程：无令牌收藏写入 **400、MySQL 零行**；带令牌写入 **200、独立 MySQL 回读 owner 行**，伪造的其他账号 ID/管理员角色没有被采信；另一账号列表不可见，删除后 MySQL 再次零行，探针 `PASS`。Beat **5 次发送**，worker **5 received / 5 succeeded / 0 ERROR**，待重放队列为空，不代表真实简历模型任务完成。验证后代理停删、六服务停止，`h` 的九个隔离卷保留、运行容器为 0；原业务卷未动。
 
 ## 未过门槛与接手动作
 
-1. `--no-compile` 已单独冻结到**本机、未推送**的干净候选 `91b6e45`，新来源的离线产物已两次逐字节复现，但**尚未在全新冷恢复 project 完成同镜像运行回放**；主仓工作树的对应 Dockerfile/test 改动仍未提交到当前分支。旧 `72ca...` 的 `g` 回放不能自动算作新 `75a...` 的验收。下一步对新镜像做隔离冷恢复和正式账号业务结果验证，再决定是否提交/推送代码；不要混入 22 个 Agent 草案或其他未归属文件。
+1. `--no-compile` 已单独冻结并推送到独立审阅分支的干净候选 `91b6e45`，新来源的离线产物两次逐字节复现，且新 `75a...` 已在全新冷恢复 `h` 完成同镜像窄运行链。主仓混杂工作树中对应 Dockerfile/test 改动仍未提交到当前整理分支；审阅只使用该独立提交，不混入 22 个 Agent 草案或其他未归属文件。此结论**限本机候选验收**，并非正式分发批准。
 2. wheelhouse 没有独立可信 registry/签名/供应链证明；目标服务器、镜像仓库、正式密钥管理及可信 HTTPS 域名/证书仍未确定。自签证书**只在本机显式信任**，不能替代外部入口验收。
 3. 本轮正式业务结果是 owner-bound 收藏岗位写删；L0 简历只在旧镜像的另一隔离 project 验到持久 `pending` 入队。真实模型、OCR、Milvus 数据写入、L0 最终解析与后续 L2/L3/L4 成果、完整故障恢复及真实旧卷内部权限仍未通过。不得从 Beat 空队列成功或 `/health` 推断这些项。
 
