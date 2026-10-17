@@ -23,7 +23,7 @@
 
 | 工作流 | 观察到的状态 | 下一核验点 |
 |---|---|---|
-| 生产部署与恢复 | `main` 基线之上仍有未提交部署候选；[隔离卷恢复实证](reports/2026-10-17-q1-isolated-volume-recovery.md)已回读三种数据库和文件标记。[干净候选镜像运行回放](reports/2026-10-17-q1-candidate-runtime-replay.md)在恢复卷上验证迁移、Gunicorn、Beat→worker、本机 HTTPS 正式账号与 owner-bound MySQL 写入/删除；续验又修正并实测镜像自身默认生产入口。候选 commit/镜像都仅留本机。 | 锁定基础镜像与完整依赖、registry 身份、可信域名/证书和完整业务链；本机自签代理及空队列定时任务不等于上线批准。 |
+| 生产部署与恢复 | `main` 基线之上仍有未提交部署候选；[隔离卷恢复实证](reports/2026-10-17-q1-isolated-volume-recovery.md)已回读三种数据库和文件标记。[干净候选镜像运行回放](reports/2026-10-17-q1-candidate-runtime-replay.md)第三候选又固定本机基础 digest/139 项依赖版本，并在再次恢复的全新项目中验证迁移、默认 Gunicorn、Beat→worker、本机 HTTPS 正式账号与 owner-bound MySQL 结果；候选 commit/镜像都仅留本机。 | 版本约束尚无 wheel 哈希且无缓存重建未完成；registry、可信域名/证书和完整业务链仍是发布门槛。 |
 | 学生工作台 | 最近提交 `a8ef1f1` 涉及持久分析和部署检查；[状态契约](specs/student-workbench-state-contract.md)记录 P0、P2、P1 首切片及旧数据迁移、P3、故障矩阵等缺口。 | 具体任务开始时重新核对路由、迁移、worker/Beat 与 owner-bound 成果，不直接沿用文档中的历史测试数字。 |
 | Agent 运行时实验 | 22 个未跟踪模块已在[逐项取舍报告](reports/2026-10-17-q3-agent-candidate-disposition.md)逐文件对照现行实现与本机上游快照；22/22 继续隔离，不删除、不整包接线。此前默认 HTTP 多轮只用确定性 Supervisor/存储替身回放 `1 passed`，不是真模型验收。 | 若出现具体默认路径缺陷，才按上游复用、owner/预算/工具结果和真实请求验收决定薄适配；先确认文件归属才可归档。 |
 | 前端 | `cpa-xingtu/` 是独立 Git 仓库，本地主仓不跟踪其源码；[Q4 分流回放](reports/2026-10-17-q4-frontend-worktree-review.md)核对了 13 个未跟踪文件，并在独立前端分支修正一条 Mock 岗位介绍串用前端文案的实际页面缺陷。 | Mock 与后端 HTTP 分开验收；13 个旧稿/截图/脚本仍待归属。该仓本地没有 `AGENTS.md`，不擅自补造规则。 |
@@ -34,7 +34,7 @@
 | 序号 | 状态 | 可独立领取的下一步 | 完成判据 / 当前阻断 |
 |---|---|---|---|
 | Q0 工作区保护 | 整理范围已核验；后续持续执行 | 每次切换工作流先看主仓及独立前端仓的 Git 状态，按下文分组领取，禁止对未归属内容做 `git clean`、重置或混合提交。 | 五份旧文档的旧路径移除与新归档必须成对看待；整理提交不代表其他工作流已获准入主线。 |
-| Q1 部署候选 | 新卷恢复与隔离应用镜像运行已实证；默认入口窄缺口已在本机候选修正，尚未达到发布门槛 | 按[镜像运行回放](reports/2026-10-17-q1-candidate-runtime-replay.md)锁来源/完整依赖，再由可信 registry、域名、证书和真实依赖完成外部验收。 | 当前本机镜像 digest 固定但重建输入浮动；自签 HTTPS、正式账号收藏窄链及 Beat 空队列成功不能替代完整业务链或生产发布。 |
+| Q1 部署候选 | 两次新卷恢复与隔离应用运行已实证；默认入口、基础 digest 和 139 项依赖版本在本机候选固定，尚未达到发布门槛 | 按[镜像运行回放](reports/2026-10-17-q1-candidate-runtime-replay.md)补 wheel 哈希、受控无缓存重建，再由可信 registry、域名、证书和真实依赖完成外部验收。 | 本机版本约束不等于分发文件哈希锁；自签 HTTPS、正式账号收藏窄链及 Beat 空队列成功不能替代完整业务链或生产发布。 |
 | Q2 学生工作台 | 待现场重验 | 选一条有用户结果的路径，从 HTTP 入口到持久状态重放；随后按[状态契约](specs/student-workbench-state-contract.md)逐项领取缺口。 | 真 MySQL/Redis/Neo4j、worker/Beat、归属回读和失败收束均须标清是否实际可用；不继承旧报告测试数字。 |
 | Q3 Agent 候选模块 | 22 件已逐项分流，当前均继续隔离；归属未确认 | 按[Q3 报告](reports/2026-10-17-q3-agent-candidate-disposition.md)保护原件；只在出现具体默认路径缺陷时领取单项适配，不以草案清单整包实施。 | 尚无候选接线/真实模型验收；自动写词典、进程内“持久”状态与不完整工具/文件边界禁止原样接入。 |
 | Q4 前端独立仓 | 13 件已分流；一条 Mock 缺陷已在独立分支修正 | 按[Q4 报告](reports/2026-10-17-q4-frontend-worktree-review.md)认领旧设计、G6 截图及两个脚本；尤其先定三类缺失岗位介绍的正确数据合同，处理已跟踪包入口指向未跟踪且红灯的检查脚本。 | 前端分支 `codex/q4-role-intro-mock-boundary` 的浏览器回放和构建只验 Mock；不并入主仓，也不宣称 HTTP/正式账号验收。 |
@@ -61,7 +61,7 @@ Q1–Q5 是不同交付单元；本页只提供入口和停机条件，不自动
 | `ip-materials/*` | 62 | 内部申请材料、LaTeX 原稿、分件/汇总 PDF 与清单；按其 README 单独管理版本和权属，不整目录递交或当缓存清理。 |
 | 根目录 `作品简介.docx`、`作品设计文档.pdf`、`必看-2026移动云杯AI_Coding参赛材料.md`、`附件2：2026移动云杯AI_Coding赛道_参赛作品.docx` | 4 | 竞赛资料；归属和对外版本待确认，保留原位。 |
 | `workspace/default/branding/logo.png` | 1 | 暂缓 workspace 样例/素材；保留，不宣称 live branding 功能。 |
-| 根目录 `query`、`r.name.includes('jsdelivr')).length` | 2 | 内容分别为 `Docker Desktop Service`、`result: None` 的疑似调试残留；**来源不明，保留待认领**。 |
+| 根目录 `query`、`r.name.includes('jsdelivr')).length` | 2 | 提交前快照中内容分别为 `Docker Desktop Service`、`result: None` 的疑似调试残留；**来源不明，保留待认领**。2026-10-17 16:15–16:19 又出现四个同类小文件，见下方动态状态；不回改本表 114 件的历史计数。 |
 
 另有已按规则忽略的本机参考/产物：独立 `opencode/`、Tika JAR、Celery Beat 状态、`backend/archive/` 和本机旧 `docs/archive/2026-07/`。它们**不在上述 114 个可见文件之内**；忽略仅表示不进入主仓待办，不等于可以删除。独立 `cpa-xingtu/` 的未跟踪文件也不计入主仓。
 
@@ -73,7 +73,7 @@ Q1–Q5 是不同交付单元；本页只提供入口和停机条件，不自动
 - **独立仓库/上游参考**：`cpa-xingtu/`、`opencode/`。不要把它们并入主仓 Git 状态或当成本项目已运行代码。
 - **历史与运行产物**：`archive/`、`output/`、模型缓存及 Celery beat 状态文件。保留现状；清理前须核对引用、运行进程与恢复需求。
 - **暂缓能力**：`workspace/default/branding/` 不是当前承诺的 live workspace 功能；边界见 [`CONTEXT.md`](../CONTEXT.md)。
-- **待分类小文件**：根目录 `query`、`r.name.includes('jsdelivr')).length` 看似调试残留，但未确认来源；目前只登记，不删除。
+- **待分类小文件**：根目录原有 `query`、`r.name.includes('jsdelivr')).length`，本轮另出现 `x.outerHTML.slice(0`、`x.innerText)`、`({type`、`x.getAttribute('placeholder')).join('`。新增四件在 2026-10-17 16:15–16:19 创建，两个 14 字节文件内容为 `result: None`、两个为空；其产生者/用途未确认。六件均保留未跟踪，不因表面像调试输出而删除或提交。
 
 ## 第二轮分流（不等于删除）
 

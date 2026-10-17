@@ -50,3 +50,15 @@ docker exec cpaq1restore20261017b-worker-1 python -B -m celery -A app.services.a
 第一次复验账号路径在第二次注册返回 **429**：沿用同一隔离 Redis，上一镜像的两次注册与本次第一次注册已填满 `3 per hour`，这是限流生效而非新镜像故障。核对只属于该隔离探针的 `LIMITS:LIMITER/cpa-account-auth/cpa-account-auth:172.31.0.8/auth.register/3/1/hour` 键存在且剩余 TTL 3007 秒后，仅删除该**精确测试键**（未 `FLUSHDB`、未触碰其他 project），重放同一探针为 `PASS`：两次注册/登录、无 CSRF 400、owner 写入 200、MySQL 行归属、另一账号不可见和删除后 MySQL 零行均成立。该限流计数重置是**隔离测试复位**，不是部署操作；外部重放应使用新的隔离 Redis/账号，不能在业务环境重置限流。新镜像与旧镜像、两个本地候选 commit 都保留，不混称同一发布物。代理已停删、六个隔离服务已停止、卷保留。
 
 默认入口这一窄缺口已修，但本报告前述**基础镜像标签/完整依赖未锁定、registry/可信证书/完整业务链缺口仍在**；新镜像不能被称为可重建的正式发布镜像。上面的“最短重放”命令针对第一候选；复验新镜像须把路径改为 `output/q1-source-20261017b/`、镜像 digest 改为 `sha256:573f...`，并加 `default-image-command.yml` 覆盖文件以验证镜像自身默认入口。
+
+## 续验：固定本机基础层/版本并从再次恢复的新卷回放（同日）
+
+为降低再次解析依赖的漂移，第三候选在 `backend/Dockerfile` 固定本机已验证的 Python 3.10 基础 digest，在先前成功镜像的 `pip freeze` 上形成 `backend/constraints-linux-amd64-py310.txt`（139 项 `==` 版本），两个 pip 安装步骤都受约束；`pymilvus` 的过时 `milvus_lite` extra 去除，独立 `milvus-lite` 依赖保留。先加静态门禁，原 Dockerfile 运行 **2 failed**；修改后六个部署/迁移专项为 **49 passed, 2 skipped in 11.36s**，跳过的是需 opt-in 的真库迁移测试。约束文件是**已成功环境的版本快照，不是含 wheel 哈希的可移植 lock**；仍须补轮子哈希、索引身份和受控无缓存重建。
+
+本地白名单从 21 增至 **22 个部署文件**（新增上述 constraints；依然不含 22 个 Agent 实验模块），独立 index 生成仅本机候选提交 `c45819c3b04834cb9404c7ff628be1ab8e216324`、tree `ab04fd1a4dc2015f202fc9a7a670cf2f6f8c3864`，干净 worktree 在 `output/q1-source-20261017c/`；主仓 index 保持空。候选镜像 `cpa-q1-app@sha256:44e9931020ad8ee263de346e0d5e09fe586073d61a6fd8352299708a6bc7c658` 使用固定基础 digest，内有 139 项安装版本与 constraints 逐行 **0 差异**，`pip check` 无损坏依赖，UID/GID 仍为 `10001:10001`，未审 Agent 文件不在镜像内。Docker 层缓存未完全关闭；另起的 `--no-cache --pull=false --progress=quiet` 构建运行约 15 分钟后由操作者中断，静默模式没有提供足够阶段诊断，**既不记为无缓存构建成功，也不据此判断失败原因**，不宣称镜像字节可重现。
+
+为避免上一目标卷的账号/限流残留，本次没有重置已有 Redis：对先前冷快照重新 `verify` 后，恢复到**从未存在过的**新 project `cpaq1restore20261017c`，只新建它自己的五个恢复卷，后来启动服务时再创建四个空运行卷。真实 MySQL、Redis、Neo4j 和 uploads/Milvus 两个文件卷均从该新卷回读出原 `q1-20261017a` 标记。迁移前 Alembic `current` 为空、镜像 head 为 `0007_student_portrait_snapshot`；显式迁移退出 0，迁移后 `current` 与 head 一致。候选 `release_preflight.py` 对解析后 Compose 返回 `PASS`，明确只代表静态入场。
+
+同一第三候选 digest 以覆盖 `command: null` 运行镜像**自身默认** Gunicorn 入口；HTTP healthy、MySQL/Neo4j/Redis healthy，worker inspect ping 在线。隔离 HTTPS 自签代理上，两套新注册的正式学生账号从 CSRF、登录到收藏岗位写入/删除完成一次全新回放：无 CSRF 写入 400 且 MySQL 无行；有 CSRF 写入 200，独立直查 MySQL 的行归 owner、伪造的另一账号 ID/管理员角色无效；另一账号列表不可见，删除后 MySQL 归零。探针输出 `PASS`。Beat 实际投递五个计划任务，worker 日志对应 **5 received / 5 succeeded**，其中重放队列为空，不代表完整 L0/L2/L3/L4 成功。业务请求后五类恢复标记再次回读仍正确。验证后代理停删、`cpaq1restore20261017c` 六个服务停止，九个卷/容器保留，没有 `down -v` 或改动原有业务卷。
+
+第三候选是目前**最强本机回放身份**，前两候选仅供差异/失败追溯，不应作为后续首选重放对象。外部发行仍停在 wheel 哈希/无缓存构建、registry 拉取与签名、可信 HTTPS 域名/证书、凭据最小化、资源/只读根路径和完整学生业务成果；本地 Git WIP commit 与 image digest 不会自动推送。复核时先用 `output/q1-source-20261017c/` 和上述第三候选 digest，并选择**另一个新 Compose project** 从快照恢复，避免沿用本轮账号/限流状态；本机探针可设置 `Q1_BACKEND_CONTAINER` 指向新 backend 容器。
