@@ -100,3 +100,13 @@ docker exec cpaq1restore20261017b-worker-1 python -B -m celery -A app.services.a
 为避免新锁文件停留在混杂工作树，使用**独立 Git index**、以主仓技术文档基线 `3ed204bcce35a4f8b27d4b8440dcd7f36b21a343` 为父提交，仅暂存逐项列出的 **23 个部署候选文件**，`git diff --cached --check` 通过，生成**仅本机**提交 `7353dd7fd864a21700af7e961e5d6448b5864854`、tree `09fa0d25495496a2917bc98c0c5bdf4acbba5047`。相比第三候选的 22 件，唯一新增的是 `backend/requirements-linux-amd64-py310.lock`；其 Git blob 为 `08b2f8a83ed8d9d04c4be378a0af6df3cdc59456`。独立 detached worktree 为被忽略的 `output/q1-source-20261017-hash/`，`git status` 干净，主仓 staging 仍为空。候选树与仍未跟踪的 22 个 Agent `.py` 精确比对：**0 个混入**；非技术/IP/真实简历材料亦不在增量白名单。
 
 从**该干净 worktree** 用权威 `mkg` Python 运行七个部署/迁移专项，结果为 **50 passed, 4 skipped in 11.67s**。Windows 主工作树 lock 的 SHA-256 为 `2cb6cd...`，干净 worktree 因 Git 换行规范化是 `cf5991a3477fce3fd136cd789bb445cb7c93208cb295a8fae10919da42c6315d`，两者 UTF-8 正文在归一化换行后逐字一致；未来产物应绑定 Git blob/tree 与干净来源字节，而非把两种文件 SHA 混称同一产物。此步只固定**源码输入并证明静态回归**，尚未从这个新提交构建任何镜像，更未完成 wheel 哈希安装、运行回放或推送到 registry；旧第三镜像的 HTTP 证据不得转嫁给它。
+
+## 续验：全新恢复副本上的 L0 入队与跨账号追踪（同日）
+
+为补足“收藏岗位”之外的正式任务入口证据，又从已核验的原冷快照恢复到此前不存在的 `cpaq1restore20261017e`。只在该 project 的 uploads、Milvus 卷执行前述停机、标签、快照校验后的**顶层**所有权准备；三数据库健康，显式迁移到 `0007_student_portrait_snapshot`，只启动第三候选旧镜像 `sha256:44e993...` 的 HTTP，**不启动 worker/Beat**。这使入队状态可观察且不会误报模型处理完成。只绑定本机 `127.0.0.1:18443` 的临时 HTTPS 代理使用显式受信的测试 `localhost.crt`，没有关闭证书验证。
+
+被忽略的本机探针 `output/q1-proxy-20261017/probe_l0_pending_owner.py` 以两套真实注册/登录的学生 Cookie 会话及 CSRF 请求，上传一份虚构 60 字节文本到 `POST /api/profile/student/upload?async=1`，得到 **202**、`pending`、`delivery=queued`；本人 `GET /api/pipeline/trace/<task_id>` 为 **200** 且仅有 `file_received`，另一账号为 **404**。对同一个 `task_dfe00a9cd87a` 直接从隔离 MySQL/文件/Redis 回读：`pipeline_task` 为 `L0_parse_resume/pending/0`、owner 与 `params_json.student_id` 一致，`pipeline_resume_dispatch` 有行，`pipeline_task_trace` 为 `file_received/completed/0`，上传文件存在、大小 60、规范化路径位于该 owner 目录，`cpa.pipeline` 队列长度为 1。五类原冷快照 marker 随后再次全部 `PASS`。**通过的是持久化入队意图和追踪权限，不是 L0 解析或最终业务结果。**
+
+探针最初把数据库中未规范化的 `/app/app/../uploads/<owner>/...` 原样路径与 `/app/uploads/<owner>` 比较，导致末尾本地断言失败；文件及 owner 行均已在前述独立直查中存在。改为 `Path.resolve()` 后对**原任务**的持久状态断言通过，没有修改服务代码。立即整段复跑时，隔离 Redis 的 `3 per hour` 注册限流在第二个新账号返回 **429**；未清理限流键、未继续撞接口，也**不把第二轮记为通过**。首次请求的两账号 HTTP 结果及其事后独立状态回读构成本轮窄验收证据。
+
+临时代理已停删，`e` 的 HTTP/MySQL/Neo4j/Redis 全部停止；该 project 九个隔离卷保留供复核，原业务卷未触碰。新哈希锁候选 `7353dd7` 仍**没有镜像**，不能继承上述旧第三镜像证据。后续需在新镜像与真实 worker/模型/OCR 条件下验证 L0 完成、owner-bound 解析结果与失败重试；本轮故意不启动 worker，队列中保留一条本机测试消息及对应 pending 任务，重放时不得误认为业务积压。
