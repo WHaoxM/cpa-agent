@@ -77,6 +77,8 @@ Q1–Q5 是不同交付单元；本页只提供入口和停机条件，不自动
 - **暂缓能力**：`workspace/default/branding/` 不是当前承诺的 live workspace 功能；边界见 [`CONTEXT.md`](../CONTEXT.md)。
 - **待分类小文件（动态）**：根目录原有 `query`、`r.name.includes('jsdelivr')).length`；2026-10-17 16:15–16:49 又至少出现八件以 JS 表达式片段或中文词命名的小文件，例如 `x.outerHTML.slice(0`、`x.innerText)`、`x.href).slice(0`、`x.innerText.trim()`、`({type`、`x.getAttribute('placeholder')).join('`、`x.textContent.includes('新建工单')).length`、`报名`。抽查内容只有 `result: None` 或空文件，产生者/用途未确认，且同日有继续新增迹象；不得因表面像调试输出而删除或提交。接手时重新盘点，历史表的 2 件不代表当前总数。
 
+**本轮终审的动态对账：**主仓此时可见未跟踪实际文件 **48 件**，分为 22 个隔离 Agent 候选、12 件仍在主工作树的 Q1 源码/测试/锁/技术提案原件、`.opencode` 草案与 `.ulpi` 设计稿 3 件、根目录来源不明的小文件 **11 件**。后者比上面的早期抽查又多出 `x.textContent.trim()`；继续保留待认领，不为凑数删除。另有已跟踪修改 11 件、暂存 0 件；受本机 exclude 保护的竞赛/IP 与真实简历材料**不计入这 48 件**且仍在磁盘上。独立前端仓此时可见未跟踪 **13 件**、已跟踪修改和暂存均为 0；这些是动态快照，接手时重新运行盘点。
+
 ## 第二轮分流（不等于删除）
 
 - 已确认 `opencode/` 是独立、干净的上游参考仓库（本地 commit `388406238b`）；将它从主仓 Git 待办中排除，仍可按[上游复用记录](architecture/agent-upstream-adaptation.md)读取。
