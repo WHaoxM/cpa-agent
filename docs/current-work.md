@@ -25,7 +25,7 @@
 |---|---|---|
 | 生产部署与恢复 | `main` 基线之上有 Dockerfile、Compose、DEPLOY、迁移手册及测试等未提交改动；另有 WSGI、运维脚本和恢复测试新文件。[部署分流核查](reports/2026-10-17-deployment-worktree-triage.md)记录续验 **41 passed**、静态预检缺口修正及发布阻断项；本机未提交的镜像计划仍是提案。 | 先冻结干净来源和产物身份，再验真实卷恢复、HTTPS 与 owner-bound 业务结果；不要把本机候选称为正式发布物。 |
 | 学生工作台 | 最近提交 `a8ef1f1` 涉及持久分析和部署检查；[状态契约](specs/student-workbench-state-contract.md)记录 P0、P2、P1 首切片及旧数据迁移、P3、故障矩阵等缺口。 | 具体任务开始时重新核对路由、迁移、worker/Beat 与 owner-bound 成果，不直接沿用文档中的历史测试数字。 |
-| Agent 运行时实验 | `backend/app/services/agent_runtime/` 和 `backend/app/utils/` 有 22 个未跟踪模块；[分流核查](reports/2026-10-17-untracked-agent-modules-triage.md)未发现当前 HTTP 主链的接线证据，并记录了平行内核与自动改配置风险。静态证据不等于运行时绝对不可达。 | 保持未接线；以具体缺陷而非整份迁移草案决定取舍，先过开源复用与真实链路门槛，再讨论接入或归档。 |
+| Agent 运行时实验 | `backend/app/services/agent_runtime/` 和 `backend/app/utils/` 有 22 个未跟踪模块；[分流核查](reports/2026-10-17-untracked-agent-modules-triage.md)记录了平行内核与自动改配置风险。当前默认 HTTP 会话用确定性 Supervisor/存储替身回放 `1 passed`，仍未见候选接线证据；不等于真实模型验收或动态不可达。 | 保持未接线；以具体缺陷而非整份迁移草案决定取舍，先过开源复用与真实链路门槛，再讨论接入或归档。 |
 | 前端 | `cpa-xingtu/` 是独立 Git 仓库，本地主仓不跟踪其源码；页面 Mock 与 HTTP 模式需分开验收。 | 在前端仓库单独检查状态；主仓 `AGENTS.md` 提及的 `cpa-xingtu/AGENTS.md` 本地目前不存在，此处先标为待核，不擅自补造规则。 |
 | 竞赛与知识产权交付 | 根目录竞赛文档和 `ip-materials/` 属另一条交付线；后者有自己的说明及分件入口。 | 与代码发布分开管理版本、权属与对外承诺；不按“根目录杂物”自动移动。 |
 
