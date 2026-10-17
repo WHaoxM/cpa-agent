@@ -19,9 +19,10 @@ WORKDIR /app
 COPY requirements-linux-amd64-py310.lock ./
 
 # Keep the wheel cache across interrupted builds. Hashes reject substitutions;
-# source builds and unpinned dependencies are rejected.
+# source builds and unpinned dependencies are rejected. pip's timestamp-based
+# .pyc output made otherwise identical offline builds differ, so skip compile.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --require-hashes --only-binary=:all: \
+    pip install --require-hashes --only-binary=:all: --no-compile \
     --index-url https://pypi.org/simple \
     --extra-index-url https://download.pytorch.org/whl/cpu \
     -r requirements-linux-amd64-py310.lock

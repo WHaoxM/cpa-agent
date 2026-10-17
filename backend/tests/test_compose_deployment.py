@@ -83,6 +83,7 @@ def test_backend_image_installs_all_direct_requirements_with_hash_lock():
     dockerfile = (ROOT / "backend" / "Dockerfile").read_text(encoding="utf-8")
     assert "COPY requirements-linux-amd64-py310.lock ./" in dockerfile
     assert "--require-hashes" in dockerfile
+    assert "--no-compile" in dockerfile
     assert "-r requirements-linux-amd64-py310.lock" in dockerfile
     assert "https://download.pytorch.org/whl/cpu" in dockerfile
     constraints = (ROOT / "backend" / "constraints-linux-amd64-py310.txt").read_text(
