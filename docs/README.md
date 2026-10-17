@@ -5,6 +5,7 @@ This directory contains active engineering docs, historical notes, generated dia
 **Start with [Current Work](current-work.md)** for a short, dated view of active workstreams and where to read next. It is a navigation snapshot, not a replacement for live runtime evidence or the source-of-truth order below.
 
 For the dated Q1/Q3/Q4 acceptance split, see the [next-stage acceptance audit](reports/2026-10-17-next-stage-acceptance-audit.md); its incomplete gates are not release approval.
+The latest local Q1 hash-locked image build and cold-restore replay have a [focused evidence report](reports/2026-10-17-q1-hash-image-offline-replay.md); the separate offline Dockerfile and wheelhouse are local artifacts, not a published release.
 
 ## Source-Of-Truth Order
 

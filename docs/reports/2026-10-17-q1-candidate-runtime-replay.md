@@ -116,3 +116,7 @@ docker exec cpaq1restore20261017b-worker-1 python -B -m celery -A app.services.a
 `e` 停止后，以第三候选镜像的 UID/GID `10001:10001`、无网络、只读根、无 capability、只读挂载，对该 project **仅 uploads 和 Milvus 两卷**逐项 `lstat`（未输出用户文件名、未写卷）。两卷顶层均为 `10001:10001/0755`；Milvus 内只有一件 `0:0` marker 文件，无子目录；uploads 内有一件 `0:0` marker 文件、一件新上传文件和一个 `10001:10001` owner 子目录，后两者由应用创建。未发现当前隔离副本内部不可写目录或扫描错误。**此快照内部结构很浅**；不能用它推断真正旧业务卷的嵌套文件、Milvus 数据库/WAL 或迁移后的原文件可写，正式维护前仍须对目标卷只读盘点并明确处理方案。
 
 从**干净源码 worktree** 的 `requirements-linux-amd64-py310.lock` 提取 `annotated-doc==0.0.5` 的两条哈希，在目标 Linux/amd64 容器执行 `pip download --no-deps --no-cache-dir --require-hashes --only-binary=:all:`，使用与候选 Dockerfile 相同的 PyPI + PyTorch CPU 索引；实际下载 5.3 kB wheel，计算 SHA-256 `117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101`，命中锁内值。只把该条目的哈希替换成全零作**单变量负控**，同命令非零退出、报告 hash mismatch 且未保存 wheel。容器内 `/tmp` 是一次性 tmpfs；未写项目源码或恢复卷。第三候选镜像 Python 为 3.10.22、glibc 2.41、x86_64，覆盖锁的 Linux/amd64 glibc ≥2.40 目标。该正反控证明**一个真实分发文件**确实经过 hash mode，而不是既装包的 dry-run；其余 138 个包、尤其大 PyTorch wheel 尚未下载/验哈希，**新哈希锁镜像仍未构建**。
+
+## 后续状态入口
+
+上述“尚未构建”是该次单包探针时的历史状态；随后已完成**全部目标 wheel 的哈希核验、断网无缓存安装、两次逐字节相同的 OCI 构建和全新恢复卷业务回放**。最新产物身份、确切步骤、发现的 `.pyc` 不稳定性及剩余停止项统一见[哈希锁镜像离线复现与回放](2026-10-17-q1-hash-image-offline-replay.md)。不要将此前第三候选或本页旧状态当作最新发布判断。
