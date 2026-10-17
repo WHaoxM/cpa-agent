@@ -27,6 +27,12 @@ D:\Miniconda\miniconda3\envs\mkg\python.exe -B -m pytest -q backend/tests/test_c
 
 结果：**39 passed（8.79s）**。其中 Compose 用占位镜像和测试环境变量解析配置；WSGI/快照测试采用假配置、临时目录或模拟 Docker。未运行 opt-in 真实 MySQL/Redis/worker/Beat 测试，也未做真实镜像、容器、HTTPS、命名卷恢复或学生业务旅程。`git diff --check` 对本轮已跟踪文档/忽略规则无空白错误；这不是部署验收。
 
+### 续验：静态预检的环境一致性缺口
+
+同日复核时 Docker Engine 28.5.2 可访问，但没有运行中的容器；已有本地应用镜像未证明与本轮脏工作树对应，故没有拿旧镜像充当当前发布产物。预检脚本 `backend/scripts/ops/release_preflight.py` 原来只要求 HTTP、worker、Beat 镜像一致，却只检查 HTTP 环境：在其他字段不变时将 worker 的 `CPA_DEMO_MODE` 单独改为 `true`，`check_configuration` 仍返回空错误列表。新增两例回归在修正前均失败；本机候选脚本现要求三进程的解析后环境一致，针对当前 Compose 的实际解析模型，基线返回 `[]`，单改 worker demo 后返回 `HTTP, worker, and Beat must use the same backend environment`。五份专项测试现为 **41 passed（6.35s）**；用只含占位凭据与镜像摘要的环境运行预检 CLI，返回明确的 **static admission PASS**，仍不代表真实镜像、数据库或业务可用。
+
+上述脚本和测试仍属于**未跟踪的部署候选**，没有随本报告进入已发布代码；提交该候选前必须成对包含修正与回归，并继续履行下述产物/恢复/使用者路径门槛。
+
 ## 不混合的下一步
 
 1. **先定来源**：把部署所需源码、配置和测试从其他未跟踪实验中划清；不得 `git add -A`、从脏目录构建并给它贴正式版本。建立干净固定提交后才有可审查构建输入。
