@@ -23,7 +23,7 @@
 
 | 工作流 | 观察到的状态 | 下一核验点 |
 |---|---|---|
-| 生产部署与恢复 | `main` 基线之上有 Dockerfile、Compose、DEPLOY、迁移手册及测试等未提交改动；另有 WSGI、运维脚本和恢复测试新文件。[部署分流核查](reports/2026-10-17-deployment-worktree-triage.md)记录续验 **41 passed**、静态预检缺口修正及发布阻断项；本机未提交的镜像计划仍是提案。 | 先冻结干净来源和产物身份，再验真实卷恢复、HTTPS 与 owner-bound 业务结果；不要把本机候选称为正式发布物。 |
+| 生产部署与恢复 | `main` 基线之上有 Dockerfile、Compose、DEPLOY、迁移手册及测试等未提交改动；另有 WSGI、运维脚本和恢复测试新文件。[部署分流核查](reports/2026-10-17-deployment-worktree-triage.md)记录静态预检；[隔离卷恢复实证](reports/2026-10-17-q1-isolated-volume-recovery.md)已用新卷回读 MySQL/Neo4j/Redis 与文件标记，并修正本机候选归档脚本的 MySQL socket 排除缺口。 | 冻结干净来源和产物身份，在同一应用镜像上复验，再验 HTTP/worker/Beat、HTTPS 与正式身份的 owner-bound 结果；不要把 helper 镜像或卷演练称为正式发布物。 |
 | 学生工作台 | 最近提交 `a8ef1f1` 涉及持久分析和部署检查；[状态契约](specs/student-workbench-state-contract.md)记录 P0、P2、P1 首切片及旧数据迁移、P3、故障矩阵等缺口。 | 具体任务开始时重新核对路由、迁移、worker/Beat 与 owner-bound 成果，不直接沿用文档中的历史测试数字。 |
 | Agent 运行时实验 | `backend/app/services/agent_runtime/` 和 `backend/app/utils/` 有 22 个未跟踪模块；[分流核查](reports/2026-10-17-untracked-agent-modules-triage.md)记录了平行内核与自动改配置风险。当前默认 HTTP 会话用确定性 Supervisor/存储替身回放 `1 passed`，仍未见候选接线证据；不等于真实模型验收或动态不可达。 | 保持未接线；以具体缺陷而非整份迁移草案决定取舍，先过开源复用与真实链路门槛，再讨论接入或归档。 |
 | 前端 | `cpa-xingtu/` 是独立 Git 仓库，本地主仓不跟踪其源码；页面 Mock 与 HTTP 模式需分开验收。 | 在前端仓库单独检查状态；主仓 `AGENTS.md` 提及的 `cpa-xingtu/AGENTS.md` 本地目前不存在，此处先标为待核，不擅自补造规则。 |
@@ -34,7 +34,7 @@
 | 序号 | 状态 | 可独立领取的下一步 | 完成判据 / 当前阻断 |
 |---|---|---|---|
 | Q0 工作区保护 | 整理范围已核验；后续持续执行 | 每次切换工作流先看主仓及独立前端仓的 Git 状态，按下文分组领取，禁止对未归属内容做 `git clean`、重置或混合提交。 | 五份旧文档的旧路径移除与新归档必须成对看待；整理提交不代表其他工作流已获准入主线。 |
-| Q1 部署候选 | 待独立验收 | 先确认未提交部署文件的来源/责任人，再冻结可复现镜像与依赖，验真实卷恢复、HTTPS 和 owner-bound 结果。 | [部署核查](reports/2026-10-17-deployment-worktree-triage.md)的 41 个静态/替身测试通过；预检环境一致性修正仍在本机候选代码中，不满足发布门槛。 |
+| Q1 部署候选 | 隔离卷恢复已实证；其余待验 | 确认部署文件来源/责任人，冻结可复现应用镜像与依赖；在同一镜像上复验恢复、HTTP/worker/Beat、HTTPS 和 owner-bound 结果。 | [部署核查](reports/2026-10-17-deployment-worktree-triage.md)的 41 个静态/替身测试及[新卷恢复](reports/2026-10-17-q1-isolated-volume-recovery.md)不能替代应用/外部入口验收；代码修正仍在本机候选中。 |
 | Q2 学生工作台 | 待现场重验 | 选一条有用户结果的路径，从 HTTP 入口到持久状态重放；随后按[状态契约](specs/student-workbench-state-contract.md)逐项领取缺口。 | 真 MySQL/Redis/Neo4j、worker/Beat、归属回读和失败收束均须标清是否实际可用；不继承旧报告测试数字。 |
 | Q3 Agent 候选模块 | 待归属与取舍 | 与现有实现及上游库逐项对照，只针对已复现缺陷选择薄适配、退回或继续隔离。 | 22 个文件尚无当前主 HTTP 链路接线证据；接入前须满足开源复用、预算/截断显式化和真实请求链路门槛。 |
 | Q4 前端独立仓 | 待该仓维护者处理 | 单独盘点 `cpa-xingtu/` 的未跟踪设计图、工具和状态；核对其缺失的本地 `AGENTS.md` 应否恢复或修正文档声明。 | 不把该仓文件合并到主仓；Mock 与真实接口分别验收。 |
