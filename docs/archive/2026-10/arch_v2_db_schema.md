@@ -1,3 +1,6 @@
+> Archived on 2026-10-17. Historical multi-store schema draft, not a current runtime or migration contract.
+> Superseded by: current code/migrations, accepted ADRs, and focused architecture guides.
+
 # CPA-Agent 存储 Schema 设计
 
 > **设计日期**: 2026-04-05  

@@ -12,6 +12,8 @@ models/mineru/*
 !models/mineru/.gitkeep
 models/yolo/*
 !models/yolo/.gitkeep
+# 本机可选解析组件，不提交第三方 JAR
+/models/tika/*.jar
 
 # ── Python ──
 __pycache__/
@@ -89,9 +91,18 @@ backend/mineru_output/
 backend/promptfoo/
 backend/scripts/smoke_frontend_contracts_result.json
 后端源码/
+# Celery Beat 的本机状态数据库（不是迁移或任务权威存储）
+/backend/celerybeat-schedule
+/backend/celerybeat-schedule.*
 
 # ── 历史归档 (早期原型/第三方项目/个人交付物) ──
-archive/
+/archive/
+# 后端旧一次性测试归档同样只保留在本机
+/backend/archive/
+# 2026-07 的旧归档此前未纳入 Git；保留本机现状，不随本轮归档意外加入
+/docs/archive/2026-07/
+# 上游 OpenCode 参考快照是独立仓库，不随本项目分发
+/opencode/
 
 # ── 个人论文文档 ──
 网挑文档第七版.docx

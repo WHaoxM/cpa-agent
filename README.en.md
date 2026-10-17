@@ -207,7 +207,8 @@ Planned capabilities not yet fully implemented:
 
 | Document | Description |
 |----------|-------------|
-| [CODE_WIKI.md](./CODE_WIKI.md) | Complete code architecture and runtime guide |
+| [Current work](./docs/current-work.md) | Dated entry point for active work and verification gaps |
+| [Historical Code Wiki](./docs/archive/2026-10/CODE_WIKI.md) | Archived 2026-06 code map; not a current architecture or runtime guide |
 | [CONTEXT.md](./CONTEXT.md) | Domain glossary and project decision context |
 | [DEPLOY.md](./DEPLOY.md) | Detailed deployment instructions |
 | [cpa-xingtu (frontend repo)](https://github.com/WHaoxM/cpa-xingtu) | Frontend modules, routes, demo accounts, and Pages deploy |

@@ -1,3 +1,6 @@
+> Archived on 2026-10-17. Early chronological bug record; individual fixes must be rechecked against current code.
+> Superseded by: focused tests/reports and live code/runtime.
+
 # Bug 日志
 
 ## 2026-04-21: Mermaid 系统架构图解析失败

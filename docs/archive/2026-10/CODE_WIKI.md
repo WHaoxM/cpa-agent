@@ -1,3 +1,6 @@
+> Archived on 2026-10-17. Generated on 2026-06-05; its Agent engine, Python version, routes and deployment claims are no longer current.
+> Superseded by: `CONTEXT.md`, `docs/README.md`, `docs/architecture/platform-agent-capability-architecture.md`, and live code/runtime.
+
 # CPA-Agent Code Wiki
 
 > 基于AI的大学生职业规划智能体 — 完整代码架构文档

@@ -2,6 +2,8 @@
 
 This directory contains active engineering docs, historical notes, generated diagrams, and competition-writing material. Not every file here is current source of truth.
 
+**Start with [Current Work](current-work.md)** for a short, dated view of active workstreams and where to read next. It is a navigation snapshot, not a replacement for live runtime evidence or the source-of-truth order below.
+
 ## Source-Of-Truth Order
 
 Use this order when documents disagree:
@@ -24,21 +26,21 @@ For fresh-clone reproduction, start with [../README.md](../README.md) (scope/run
 | Specs | `specs/` | Planned changes before implementation | Before coding a non-trivial change |
 | Runbooks | `runbooks/` | Operate, diagnose, recover | Operational procedure changes |
 | Guides | `guides/` | Maintainer implementation guidance | Repeated maintenance workflow |
+| Reports | `reports/` | Dated validation evidence and remaining gaps, not evergreen runtime truth | After a focused audit or replay |
 | API Notes | `api/` | Internal API contract notes | Endpoint contract or integration changes |
 | Frontend (cpa-xingtu) | `frontend/cpa-xingtu/` | Route-level FE design contracts, fixtures/adapter conventions | cpa-xingtu page or ideal API contract changes |
 | Archive | `archive/YYYY-MM/` | Stale or superseded docs | Quarterly or after major rewrites |
 
 Folders may be created lazily when the first current document of that type is needed.
 
-## Current Files To Treat Carefully
+## Historical and Pending Material
 
-These files are useful but should not be treated as fully current without verification:
+- [Code Wiki](archive/2026-10/CODE_WIKI.md) — generated in 2026-06; its default Agent, Python, route and deployment descriptions are superseded by current code and focused docs.
+- [Development log](archive/2026-10/dev_log.md) and [bug log](archive/2026-10/bug_log.md) — early chronological notes, useful for archaeology but not current task state.
+- [Relational database design](archive/2026-10/database_design.md) and [multi-store schema draft](archive/2026-10/arch_v2_db_schema.md) — historical drafts. Current MySQL structure is verified from Alembic migrations, live schema and [the migration runbook](runbooks/mysql-migrations.md); do not rely on ignored local `.trae/` rules as a distributable source of truth.
+- `jd_cleaner_usage.md` — a ReAct-oriented legacy usage note. `JdCleanerTool` and `cleaning_data/p1_LLM.py` still exist, so it is retained for the explicit legacy path; the default `/api/agent/chat` route enters the supervisor instead. Recheck the actual route and inputs before following this note.
 
-- `dev_log.md`, `bug_log.md` — chronological notes, useful for archaeology.
-- `database_design.md`, `arch_v2_db_schema.md` — architecture drafts; the frozen source of truth for DB schemas now lives in `.trae/rules/{mysql,neo4j,milvus}-contract.md`.
-- `jd_cleaner_usage.md` — tool usage note; verify against current `cleaning_data/` code before relying on it.
-
-Historical competition material, generated diagrams, arch_v2 layer specs, and personal deliverables have been moved to `archive/2026-07/` and `../archive/personal-deliverables/`.
+Historical competition material, generated diagrams, arch_v2 layer specs, and personal deliverables have been moved to `archive/2026-07/` and `../archive/personal-deliverables/`. Both are local-only ignored archives, not guaranteed to exist in a fresh clone. The five `archive/2026-10/` files linked above belong with this navigation change; keep their old-path removals and new archived copies together in review or replay.
 
 Early-stage root directories with no remaining value have been archived under `../archive/`:
 

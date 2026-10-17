@@ -1,3 +1,6 @@
+> Archived on 2026-10-17. Early chronological development record; current status is not inferred from this log.
+> Superseded by: `docs/current-work.md`, focused guides/reports, and live code/runtime.
+
 # CPA-Agent 开发日志
 
 ---

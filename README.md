@@ -323,7 +323,8 @@ cpa-agent/                  # 主仓库（后端 + 文档）
 
 | 文档 | 说明 |
 |------|------|
-| [CODE_WIKI.md](./CODE_WIKI.md) | 完整代码架构与运行指南 |
+| [当前工作入口](./docs/current-work.md) | 按任务选择现行文档与待核状态（日期快照） |
+| [历史 Code Wiki](./docs/archive/2026-10/CODE_WIKI.md) | 2026-06 代码地图，已归档；不作现行架构或运行指南 |
 | [CONTEXT.md](./CONTEXT.md) | 领域术语与项目决策上下文 |
 | [DEPLOY.md](./DEPLOY.md) | 部署详细说明 |
 | [cpa-xingtu（前端仓库）](https://github.com/WHaoxM/cpa-xingtu) | 前端模块、路由、演示账号与 Pages 部署 |

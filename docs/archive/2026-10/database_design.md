@@ -1,3 +1,6 @@
+> Archived on 2026-10-17. Historical schema design, not the current database migration authority.
+> Superseded by: `backend/migrations/`, `docs/adr/0008-versioned-mysql-schema-migrations.md`, and `docs/runbooks/mysql-migrations.md`.
+
 # CPA-Agent 关系型数据库设计文档
 
 > **项目**: CPA-Agent 大学生职业规划智能体
