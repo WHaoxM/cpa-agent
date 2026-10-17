@@ -23,7 +23,7 @@
 
 | 工作流 | 观察到的状态 | 下一核验点 |
 |---|---|---|
-| 生产部署与恢复 | `main` 基线之上有 Dockerfile、Compose、DEPLOY、迁移手册及测试等未提交改动；另有 WSGI、运维脚本和恢复测试新文件。[部署分流核查](reports/2026-10-17-deployment-worktree-triage.md)记录静态预检；[隔离卷恢复实证](reports/2026-10-17-q1-isolated-volume-recovery.md)已用新卷回读 MySQL/Neo4j/Redis 与文件标记，并修正本机候选归档脚本的 MySQL socket 排除缺口。 | 冻结干净来源和产物身份，在同一应用镜像上复验，再验 HTTP/worker/Beat、HTTPS 与正式身份的 owner-bound 结果；不要把 helper 镜像或卷演练称为正式发布物。 |
+| 生产部署与恢复 | `main` 基线之上仍有未提交部署候选；[隔离卷恢复实证](reports/2026-10-17-q1-isolated-volume-recovery.md)已回读三种数据库和文件标记。[干净候选镜像运行回放](reports/2026-10-17-q1-candidate-runtime-replay.md)又在恢复卷上验证迁移、Gunicorn、Beat→worker、本机 HTTPS 正式账号与 owner-bound MySQL 写入/删除；候选 commit/镜像都仅留本机。 | 锁定基础镜像与完整依赖、生产默认入口、registry 身份、可信域名/证书和完整业务链；本机自签代理及空队列定时任务不等于上线批准。 |
 | 学生工作台 | 最近提交 `a8ef1f1` 涉及持久分析和部署检查；[状态契约](specs/student-workbench-state-contract.md)记录 P0、P2、P1 首切片及旧数据迁移、P3、故障矩阵等缺口。 | 具体任务开始时重新核对路由、迁移、worker/Beat 与 owner-bound 成果，不直接沿用文档中的历史测试数字。 |
 | Agent 运行时实验 | `backend/app/services/agent_runtime/` 和 `backend/app/utils/` 有 22 个未跟踪模块；[分流核查](reports/2026-10-17-untracked-agent-modules-triage.md)记录了平行内核与自动改配置风险。当前默认 HTTP 会话用确定性 Supervisor/存储替身回放 `1 passed`，仍未见候选接线证据；不等于真实模型验收或动态不可达。 | 保持未接线；以具体缺陷而非整份迁移草案决定取舍，先过开源复用与真实链路门槛，再讨论接入或归档。 |
 | 前端 | `cpa-xingtu/` 是独立 Git 仓库，本地主仓不跟踪其源码；[Q4 分流回放](reports/2026-10-17-q4-frontend-worktree-review.md)核对了 13 个未跟踪文件，并在独立前端分支修正一条 Mock 岗位介绍串用前端文案的实际页面缺陷。 | Mock 与后端 HTTP 分开验收；13 个旧稿/截图/脚本仍待归属。该仓本地没有 `AGENTS.md`，不擅自补造规则。 |
@@ -34,7 +34,7 @@
 | 序号 | 状态 | 可独立领取的下一步 | 完成判据 / 当前阻断 |
 |---|---|---|---|
 | Q0 工作区保护 | 整理范围已核验；后续持续执行 | 每次切换工作流先看主仓及独立前端仓的 Git 状态，按下文分组领取，禁止对未归属内容做 `git clean`、重置或混合提交。 | 五份旧文档的旧路径移除与新归档必须成对看待；整理提交不代表其他工作流已获准入主线。 |
-| Q1 部署候选 | 隔离卷恢复已实证；其余待验 | 确认部署文件来源/责任人，冻结可复现应用镜像与依赖；在同一镜像上复验恢复、HTTP/worker/Beat、HTTPS 和 owner-bound 结果。 | [部署核查](reports/2026-10-17-deployment-worktree-triage.md)的 41 个静态/替身测试及[新卷恢复](reports/2026-10-17-q1-isolated-volume-recovery.md)不能替代应用/外部入口验收；代码修正仍在本机候选中。 |
+| Q1 部署候选 | 新卷恢复与隔离应用镜像运行已实证；尚未达到发布门槛 | 按[镜像运行回放](reports/2026-10-17-q1-candidate-runtime-replay.md)先锁来源/依赖并修正默认入口，再由可信 registry、域名、证书和真实依赖完成外部验收。 | 当前本机镜像 digest 固定但重建输入浮动；自签 HTTPS、正式账号收藏窄链及 Beat 空队列成功不能替代完整业务链或生产发布。 |
 | Q2 学生工作台 | 待现场重验 | 选一条有用户结果的路径，从 HTTP 入口到持久状态重放；随后按[状态契约](specs/student-workbench-state-contract.md)逐项领取缺口。 | 真 MySQL/Redis/Neo4j、worker/Beat、归属回读和失败收束均须标清是否实际可用；不继承旧报告测试数字。 |
 | Q3 Agent 候选模块 | 待归属与取舍 | 与现有实现及上游库逐项对照，只针对已复现缺陷选择薄适配、退回或继续隔离。 | 22 个文件尚无当前主 HTTP 链路接线证据；接入前须满足开源复用、预算/截断显式化和真实请求链路门槛。 |
 | Q4 前端独立仓 | 13 件已分流；一条 Mock 缺陷已在独立分支修正 | 按[Q4 报告](reports/2026-10-17-q4-frontend-worktree-review.md)认领旧设计、G6 截图及两个脚本；尤其先定三类缺失岗位介绍的正确数据合同，处理已跟踪包入口指向未跟踪且红灯的检查脚本。 | 前端分支 `codex/q4-role-intro-mock-boundary` 的浏览器回放和构建只验 Mock；不并入主仓，也不宣称 HTTP/正式账号验收。 |
