@@ -4,6 +4,8 @@ This directory contains active engineering docs, historical notes, generated dia
 
 **Start with [Current Work](current-work.md)** for a short, dated view of active workstreams and where to read next. It is a navigation snapshot, not a replacement for live runtime evidence or the source-of-truth order below.
 
+For the dated Q1/Q3/Q4 acceptance split, see the [next-stage acceptance audit](reports/2026-10-17-next-stage-acceptance-audit.md); its incomplete gates are not release approval.
+
 ## Source-Of-Truth Order
 
 Use this order when documents disagree:
