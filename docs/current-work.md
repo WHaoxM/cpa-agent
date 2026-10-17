@@ -23,7 +23,7 @@
 
 | 工作流 | 观察到的状态 | 下一核验点 |
 |---|---|---|
-| 生产部署与恢复 | `main` 基线之上仍有未提交部署候选；[隔离卷恢复实证](reports/2026-10-17-q1-isolated-volume-recovery.md)已回读三种数据库和文件标记。[干净候选镜像运行回放](reports/2026-10-17-q1-candidate-runtime-replay.md)第三候选固定本机基础 digest/139 项依赖版本，在又一全新恢复 project 上确认只读根/零 capability、显式迁移、默认 Gunicorn、Beat→worker、本机 HTTPS 正式账号与 owner-bound MySQL 结果。恢复卷顶层 owner 冲突已在**隔离卷**复现并经停机后的精确顶层调整复验；候选 commit/镜像仅留本机。 | 真实旧卷内部 owner 尚未排查；版本约束尚无 wheel 哈希，受控无缓存构建停在 PyTorch 大 wheel 下载；registry、可信域名/证书和完整业务链仍是发布门槛。 |
+| 生产部署与恢复 | `main` 基线之上仍有未提交部署候选；[隔离卷恢复实证](reports/2026-10-17-q1-isolated-volume-recovery.md)已回读三种数据库和文件标记。[干净候选镜像运行回放](reports/2026-10-17-q1-candidate-runtime-replay.md)第三候选固定本机基础 digest/139 项依赖版本，在又一全新恢复 project 上确认只读根/零 capability、显式迁移、默认 Gunicorn、Beat→worker、本机 HTTPS 正式账号与 owner-bound MySQL 结果。恢复卷顶层 owner 冲突已在**隔离卷**复现并经停机后的精确顶层调整复验；候选 commit/镜像仅留本机。 | 真实旧卷内部 owner 尚未排查；版本约束尚无 wheel 哈希，无缓存构建完成 PyTorch 步骤后仍在后续大型依赖下载时按用户反馈终止；registry、可信域名/证书和完整业务链仍是发布门槛。 |
 | 学生工作台 | 最近提交 `a8ef1f1` 涉及持久分析和部署检查；[状态契约](specs/student-workbench-state-contract.md)记录 P0、P2、P1 首切片及旧数据迁移、P3、故障矩阵等缺口。 | 具体任务开始时重新核对路由、迁移、worker/Beat 与 owner-bound 成果，不直接沿用文档中的历史测试数字。 |
 | Agent 运行时实验 | 22 个未跟踪模块已在[逐项取舍报告](reports/2026-10-17-q3-agent-candidate-disposition.md)逐文件对照现行实现与本机上游快照；22/22 继续隔离，不删除、不整包接线。此前默认 HTTP 多轮只用确定性 Supervisor/存储替身回放 `1 passed`，不是真模型验收。 | 若出现具体默认路径缺陷，才按上游复用、owner/预算/工具结果和真实请求验收决定薄适配；先确认文件归属才可归档。 |
 | 前端 | `cpa-xingtu/` 是独立 Git 仓库，本地主仓不跟踪其源码；[Q4 分流回放](reports/2026-10-17-q4-frontend-worktree-review.md)核对了 13 个未跟踪文件，并在独立前端分支修正一条 Mock 岗位介绍串用前端文案的实际页面缺陷。 | Mock 与后端 HTTP 分开验收；13 个旧稿/截图/脚本仍待归属。该仓本地没有 `AGENTS.md`，不擅自补造规则。 |
