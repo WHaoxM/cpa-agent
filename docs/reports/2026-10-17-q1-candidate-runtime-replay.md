@@ -94,3 +94,9 @@ docker exec cpaq1restore20261017b-worker-1 python -B -m celery -A app.services.a
 原 owner-bound 探针增加可选 `Q1_CA_CERT` 参数；本次设置为该证书绝对路径，所有 CSRF、注册、登录、收藏与删除请求均启用证书验证。确认隔离 Redis 中此前注册限流键已经自然过期（未删除或重置）后，两套新学生会话重放为 `PASS`：无 CSRF 写入 400 与 MySQL 零行、有效写入 200 与 MySQL owner 行、另一账号不可见、删除后 MySQL 零行。MySQL、Neo4j、Redis、uploads、Milvus 五类原冷快照 marker 随后再次全部 `PASS`。本机代理已停删，project 六服务已停止，隔离卷保留；没有触碰原业务卷。现在本机 HTTPS 窄链不再依赖关闭证书验证，但正式域名、可信 CA/证书部署及外部重放仍是停止项。
 
 尝试离线复用长时构建的 BuildKit pip cache：`docker buildx du` 一度报告该 cache mount 约 375.7 MB；用另一个**无网络、只读检查脚本**挂载相同目标路径时看到 0 个文件，随后 cache 记录为 4 KiB。不能从 BuildKit 统计推断 wheel 字节可复用，故**没有**宣称已核验 PyTorch 分发文件 SHA-256，也不基于该缓存启动新的安装。该临时检查 Dockerfile/脚本位于被忽略的 `output/q1-cache-inspect-20261017/`，不属于应用候选来源。
+
+## 续验：哈希锁候选的干净源码身份（同日）
+
+为避免新锁文件停留在混杂工作树，使用**独立 Git index**、以主仓技术文档基线 `3ed204bcce35a4f8b27d4b8440dcd7f36b21a343` 为父提交，仅暂存逐项列出的 **23 个部署候选文件**，`git diff --cached --check` 通过，生成**仅本机**提交 `7353dd7fd864a21700af7e961e5d6448b5864854`、tree `09fa0d25495496a2917bc98c0c5bdf4acbba5047`。相比第三候选的 22 件，唯一新增的是 `backend/requirements-linux-amd64-py310.lock`；其 Git blob 为 `08b2f8a83ed8d9d04c4be378a0af6df3cdc59456`。独立 detached worktree 为被忽略的 `output/q1-source-20261017-hash/`，`git status` 干净，主仓 staging 仍为空。候选树与仍未跟踪的 22 个 Agent `.py` 精确比对：**0 个混入**；非技术/IP/真实简历材料亦不在增量白名单。
+
+从**该干净 worktree** 用权威 `mkg` Python 运行七个部署/迁移专项，结果为 **50 passed, 4 skipped in 11.67s**。Windows 主工作树 lock 的 SHA-256 为 `2cb6cd...`，干净 worktree 因 Git 换行规范化是 `cf5991a3477fce3fd136cd789bb445cb7c93208cb295a8fae10919da42c6315d`，两者 UTF-8 正文在归一化换行后逐字一致；未来产物应绑定 Git blob/tree 与干净来源字节，而非把两种文件 SHA 混称同一产物。此步只固定**源码输入并证明静态回归**，尚未从这个新提交构建任何镜像，更未完成 wheel 哈希安装、运行回放或推送到 registry；旧第三镜像的 HTTP 证据不得转嫁给它。
