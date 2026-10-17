@@ -110,3 +110,9 @@ docker exec cpaq1restore20261017b-worker-1 python -B -m celery -A app.services.a
 探针最初把数据库中未规范化的 `/app/app/../uploads/<owner>/...` 原样路径与 `/app/uploads/<owner>` 比较，导致末尾本地断言失败；文件及 owner 行均已在前述独立直查中存在。改为 `Path.resolve()` 后对**原任务**的持久状态断言通过，没有修改服务代码。立即整段复跑时，隔离 Redis 的 `3 per hour` 注册限流在第二个新账号返回 **429**；未清理限流键、未继续撞接口，也**不把第二轮记为通过**。首次请求的两账号 HTTP 结果及其事后独立状态回读构成本轮窄验收证据。
 
 临时代理已停删，`e` 的 HTTP/MySQL/Neo4j/Redis 全部停止；该 project 九个隔离卷保留供复核，原业务卷未触碰。新哈希锁候选 `7353dd7` 仍**没有镜像**，不能继承上述旧第三镜像证据。后续需在新镜像与真实 worker/模型/OCR 条件下验证 L0 完成、owner-bound 解析结果与失败重试；本轮故意不启动 worker，队列中保留一条本机测试消息及对应 pending 任务，重放时不得误认为业务积压。
+
+## 续验：恢复文件卷内部权限与单 wheel 哈希正反控（同日）
+
+`e` 停止后，以第三候选镜像的 UID/GID `10001:10001`、无网络、只读根、无 capability、只读挂载，对该 project **仅 uploads 和 Milvus 两卷**逐项 `lstat`（未输出用户文件名、未写卷）。两卷顶层均为 `10001:10001/0755`；Milvus 内只有一件 `0:0` marker 文件，无子目录；uploads 内有一件 `0:0` marker 文件、一件新上传文件和一个 `10001:10001` owner 子目录，后两者由应用创建。未发现当前隔离副本内部不可写目录或扫描错误。**此快照内部结构很浅**；不能用它推断真正旧业务卷的嵌套文件、Milvus 数据库/WAL 或迁移后的原文件可写，正式维护前仍须对目标卷只读盘点并明确处理方案。
+
+从**干净源码 worktree** 的 `requirements-linux-amd64-py310.lock` 提取 `annotated-doc==0.0.5` 的两条哈希，在目标 Linux/amd64 容器执行 `pip download --no-deps --no-cache-dir --require-hashes --only-binary=:all:`，使用与候选 Dockerfile 相同的 PyPI + PyTorch CPU 索引；实际下载 5.3 kB wheel，计算 SHA-256 `117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101`，命中锁内值。只把该条目的哈希替换成全零作**单变量负控**，同命令非零退出、报告 hash mismatch 且未保存 wheel。容器内 `/tmp` 是一次性 tmpfs；未写项目源码或恢复卷。第三候选镜像 Python 为 3.10.22、glibc 2.41、x86_64，覆盖锁的 Linux/amd64 glibc ≥2.40 目标。该正反控证明**一个真实分发文件**确实经过 hash mode，而不是既装包的 dry-run；其余 138 个包、尤其大 PyTorch wheel 尚未下载/验哈希，**新哈希锁镜像仍未构建**。
