@@ -40,3 +40,13 @@ docker exec cpaq1restore20261017b-worker-1 python -B -m celery -A app.services.a
 代理在本轮已停删，重放时需以 `output/q1-proxy-20261017/default.conf` 和同目录 `localhost.crt`/`localhost.key` 重新创建同名临时 Nginx 容器；证书 2026-10-18 08:15 UTC 后过期，必须重新生成**仅供本机测试**的证书。探针命令为 `D:\Miniconda\miniconda3\envs\mkg\python.exe -B output/q1-proxy-20261017/probe_https_owner.py`。完成后停止代理与该恢复 project 的六个服务，保留隔离卷。`output/` 下这些本机文件不随 Git 分发；外部重放须先将候选源码和受信任发布身份正式定稿。
 
 下一发布门槛：锁定基础镜像和完整依赖并从干净来源重建/比对；将镜像默认入口改为 fail-closed 的生产入口或明确限制其用途；从可信 registry 核验 digest/签名及分发；在目标服务器与可信 HTTPS 域名/证书、真实密钥管理和外部依赖齐备后重放迁移/恢复与正式账号的受影响业务成果。真实模型、OCR、Milvus、完整 L0→L2→L3/L4、跨服务故障恢复及公网入口尚未通过；这些不能由本轮 `/health`、收藏写入或 Beat 空队列处理推断。
+
+## 续验：镜像默认入口收窄（同日，仍仅本机）
+
+第一候选镜像的默认 `CMD` 仍是开发服务器，这是经 `docker image inspect` 确认、且会影响脱离 Compose 的实际缺口。先给 `backend/tests/test_compose_deployment.py` 加默认入口回归，原实现 **1 failed**；再仅将 `backend/Dockerfile` 的默认 `CMD` 改为 `gunicorn ... production_wsgi:create_production_app()`，原有五个部署专项现为 **46 passed in 7.72s**。这两处代码仍在主仓未提交的部署候选中，未单独推送。
+
+再次从 21 个白名单文件生成**新的**本地候选提交 `3c4a6d22e75fb9434086e51678c3b3de9bd78ec5`、tree `87d0aa1c7843f506735e44eb762d0815f639b280`，干净 worktree 为 `output/q1-source-20261017b/`，主仓 index 为 0。增量构建的新镜像为 `cpa-q1-app@sha256:573f93963095efef63087cb124c39376797199996ae62236b2ce8f9c0c85b8a1`；基础层和依赖安装层命中本地缓存，**没有**证明无缓存重建或供应链锁定。容器不提供任何生产配置、且网络关闭时直接用镜像默认命令启动，Gunicorn worker 因 `production_wsgi` 配置门禁退出，容器退出码 1；不再落到 `run.py`。随后以本机覆盖文件 `output/q1-proxy-20261017/default-image-command.yml` 将 Compose 对 HTTP 的 `command` 设为 `null`，在同一隔离恢复 project 使用镜像**自身默认命令**：容器 `Config.Cmd` 与新 Gunicorn CMD 完全一致、HTTP health 为 200，worker inspect ping 返回在线，Beat 实际投递且 worker 处理了计划任务。
+
+第一次复验账号路径在第二次注册返回 **429**：沿用同一隔离 Redis，上一镜像的两次注册与本次第一次注册已填满 `3 per hour`，这是限流生效而非新镜像故障。核对只属于该隔离探针的 `LIMITS:LIMITER/cpa-account-auth/cpa-account-auth:172.31.0.8/auth.register/3/1/hour` 键存在且剩余 TTL 3007 秒后，仅删除该**精确测试键**（未 `FLUSHDB`、未触碰其他 project），重放同一探针为 `PASS`：两次注册/登录、无 CSRF 400、owner 写入 200、MySQL 行归属、另一账号不可见和删除后 MySQL 零行均成立。该限流计数重置是**隔离测试复位**，不是部署操作；外部重放应使用新的隔离 Redis/账号，不能在业务环境重置限流。新镜像与旧镜像、两个本地候选 commit 都保留，不混称同一发布物。代理已停删、六个隔离服务已停止、卷保留。
+
+默认入口这一窄缺口已修，但本报告前述**基础镜像标签/完整依赖未锁定、registry/可信证书/完整业务链缺口仍在**；新镜像不能被称为可重建的正式发布镜像。上面的“最短重放”命令针对第一候选；复验新镜像须把路径改为 `output/q1-source-20261017b/`、镜像 digest 改为 `sha256:573f...`，并加 `default-image-command.yml` 覆盖文件以验证镜像自身默认入口。
