@@ -1,6 +1,6 @@
 # Q1 哈希锁镜像：本机离线复现与恢复回放（2026-10-17）
 
-**判定：本机隔离门槛取得明确进展，但不是正式发布批准。**从固定基础镜像、干净源码和整份哈希锁取得全部分发输入，两次断网/无缓存构建在时间戳规范化后生成**逐字节相同**的 OCI 归档；最终归档加载的新镜像又在全新冷恢复 project 上完成数据库、HTTP/worker/Beat、HTTPS 正式账号 owner-bound 收藏写删的窄链。正式 registry/服务器/可信域名及完整简历解析成果仍缺。不要把本报告与先前第三候选镜像混作一个产物；历史回放见[第三候选及前序门槛](2026-10-17-q1-candidate-runtime-replay.md)。
+**判定：本机隔离门槛取得明确进展，但不是正式发布批准。**从固定基础镜像、干净源码和整份哈希锁取得全部分发输入，两次断网/无缓存构建在时间戳规范化后生成**逐字节相同**的 OCI 归档；该归档加载的镜像在全新冷恢复 project 上完成数据库、HTTP/worker/Beat、HTTPS 正式账号 owner-bound 收藏写删的窄链。随后将 `--no-compile` 修正冻结成新的干净源码身份并再次完成两次字节级构建，**新身份镜像尚未重复完整业务回放**。正式 registry/服务器/可信域名及完整简历解析成果仍缺。不要把本报告与先前第三候选镜像混作一个产物；历史回放见[第三候选及前序门槛](2026-10-17-q1-candidate-runtime-replay.md)。
 
 ## 输入身份与分发文件
 
@@ -38,9 +38,15 @@ docker buildx build --platform linux/amd64 --no-cache --pull=false --network non
 
 本机 Nginx 仍只绑定 `127.0.0.1:18443`，自签 `localhost.crt` 的系统默认信任检查失败，客户端**显式指定该测试证书**后 HTTPS `/health` 200。两套正式学生 Cookie 会话经 CSRF、注册和登录后，无令牌收藏写入 **400 且 MySQL 零行**；有效写入 **200**，独立 MySQL 回读只有登录 owner 行、请求体伪造的另一账号 ID 与 `role=admin` 未获采信；owner 列表可见、另一账号不可见，删除后再次 MySQL 零行。被忽略的探针是 `output/q1-proxy-20261017/probe_https_owner.py`，本轮输出 `PASS`。随后临时代理停删，`g` 六服务全停，九个隔离卷保留；`f` 的较早同类试验也已全停且九卷保留。
 
+## 新干净来源的独立复现（未代替上述运行回放）
+
+为消除旧镜像“仓内 Dockerfile 缺少 `--no-compile`”的来源缺口，仅把该 Dockerfile 修正及对应测试从脏工作树写入独立 Git index，以 `7353dd7` 为父提交得到本机**未推送**候选 `91b6e453cd9447ef5cc4f900b8543c64c650639c`、tree `94ba4f87946f577d65da14893024d8ccbec338aa`。相对父提交恰好只变更 `backend/Dockerfile` 和 `backend/tests/test_compose_deployment.py`；独立干净 worktree 是 `output/q1-source-20261017-hash-nopyc/`，未纳入主仓其他未提交内容或 22 个 Agent 草案。在该副本运行 `mkg` 的部署/迁移三组专项为 **12 passed, 4 skipped**。
+
+同一轮子集和哈希锁、同一固定基础镜像下，新的本机离线派生 Dockerfile 只将**仓内已有**的索引安装换成只读 `/wheels`，其 SHA-256 为 `a73dedadebb5f71d5a87fce5c433c156c8e646c32c021b1c00e007d57b38dd2b`。以新提交时间 `SOURCE_DATE_EPOCH=1792237004` 分别执行两次 `--no-cache --pull=false --network none` 的 Linux/amd64 OCI 构建：`q1-nopyc-source-build-{a,b}.oci.tar` 各 **439,512,576 字节**，两者 SHA-256 同为 `36fef2746ea9e47ab690dfd8177b4f09275f4a588e0b0583c8e3fc65dbf911f8`；manifest/本机镜像 ID 同为 `sha256:75a08ee3acc5915679967317e934bdd0da6bd8cb92d83b59dd11cddbc171d989`。加载首份归档核对 `USER=10001:10001`、Linux/amd64；镜像内 `pip check` 无破损，抽查 `torch=2.6.0+cpu`、`flask=3.1.3`。新 OCI 与旧 `72ca...` **不是同一个产物**；尚未在新的冷恢复 project 上复演 HTTPS owner-bound 业务，因此不能把旧镜像的 `g` 运行结论移植给它。
+
 ## 未过门槛与接手动作
 
-1. 最终可复现镜像使用的是 **`7353dd7` 应用源码 + 单独的本机离线 Dockerfile**；当前主仓 Dockerfile/test 的 `--no-compile` 修正仍未提交，尚未从其**新干净 Git 身份**构建/比对，不得把本机离线产物叫作仓内 Dockerfile 的发布物。下一步把这两处最小修正单独冻结为新候选来源，保留精确离线变体/锁/wheelhouse 身份，再从该来源复验；不要混入 22 个 Agent 草案或其他未归属文件。
+1. `--no-compile` 已单独冻结到**本机、未推送**的干净候选 `91b6e45`，新来源的离线产物已两次逐字节复现，但**尚未在全新冷恢复 project 完成同镜像运行回放**；主仓工作树的对应 Dockerfile/test 改动仍未提交到当前分支。旧 `72ca...` 的 `g` 回放不能自动算作新 `75a...` 的验收。下一步对新镜像做隔离冷恢复和正式账号业务结果验证，再决定是否提交/推送代码；不要混入 22 个 Agent 草案或其他未归属文件。
 2. wheelhouse 没有独立可信 registry/签名/供应链证明；目标服务器、镜像仓库、正式密钥管理及可信 HTTPS 域名/证书仍未确定。自签证书**只在本机显式信任**，不能替代外部入口验收。
 3. 本轮正式业务结果是 owner-bound 收藏岗位写删；L0 简历只在旧镜像的另一隔离 project 验到持久 `pending` 入队。真实模型、OCR、Milvus 数据写入、L0 最终解析与后续 L2/L3/L4 成果、完整故障恢复及真实旧卷内部权限仍未通过。不得从 Beat 空队列成功或 `/health` 推断这些项。
 
