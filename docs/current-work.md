@@ -23,7 +23,7 @@
 
 | 工作流 | 观察到的状态 | 下一核验点 |
 |---|---|---|
-| 生产部署与恢复 | `main` 基线之上仍有未提交部署候选；[隔离卷恢复实证](reports/2026-10-17-q1-isolated-volume-recovery.md)已回读三种数据库和文件标记。[干净候选镜像运行回放](reports/2026-10-17-q1-candidate-runtime-replay.md)第三候选固定本机基础 digest/139 项依赖版本，在又一全新恢复 project 上确认只读根/零 capability、显式迁移、默认 Gunicorn、Beat→worker、本机 HTTPS 正式账号与 owner-bound MySQL 结果。恢复卷顶层 owner 冲突已在**隔离卷**复现并经停机后的精确顶层调整复验；候选 commit/镜像仅留本机。 | 真实旧卷内部 owner 尚未排查；新增 139 项哈希锁**仅为未提交候选**，没有 hash 模式干净安装或新镜像回放；registry、可信域名/证书和完整业务链仍是发布门槛。 |
+| 生产部署与恢复 | `main` 基线之上仍有未提交部署候选；[隔离卷恢复实证](reports/2026-10-17-q1-isolated-volume-recovery.md)已回读三种数据库和文件标记。[干净候选镜像运行回放](reports/2026-10-17-q1-candidate-runtime-replay.md)第三候选固定本机基础 digest/139 项依赖版本，在又一全新恢复 project 上确认只读根/零 capability、显式迁移、默认 Gunicorn、Beat→worker、正式账号与 owner-bound MySQL 结果；复用隔离 project 又以**显式信任本机证书、未关闭验证**的 HTTPS 入口重放同一窄链。恢复卷顶层 owner 冲突已在**隔离卷**复现并经停机后的精确顶层调整复验；候选 commit/镜像仅留本机。 | 真实旧卷内部 owner 尚未排查；新增 139 项哈希锁**仅为未提交候选**，没有 hash 模式干净安装或新镜像回放；registry、可信域名/证书和完整业务链仍是发布门槛。 |
 | 学生工作台 | 最近提交 `a8ef1f1` 涉及持久分析和部署检查；[状态契约](specs/student-workbench-state-contract.md)记录 P0、P2、P1 首切片及旧数据迁移、P3、故障矩阵等缺口。 | 具体任务开始时重新核对路由、迁移、worker/Beat 与 owner-bound 成果，不直接沿用文档中的历史测试数字。 |
 | Agent 运行时实验 | 22 个未跟踪模块已在[逐项取舍报告](reports/2026-10-17-q3-agent-candidate-disposition.md)逐文件对照现行实现与本机上游快照；22/22 继续隔离，不删除、不整包接线。此前默认 HTTP 多轮只用确定性 Supervisor/存储替身回放 `1 passed`，不是真模型验收。 | 若出现具体默认路径缺陷，才按上游复用、owner/预算/工具结果和真实请求验收决定薄适配；先确认文件归属才可归档。 |
 | 前端 | `cpa-xingtu/` 是独立 Git 仓库，本地主仓不跟踪其源码；[Q4 分流回放](reports/2026-10-17-q4-frontend-worktree-review.md)核对了 13 个未跟踪文件，并在独立前端分支修正一条 Mock 岗位介绍串用前端文案的实际页面缺陷。 | Mock 与后端 HTTP 分开验收；13 个旧稿/截图/脚本仍待归属。该仓本地没有 `AGENTS.md`，不擅自补造规则。 |
@@ -34,7 +34,7 @@
 | 序号 | 状态 | 可独立领取的下一步 | 完成判据 / 当前阻断 |
 |---|---|---|---|
 | Q0 工作区保护 | 整理范围已核验；后续持续执行 | 每次切换工作流先看主仓及独立前端仓的 Git 状态，按下文分组领取，禁止对未归属内容做 `git clean`、重置或混合提交。 | 五份旧文档的旧路径移除与新归档必须成对看待；整理提交不代表其他工作流已获准入主线。 |
-| Q1 部署候选 | 原冷快照已恢复到三个全新目标 project；最新一次在隔离卷调整顶层 owner 后，以只读根/零 capability 通过文件卷可写性、本机 HTTPS 正式账号 owner-bound 窄链和五类 marker 回读；下一候选已有 139 项/2,937 哈希的 lock 与静态回归，**尚未构建/运行** | 按[镜像运行回放](reports/2026-10-17-q1-candidate-runtime-replay.md)先逐项盘点真实旧卷内部 owner，并让下一镜像在受控构建器完成 hash 模式安装与新 digest 回放；待服务器/registry/可信 HTTPS 确定再做外部验收。 | 只调整测试卷顶层并不能保证旧文件/WAL 可写；静态 lock/旧镜像 dry-run、自签 HTTPS、收藏窄链及 Beat 空队列成功不能替代完整业务链或生产发布。 |
+| Q1 部署候选 | 原冷快照已恢复到三个全新目标 project；最新一次在隔离卷调整顶层 owner 后，以只读根/零 capability 通过文件卷可写性、本机证书**显式受信**的 HTTPS 正式账号 owner-bound 窄链和五类 marker 回读；下一候选已有 139 项/2,937 哈希的 lock 与静态回归，**尚未构建/运行** | 按[镜像运行回放](reports/2026-10-17-q1-candidate-runtime-replay.md)先逐项盘点真实旧卷内部 owner，并让下一镜像在受控构建器完成 hash 模式安装与新 digest 回放；待服务器/registry/可信 HTTPS 确定再做外部验收。 | 只调整测试卷顶层并不能保证旧文件/WAL 可写；静态 lock/旧镜像 dry-run、自签证书的本机信任、收藏窄链及 Beat 空队列成功不能替代完整业务链或生产发布。 |
 | Q2 学生工作台 | 待现场重验 | 选一条有用户结果的路径，从 HTTP 入口到持久状态重放；随后按[状态契约](specs/student-workbench-state-contract.md)逐项领取缺口。 | 真 MySQL/Redis/Neo4j、worker/Beat、归属回读和失败收束均须标清是否实际可用；不继承旧报告测试数字。 |
 | Q3 Agent 候选模块 | 22 件已逐项分流，当前均继续隔离；归属未确认 | 按[Q3 报告](reports/2026-10-17-q3-agent-candidate-disposition.md)保护原件；只在出现具体默认路径缺陷时领取单项适配，不以草案清单整包实施。 | 尚无候选接线/真实模型验收；自动写词典、进程内“持久”状态与不完整工具/文件边界禁止原样接入。 |
 | Q4 前端独立仓 | 13 件已分流；一条 Mock 缺陷已在独立分支修正 | 按[Q4 报告](reports/2026-10-17-q4-frontend-worktree-review.md)认领旧设计、G6 截图及两个脚本；尤其先定三类缺失岗位介绍的正确数据合同，处理已跟踪包入口指向未跟踪且红灯的检查脚本。 | 前端分支 `codex/q4-role-intro-mock-boundary` 的浏览器回放和构建只验 Mock；不并入主仓，也不宣称 HTTP/正式账号验收。 |

@@ -86,3 +86,11 @@ docker exec cpaq1restore20261017b-worker-1 python -B -m celery -A app.services.a
 为把“仅版本约束”推进到可验证的分发输入，使用本机 `uv 0.9.18` 对当前 `requirements.txt` 加 139 项 constraints，在 CPython 3.10 / Linux x86_64 manylinux 2.40 目标、仅二进制包及 PyPI + PyTorch CPU 双索引下生成**候选** `backend/requirements-linux-amd64-py310.lock`（266,980 字节，SHA-256 `2cb6cd133f3e91dad550371e3c49a7c2e9f635c9eb58a6ed6fc27edd29eb9b56`）。它有 139 个精确版本、2,937 个候选 wheel/分发文件 SHA-256；程序比对与原 constraints 的规范化包名/版本 **139/139 一致**，包括 `torch==2.6.0+cpu`。文件没有本地路径、可编辑安装或直接 URL。求解器因 PyTorch 附加索引和 PyPI 的同名包交叉可见而使用 `unsafe-best-match`；锁定哈希并不能取代索引来源与发行身份审查。
 
 先把部署静态回归改成要求 Dockerfile 使用哈希锁，原候选 **2 failed**；然后将 Dockerfile 的两次仅版本约束安装收敛为一次 `pip install --require-hashes --only-binary=:all:`，显式 PyPI 和 PyTorch CPU 索引，只安装上述 lock。静态测试现在 **3 passed**，七个部署/迁移专项合计 **50 passed, 4 skipped in 11.10s**；跳过项依赖选择性启用的真实服务条件。用既有第三候选镜像、`--network none --no-index --dry-run --require-hashes` 读取完整 lock 退出 0，只证明文件语法与**既有已安装版本**可匹配，**不会重新下载并核验 wheel 哈希**。新 Dockerfile/lock/测试仍是主仓未提交部署候选；没有据此构建新镜像，不沿用第三候选的运行回放结论为新候选背书。下一门槛是受控干净构建器实际执行 hash 模式安装、核对轮子来源和实装版本，再以**新镜像 digest**重放上述服务/业务验收；在大文件分发可控前不启动另一轮长时盲构建。
+
+## 续验：本机明确受信的 TLS 入口（同日）
+
+先检查自签测试证书仍有效，SAN 同时包含 `localhost` 和 `127.0.0.1`。复用已停止、保留的隔离 project `cpaq1restore20261017d` 与原第三候选镜像（**不是**尚未构建的哈希锁候选），按只读根覆盖启动三数据库及 HTTP/worker/Beat，临时 Nginx 仍只绑定 `127.0.0.1:18443`。`output/q1-proxy-20261017/probe_tls_trust.py` 改用正常证书验证做单变量对照：系统默认信任库**拒绝**该自签证书；显式将本机 `localhost.crt` 作为该一次性测试入口的信任锚后，HTTPS `/health` 返回 200，均未用 `verify=False`。这只证明**测试客户端明确配置的本机信任关系**，不是公众/目标服务器信任该证书。
+
+原 owner-bound 探针增加可选 `Q1_CA_CERT` 参数；本次设置为该证书绝对路径，所有 CSRF、注册、登录、收藏与删除请求均启用证书验证。确认隔离 Redis 中此前注册限流键已经自然过期（未删除或重置）后，两套新学生会话重放为 `PASS`：无 CSRF 写入 400 与 MySQL 零行、有效写入 200 与 MySQL owner 行、另一账号不可见、删除后 MySQL 零行。MySQL、Neo4j、Redis、uploads、Milvus 五类原冷快照 marker 随后再次全部 `PASS`。本机代理已停删，project 六服务已停止，隔离卷保留；没有触碰原业务卷。现在本机 HTTPS 窄链不再依赖关闭证书验证，但正式域名、可信 CA/证书部署及外部重放仍是停止项。
+
+尝试离线复用长时构建的 BuildKit pip cache：`docker buildx du` 一度报告该 cache mount 约 375.7 MB；用另一个**无网络、只读检查脚本**挂载相同目标路径时看到 0 个文件，随后 cache 记录为 4 KiB。不能从 BuildKit 统计推断 wheel 字节可复用，故**没有**宣称已核验 PyTorch 分发文件 SHA-256，也不基于该缓存启动新的安装。该临时检查 Dockerfile/脚本位于被忽略的 `output/q1-cache-inspect-20261017/`，不属于应用候选来源。
