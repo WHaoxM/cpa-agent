@@ -81,7 +81,7 @@ def create_app(config_class=Config):
         except Exception as e:
             return {'status': 'error', 'message': str(e)}
 
-    from .api import graph_bp, profile_bp, match_bp, report_bp, agent_bp, pipeline_bp, learning_bp, admin_bp, favorites_bp, career_bp, messages_bp, ability_bp, ai_bp, pipeline_ext_bp, roles_bp
+    from .api import graph_bp, profile_bp, match_bp, report_bp, agent_bp, pipeline_bp, learning_bp, admin_bp, favorites_bp, career_bp, messages_bp, ability_bp, ai_bp, pipeline_ext_bp, roles_bp, home_bp
     app.register_blueprint(graph_bp, url_prefix='/api/graph')
     app.register_blueprint(profile_bp, url_prefix='/api/profile')
     app.register_blueprint(match_bp, url_prefix='/api/match')
@@ -97,6 +97,7 @@ def create_app(config_class=Config):
     app.register_blueprint(ability_bp, url_prefix='/api')
     app.register_blueprint(ai_bp, url_prefix='/api/ai')
     app.register_blueprint(roles_bp, url_prefix='/api/roles')
+    app.register_blueprint(home_bp, url_prefix='/api/home')
 
     from .middleware.account_auth import install_account_auth
     install_account_auth(app)

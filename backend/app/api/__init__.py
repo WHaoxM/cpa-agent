@@ -16,6 +16,7 @@ career_bp = Blueprint('career', __name__)
 messages_bp = Blueprint('messages', __name__)
 ability_bp = Blueprint('ability', __name__)
 ai_bp = Blueprint('ai', __name__)
+home_bp = Blueprint('home', __name__)
 
 from . import graph      # noqa: E402, F401
 from . import profile    # noqa: E402, F401
@@ -46,5 +47,6 @@ from . import pipeline_ext_agent  # noqa: E402, F401 - P1 阶段11 拆出 (Agent
 from . import admin_kb   # noqa: E402, F401
 from . import roles   # noqa: E402, F401
 from .roles import roles_bp  # noqa: E402, F401
+from . import home  # noqa: E402, F401 — current-principal dashboard projection
 
 from .pipeline import pipeline_bp
