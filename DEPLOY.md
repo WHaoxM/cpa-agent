@@ -98,6 +98,7 @@ python -B -m pytest backend/tests
 生产覆盖层现在包含同一 Python 3.10 镜像的 `backend`、`worker`、`beat`，以及必须由运维**显式运行**的 `migrate` profile。worker 消费 `cpa.pipeline`、`cpa.media`、`cpa.graph`，与 HTTP/Beat 共用上传、Milvus、模型缓存和日志卷；Beat 仅保留一个实例。基础层数据库不发布宿主机端口，HTTP 仅映射到 `127.0.0.1:5001`，需要另行配置 HTTPS 反向代理才可对外提供正式账号服务。`/health` 只检查 Flask 自身，不证明依赖或任务可用。
 
 生产 Compose 还要求在未提交的 `.env` 中填写 `CORS_ALLOWED_ORIGINS`，值是**真实前端页面**的 HTTPS Origin（如 `https://app.example.com`；多项用英文逗号分隔，不含路径或末尾斜杠），不得用 `*`。同源 HTTPS 代理可填页面自身 Origin；当前正式账号 Cookie 为 `SameSite=Lax` + `Secure`，建议前后端由同源或至少同站的 HTTPS 入口提供。跨站独立前端即使配置 CORS，也不能据此认为现有 Cookie 登录已可用；需另行设计并验收会话/CSRF 方案。
+**用户指定的候选拓扑（尚未配置或验收）**：公网服务器 `101.200.34.104` 仅作为入口/转发中继；应用后端和 MySQL 留在 NeuTronMbook 本机，计划 API 域名为 `api.xingtulabs.top`。DNS、HTTPS 证书和 FRP/其他隧道均未配置；本机休眠、断网或隧道中断会使 API 不可用。MySQL 只允许本机/私网访问，不能映射到公网。上文单机 Compose 生产候选不会自动实现该分离拓扑；这段记录不是部署或网络变更授权，也不代表已上线。
 
 Dev 和生产覆盖层分别使用 `cpa-agent-dev` / `cpa-agent-prod` Compose project 名，命名 volume 相互独立；在 dev 库完成迁移或导入数据，不会自动迁移或复制到生产候选层。
 
