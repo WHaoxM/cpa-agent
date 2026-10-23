@@ -1,0 +1,61 @@
+---
+config:
+  theme: base
+  themeVariables:
+    fontFamily: "Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif"
+    fontSize: "15px"
+    background: "#f5f7fb"
+    primaryColor: "#ffffff"
+    primaryTextColor: "#1f2937"
+    primaryBorderColor: "#cbd5e1"
+    lineColor: "#52657a"
+  flowchart:
+    curve: linear
+    htmlLabels: false
+    nodeSpacing: 12
+    rankSpacing: 12
+    padding: 8
+    wrappingWidth: 240
+    minNodeWidth: 135
+---
+%% 绘图基线：主仓 HEAD 590f055b5307f3704afab32df754aa28e14326e1（dirty）；前端 HEAD da7a3fa81cdf28f2ba1ab1d1396a37944e28ea0d（dirty）。
+flowchart TB
+  FE["学生 AI 工作台（仅 HTTP 模式）<br/>显式 interaction_mode · 默认 Agent<br/>每会话 session_id · Mock 不经此图"]
+  API["/api/agent/chat · /chat/stream<br/>Principal → owner-bound session"]
+  TURN["Supervisor 回合准入 → 准备并写 user STM<br/>可选 Idempotency-Key · 同会话租约<br/>Redis；开发可回退本地锁"]
+  STATE["Redis SessionState<br/>近期约 16 条 · conversation_summary<br/>context：Blackboard / mode / Ask cursor<br/>消息另写 MySQL"]
+  SOURCES["ModeRuntime 按模式取材<br/>媒体 / 私有资料<br/>LTM：Ask iff use_memory=true；Agent / Experts 摘要<br/>EvidencePack：Ask / Experts"]
+  ASSEMBLE["DefaultContextAssembler<br/>逐模式预算 · 生成 model input"]
+  FE --> API --> TURN --> STATE --> SOURCES --> ASSEMBLE
+
+  ASSEMBLE --> ASK_CTX["Ask · messages[]<br/>system head/tail + summary / memory / attachment<br/>history + current + EvidencePack<br/>history budget ≤ 6,000 chars"]
+  ASSEMBLE --> ROUTER_CTX["Agent / Experts · messages=[]<br/>history budget = 0<br/>router_context：summary / capability / memory /<br/>attachment card / current；Experts 另含 evidence"]
+
+  ASK_CTX --> ASK["PromptSelector · Ask → 只读回答<br/>附件目标可走 attachment_read"]
+  ROUTER_CTX --> PROMPT["PromptSelector · mode / role"]
+  PROMPT --> AGENT["Agent Router<br/>clarify 或选单个子 Agent"]
+  PROMPT --> LEAD["Experts Lead<br/>explain / clarify 或白名单计划"]
+
+  AGENT -->|TaskPacket| CHILD_CTX["TaskPacket + blackboard.<br/>read_slice_for_model<br/>goal / read-write keys / 指针短摘要<br/>首步可含 user_utterance；后续 lean brief<br/>不自动继承完整历史 / LTM<br/>附件目标可注入 docs pack"]
+  LEAD -->|计划步骤| CHILD_CTX
+  CHILD_CTX --> INVOKE["ScopedInvoke · 每次新建临时 LangGraph mini-graph<br/>模型 ↔ ToolNode ≤ 6 轮<br/>PreToolUse；student_id 服务端绑定"]
+  INVOKE -->|业务写入| VERIFY["verify_plan_updates<br/>owner-bound MySQL 回读验证"]
+  VERIFY -->|通过后仅写 ACL key| COMMIT["Blackboard 存结果指针<br/>MySQL 是业务成果权威"]
+  INVOKE -->|只读 / 回答结果| OUTPUT["Assistant reply + turn context<br/>SessionManager / Redis context"]
+  COMMIT --> OUTPUT
+  ASK --> OUTPUT
+  AGENT -->|clarify| OUTPUT
+  LEAD -->|explain / clarify| OUTPUT
+
+  classDef entry fill:#eaf2ff,stroke:#6f93c7,color:#1e3a5f,stroke-width:1.5px;
+  classDef state fill:#f1f5f9,stroke:#718096,color:#263445,stroke-width:1.5px;
+  classDef runtime fill:#edf2ff,stroke:#7c8fd1,color:#273766,stroke-width:1.5px;
+  classDef source fill:#eef7f5,stroke:#65a995,color:#173d35,stroke-width:1.5px;
+  classDef child fill:#f3efff,stroke:#9178c8,color:#3e315f,stroke-width:1.5px;
+  classDef authority fill:#fff4e5,stroke:#d39a48,color:#5a3b13,stroke-width:1.5px;
+  class FE,API,TURN entry;
+  class STATE state;
+  class ASSEMBLE,ASK_CTX,ROUTER_CTX,ASK,PROMPT,AGENT,LEAD runtime;
+  class SOURCES source;
+  class CHILD_CTX,INVOKE child;
+  class VERIFY,COMMIT,OUTPUT authority;

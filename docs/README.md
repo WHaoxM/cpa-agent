@@ -7,6 +7,8 @@ This directory contains active engineering docs, historical notes, generated dia
 For the dated Q1/Q3/Q4 acceptance split, see the [next-stage acceptance audit](reports/2026-10-17-next-stage-acceptance-audit.md); its incomplete gates are not release approval.
 The latest local Q1 hash-locked image build and cold-restore replay have a [focused evidence report](reports/2026-10-17-q1-hash-image-offline-replay.md); the separate offline Dockerfile and wheelhouse are local artifacts, not a published release.
 
+For the current student journey from a report-based action plan to recorded practice and assistant reflection, use the existing [Agent plan persistence guide](guides/agent-plan-persistence.md) and its [2026-10-21 replay evidence](reports/2026-10-21-student-practice-evidence-reflection.md). The report is a dated replay, not a new parallel guide.
+
 ## Source-Of-Truth Order
 
 Use this order when documents disagree:
@@ -75,10 +77,14 @@ For open-source runnable hardening, keep these active and maintained:
 - `guides/windows-powershell-encoding.md` — Windows/PS 5.1 下乱码是解码假象，文件均为 UTF-8；读写姿势与真损坏判定
 - `guides/attachment-completeness.md` — 上传附件到 Ask/Agent 的完整性标记、OCR 运行边界和回归步骤
 - `guides/agent-http-acceptance.md` — 真实 socket HTTP 的 Agent 多轮/附件旅程、替身边界与失败后回放；不等同于真实模型质量验收
+- `guides/backend-user-journey-acceptance.md` — 学生业务旅程的场景 owner；含简历工作台 HTTP/MySQL/Celery 回归，以及报告追问的真实前端登录、页面操作、HTTP/权威状态验收入口
+- `reports/2026-10-21-student-action-plan-followup-replay.md` — 从报告差距到一周行动计划的真实 Vue 登录回放、进度持久化、切换账号隔离、来源过期历史保留与未覆盖范围
+- `reports/2026-10-21-student-practice-evidence-reflection.md` — 学习中心逐步记录练习成果、附件已读/未就绪时回原对话复盘、重登恢复与来源过期的真实前端回放
+- `reports/2026-10-21-frontend-report-followup-evidence-fix-replay.md` — 报告追问自动组合已确认简历、正文/依据分离、真实浏览器与 HTTP/MySQL/Redis 回放及未覆盖范围
 - `reports/2026-10-10-http-agent-acceptance-review.md` — PDF 架构能力与 HTTP/test_client/未验证证据分层，含 SSE 连接红灯定位及验收缺口
 - `reports/2026-10-13-secondary-backend-acceptance.md` — 次要入口与 Docker 恢复后真库续验、已复现窄域修复、全量回归及尚未闭合的产品链路
 - `guides/career-role-inference-source-coverage.md` — 职业方向推断的完整、空结果、部分结果与依赖来源覆盖合同
-- `guides/career-market-seed-boundary.md` — 职业冷启动目录与正式市场断言的读侧门禁、真实 HTTP 验收及来源审核缺口
+- `guides/career-market-seed-boundary.md` — 职业冷启动市场门禁、允许估算的版本化公共参考链、三库投影与真实HTTP/页面证据
 - `guides/legacy-exams-publication-gate.md` — 旧技能自评入口只推荐当前已审核发布的岗位，回读时复核撤回与版本
 - `guides/pipeline-dispatch-boundary.md` — L3 专用持久队列/恢复与其他旧 Pipeline 启动入口的 503 边界
 - `guides/docx-ocr-and-human-cer.md` — DOCX 嵌图真实 Sidecar OCR 与扫描简历逐页人工 CER 审阅包；未签审不产生准确率
@@ -95,6 +101,12 @@ For open-source runnable hardening, keep these active and maintained:
 - `guides/portrait-behavior-assessment.md` — D1 客观学校类型与评分层级分离、D3 带来源的候选行为评价及确认门禁；缺证据仍保持 partial
 - `guides/semantic-routing-hardcode-audit.md` — Ask/Agent 语义路由移除关键词/正则快捷判定后的模型结构化决策及未验收项
 - `guides/experts-structured-evidence.md` — Experts 意图/计划去语义关键词捷径，以本轮工具引用及 owner+业务行回读判成果
+- `guides/agent-plan-skill-slice.md` — Agent 动态白名单计划、按需 Skill 加载、回复过程隔离与持久 run/取消/接续/显式专家包尚未完成的边界
+- `guides/school-fact-source-slice.md` — 教育部历史 211 正向名单的独立版本/哈希、owner 已确认资料按需读取和未知/D1 隔离边界；真实 MySQL/模型/页面及跨 run 固定尚未验收
+- `guides/agent-run-persistence.md` — owner-bound Agent run MySQL 状态与 Celery outbox/claim/replay、HTTP submit/status/events/cancel API、版本化输入快照和 QA-only 持久执行器；真实链路与工具/Skill边界按证据区分
+- `reports/2026-10-18-agent-run-live-replay.md` — 一次合成只读任务的隔离 HTTP→MySQL/Celery→模型回放、缺资料语义诊断、重复投递/先取消安全边界，以及本次未覆盖的 Skill/工具/页面范围
+- `reports/2026-10-17-agent-reply-differential-baseline.md` — 合成简历下 clean/history 两次真实 Agent HTTP 的 Lead、子 Agent、公开回复和 Vue 源码级页面投影；不把单样本差异归因于上下文污染
+- `reports/2026-10-18-agent-history-context-continuity.md` — Agent/Experts Lead 接入最近四条有界、不可信历史的实现与真实 HTTP 差分；不把一次模型输出差异解释为因果或污染
 - `runbooks/public-skill-partition.md` — 审核种子 `PublicSkill` 的发布、可用性核验与安全降级；公共图与个人图继续隔离
 - `guides/personal-graph-owner-scope.md` — 当前已确认资料到私有技能快照的 owner/source 分区发布、幂等回读、撤回与主 Agent 固定模板；旧混存 Person/Skill 不认领
 - `guides/reviewed-entity-graph-projection.md` — 人工审阅的 equivalent 实体在独立 revision、Celery 重放与 Neo4j 事务下投影到 owner-private 个人图；related/reject/defer 不提升为公共真值
@@ -114,12 +126,17 @@ For open-source runnable hardening, keep these active and maintained:
 - `guides/page-agent-task-reference-handoff.md` — 功能页与主 Agent 的服务端 task 引用交接，拒绝客户端自报成果
 - `guides/agent-call-budget-ledger.md` — LangGraph 调用前窗口预检与 Agent/Experts request-local provider usage 账本的已接边界和未覆盖路径
 - `guides/agent-observability-privacy.md` — Langfuse 默认只导出调用账本元数据；含简历/回复的追踪内容须部署方显式 opt-in
+- [当前系统架构图](architecture/current-system-overview.svg) — 以现行代码/配置接线为准的一页式总览；[Mermaid 源文件](architecture/current-system-overview.mmd) 可编辑。实线为已接线，虚线为可选/配置条件，灰色 Mock 不连后端。
+  - 绘图基线：主仓 HEAD `590f055b5307f3704afab32df754aa28e14326e1`（dirty）；前端 HEAD `da7a3fa81cdf28f2ba1ab1d1396a37944e28ea0d`（dirty）。任务恢复仅覆盖已持久化任务子集，不代表 L0–L4 全链路保证。
+- [AI 工作台运行细图说明](architecture/agent-runtime-diagrams.md) — [上下文流图（SVG）](architecture/agent-context-flow.svg) / [Mermaid 源文件](architecture/agent-context-flow.mmd)，以及[回合状态机（SVG）](architecture/agent-turn-state-machine.svg) / [Mermaid 源文件](architecture/agent-turn-state-machine.mmd)。
 - `guides/agent-session-turn-coordination.md` — Supervisor 同会话回合的 Redis 跨 worker 租约、开发降级与 fail-closed 部署边界
 - `guides/agent-turn-idempotency.md` — 显式 `Idempotency-Key` 的 MySQL 准入、JSON/SSE 终态重放、unknown/过期墓碑及真实跨进程 HTTP 验收
 - `guides/agent-prompt-first-draft.md` — OpenCode/Codex 与 Trace 协作判断转译到 Agent 路由、planner、QA 的“先给初稿”契约和本轮状态回放
-- `guides/agent-plan-persistence.md` — planner 正文落库、成果索引同事务提交、owner 读取与学习页交接回放
+- `guides/agent-plan-persistence.md` — 传统 planner 正文兼容、报告差距到一周行动计划的来源绑定/步骤进度/owner 持久化约定与学习页回放入口
 - `guides/plan-handoff-context.md` — Experts 后续步骤保留本轮有界目标摘要；含真实 socket HTTP 交接与伪造业务结果阻断验收
 - `architecture/agent-upstream-adaptation.md` — OpenCode/Codex 快照、许可证、参考模块与 Python 薄适配边界
+- `reports/2026-10-19-education-screening-structured-v2.md` — 教育条件 Skill 驱动的结构化 QA/finalizer opt-in 候选、release/usage pin、无模型回归、一次 Qwen A–E 样本未通过体验门槛及 HTTP 未验收边界
+- `reports/2026-10-19-education-screening-structured-v5-no-model.md` — v5 ID-only finalizer selector、服务端自然答复渲染、A–E/注入/非法选择/版本漂移 no-model 契约与 HTTP/模型未验收边界
 - `architecture/platform-agent-capability-architecture.md` — 平台级 AI Native：会话与功能页共用能力运行契约、模块实况、开源选型和迁移金路径
 - `reports/2026-10-09-resume-page-extraction-audit.md` — 本地两份简历的脱敏逐页提取核验；覆盖证据与 OCR 准确率边界
 - `reports/2026-10-09-agent-document-context-evaluation.md` — 多附件、提示词路由、模型窗口与职业问题的契约验证及未验收范围

@@ -1,114 +1,78 @@
 # 我的报告
 
-## 路由
+## 页面职责与设计
 
-| 项 | 值 |
-|----|-----|
-| path | `/app/student/my-reports` |
-| name | `student-my-reports` |
-| roles | student |
-| immersive | false |
-| public | false |
+路由为 `/app/student/my-reports`（`student-my-reports`），学生登录后进入。真实模式与显式演示模式复用原双书架、棕色画像书脊、绿色职业报告书脊、抽书动画和纸质阅读浮层；不再为 HTTP 另做普通列表。
 
-## 页面职责
+- **个人能力画像**：展示本人不可变画像快照，标明当前／历史；历史只读，不变成当前评分来源。
+- **职业生涯发展**：展示现有岗位报告接口允许读取的本人报告，不把本地职业模拟或已失效成果混入。
+- 每架分别处理加载、失败、空态和重试。失败不是零份报告，也不清空另一架。
+- 书架依实际宽度计算三排容量，再向服务端分页；不可仅截断数组。书脊显示短标题与日期，悬停／聚焦提供完整名称。
+- 进入、离开、切换账号后，过期的目录／详情响应不得恢复旧内容。真实书架不读写本地 `report-store`，不经过会补默认值的演示数据适配。
 
-列出当前学生历史报告，打开详情或删除（若产品支持）。
+## 读取接口与选择地址
 
-## 用户操作表
+### 总览与章节阅读（2026-10-23）
 
-| 操作 | UI 触发 | Method Path | Request 样例 | Response 样例 | Fixture | BE 状态 |
-|------|---------|-------------|--------------|---------------|---------|---------|
-| 加载列表 | 进入页面 | `GET /api/report/list?student_id=student_001` | 见下 | 见下 | `report/list.student_001.json` | backend-ready |
-| 打开详情 | 点击行 | `GET /api/report/<report_id>` | — | 见 career-report | `report/detail.report_001.json` | backend-ready |
-| 删除报告 | 删除（若启用） | （理想）`DELETE /api/report/<id>` | — | — | — | backend-gap |
-| AI 成长分析 | 分析按钮 | `POST /api/ai/growth-analysis` | 见下 | AIAnalysisResult | — | backend-gap |
+画像和岗位报告在原纸质浮层中默认打开总览，不再一次铺开所有正文。`ReportReadingLayout` 仅维护本次阅读的章节、焦点和滚动，不计算内容、生成摘要或保存阅读进度。内容宽度达到 760px 使用左目录，否则使用顶部章节选择和返回总览；不能按窗口宽度推断侧栏空间。
 
-### Request / Response 展开
+- 画像总览保留花形图、实际数值／未知和四维入口；维度正文默认展开，按目前依据、对应经历、尚需了解和适用行动排列。共通边界集中呈现，自述性质贴近相关经历。历史只读，补充按钮仍重新核对本人工作台。
+- 岗位总览保留已有摘要、实际估算及其限制、追问。详细章节读取已保存的正文及嵌套段落，不止摘要；没有章节就明确未生成，不补六章模板。“依据与边界”列出实际缺失项，内部 owner、URI、摘要哈希不进入正文。旧章节字段和 `report_json.chapters` 均可读，不改变生成规则。
+- 关闭／重新打开、换资源及换账号后默认总览；同次阅读保留章节滚动。原选择地址、来源撤回和所有权门禁不变。攀岩页嵌入画像不启用这套布局，本轮不改变其构图。
 
-#### 加载列表
+基线、批量检查、首次失败和未覆盖项见[原页面修复记录](../../../reports/2026-10-22-real-page-experience-repair.md#画像与报告总览章节阅读2026-10-23)。
 
-**Request**
+| 用户操作 | 真实接口／行为 |
+|---|---|
+| 读取画像书架 | `GET /api/profile/student/portrait-snapshots?limit=…&offset=…`，返回 `items/current_snapshot_id/total/limit/offset`；limit 1–50，offset 非负 |
+| 打开指定画像 | `GET /api/profile/student/portrait-snapshots/<snapshot_id>`；校验 owner、任务关联及内容摘要 |
+| 读取职业报告书架 | `GET /api/report/list?limit=…&offset=…`，保留服务端 total；不提交客户端身份 |
+| 打开岗位报告 | `GET /api/report/<report_id>`；仍执行本人及当前来源门禁 |
+| 报告追问 | 现有助手入口，携带经过服务端再次核验的精确报告引用；可见标签不显示 URI |
 
-```http
-GET /api/report/list?student_id=student_001&limit=20&offset=0
-```
+`report_id` 和 `snapshot_id` 是两种不同资源，只允许选一个。刷新、前进／后退从服务端重新读取。关闭浮层移除选择参数，保留当前书架页码；应用布局仅对本页面使用路径作为组件标识，避免查询参数变化重建整个书架。
 
-**Response**
+画像列表按创建时间及快照 ID 稳定倒序；岗位报告按创建时间及报告 ID 稳定倒序。新增画像分页参数与响应字段是兼容扩展，不新增业务表、迁移或生成 API。
 
-```json
-{
-  "success": true,
-  "count": 1,
-  "data": [
-    {
-      "report_id": "report_001",
-      "student_id": "student_001",
-      "job_portrait_id": "job_001",
-      "title": "职业生涯发展报告",
-      "status": "completed",
-      "created_at": "2026-07-14T11:33:58Z",
-      "elapsed_seconds": 38.5,
-      "html_path": null,
-      "pdf_path": null
-    }
-  ]
-}
-```
+## 阅读与内容边界
 
-**Fixture:** `cpa-xingtu/public/fixtures/report/list.student_001.json`  
-**Client 建议:** `api.report.list({ studentId })`  
-**注意:** 不是 `GET /api/reports?userId=`
+原阅读器仅提供外壳、焦点、关闭和动画；HTTP 内容通过独立插槽呈现，不执行旧演示分数、学校、年级、岗位要求或成长建议补值。
 
-#### 打开详情
+- 画像保留真实四维数值与 null；未知图形使用原花形组件的未知状态，而不是传入零。可展开原有证据和友好的缺失资料说明，内部字段码不直接展示。
+- 岗位报告复用真实详情组件，摘要／章节为正文；日期、部分完成状态、规则分及其边界分层呈现。不叠加另一层外卡片。
+- 打开时先清掉旧正文；读取失败、来源撤回或过期时，在原阅读浮层给出重试和返回书架，不回退旧内容。
+- 支持书本 Enter/Space 激活、阅读器 Escape、焦点圈定与关闭后归还焦点；减少动态效果时跳过抽书与阅读过渡，并停止吉祥物自动播放。
+- 真实画像的前端展示记录带可选 `portraitVersion=current|historical`，仅由服务端 `is_current` 映射。书脊使用“能力画像”短标题及独立、完整的“当前／历史”纸签，日期和原材质不变；不按日期／位置推断当前版。岗位报告及没有该字段的演示记录不加纸签。
+- 阅读器共用进入／关闭动画句柄，重复关闭只完成一次；卸载或切换记录撤销旧回调，同ID详情对象更新不重启入场。内部 `data-reader-state=opening|open|closing|closed` 只描述交互阶段，不是业务完成状态。指针回放须等待实际入场结束、坐标稳定并核对命中，不能对移动中的按钮使用旧坐标或靠再点一次通过。
 
-同 [career-report.md](career-report.md) 读详情样例。
+## 从画像找到下一步
 
-#### AI 成长分析（理想，backend-gap）
+此段复用原纸质阅读器与既有职途导航表单，不创建另一套编辑页。当前画像在对应维度下说明缺口：职业素养可另行补充本人自述；技能、专业类别、成长经历和缺页先核对原简历，确有遗漏时再修改原件并重新确认；学校背景需要可核验依据，不能靠自行填写解除，也不提供不存在的核验申请按钮。未知字段使用中性说明，不暴露内部字段码；四项职业素养缺口合并解释，避免重复边界说明挤压正文。
 
-**Request**
+- “补充沟通与协作经历”或“核对当前简历”点击时重新读取本人 `GET /api/profile/student/workbench`，只取其 `source_confirmation_task_id`，不使用历史快照任务作为编辑来源。
+- 页面交接使用 `from=my-reports`、`focus=resume|self-report` 及当前 `task_id`；`updated=1` 仅用于显示版本变化提示。这些都是定位提示，不是授权或版本凭据。目标页重新读取当前确认来源，发现查询任务已旧时改为当前资料；不自动提交、确认或上传。
+- 历史画像只说明**当时**的缺口，不能编辑它。当前快照就绪时“查看当前画像”；尚未形成快照时“查看当前分析进度”。核对中显示读取状态；读取失败显示“重新核对当前资料”，不冒充空结果。
+- 历史候选分也使用“当时证据下”，不在只读旧版中称为“当前证据”。重登验收须从书架当前纸签／完整标题选择并打开，不以直达已知快照 URL 代替找回。
+- 窄屏（680px及以下）在说明后、花形图前提供最多两个去重快捷入口：有对应缺口才出现“补充沟通与协作经历／核对当前简历”，补充优先，按钮至少44px。复用正文的同一来源核验和跳转，不自动上传；历史、仅学校核验或未识别缺口不制造编辑入口。桌面保留原构图。
+- 自述结果在画像中显示“本人自述、未经独立事实核验”，具体文字在依据中回看。保存不等于分析完成；返回时重新读取当前工作台及详情，不修改本地 `is_current`。
+- 账号变化、关闭阅读器、切换记录及卸载均使旧操作失效，旧响应不得跳转或恢复另一账号的资料。
 
-```json
-{
-  "userId": "student_001",
-  "reportIds": ["report_001"],
-  "snapshots": [],
-  "targetRoles": ["前端开发工程师"]
-}
-```
+聚焦回放沿用 `backend/tests/manual/report_bookshelf_browser_probe.py --live --portrait-supplement`；其步骤模块只承载本旅程，复用同一隔离与清理设施。常规书架／岗位报告回放命令不变；新增前端窄回归为 `node --test tools/test-portrait-followup.mjs`。
 
-**Response（对齐现有 `AIAnalysisResult`）**
+冷加载修复后的完整体验复验、5项内容／反馈修复及仍保留的可用性问题见[同一报告的本轮补记](../../../reports/2026-10-22-student-resume-builder-replay.md#冷加载修复后画像补充旅程的真实体验复验)。
 
-```json
-{
-  "generatedAt": "2026-07-18T00:00:00Z",
-  "summary": "整体稳步提升",
-  "growthScore": 72,
-  "scoreTooltip": "基于历史报告对比",
-  "topAbilities": ["工程实现", "学习速度"],
-  "topAbilityDetails": [],
-  "improvementAreas": ["系统设计"],
-  "improvementDetails": [],
-  "careerSuggestions": ["加强算法基础"],
-  "timeline": [],
-  "nextSteps": ["完成一门系统设计课"]
-}
-```
+上述三项收尾的红绿回归、真实12次关闭／退出、完整旅程及资源清理例外见[同一报告的收尾补记](../../../reports/2026-10-22-student-resume-builder-replay.md#画像回访三项收尾)。
 
-**BE 状态:** backend-gap — 继续用 `src/mock/aiAnalysis.ts` / `api/aiAnalysis.ts`
+## 吉祥物职责
 
-## 本地-only
+真实模式保留原小机器人与拖动外观，但只引导选择有效岗位报告进行解读；已打开岗位报告时可以直接进入其追问。没有报告时引导到岗位目录；目录读取失败先提示重试，不把服务故障说成没有报告。
 
-| 状态 / 行为 | 说明 |
-|-------------|------|
-| Tab portrait/career 过滤 | 前端对 snapshot.type |
-| 空列表占位 | UI |
+不调用尚未接通的成长分析，不生成成长分，不声称分析历史画像。HTTP 模式不提供删除、归档或导出；这些能力未接通时，不恢复假成功按钮。演示模式仍独立使用原演示行为，不作为真实业务验收。
 
-## Demo 说明
+## 验证与归属
 
-- `student_001`；后端 list 已有数据，页面仍 mock → 接线即 `backend-ready`
-- 冒烟：`report.list` / `report.detail` PASS
+前端逻辑回归：`node --test tools/test-report-bookshelves.mjs`；后端分页回归：`backend/tests/test_report_bookshelf_pagination.py`。
 
-## 后续实现备注
+真实浏览器入口为 `backend/tests/manual/report_bookshelf_browser_probe.py --live`，必须提供专用且预先为空的 `CPA_FRONTEND_REPLAY_REDIS_URL`。它复用现有登录、浏览器和清理方法，在隔离 schema 中准备合法的合成前置成果，以真实 Vue、HTTP、Cookie/CSRF 验证双书架、阅读、追问和重登；不声称验证了前置成果生成或模型质量。
 
-- `getReportList` 现返回 `[]`；替换为真实 client
-- `mockReportRecords` 迁到 fixtures 作 Pages 回退
+正常开发环境只回读已有账号的真实画像与真实空态，不塞入可评分画像或假岗位来填满书架。执行证据从[既有旅程指南](../../../guides/backend-user-journey-acceptance.md#第三条旅程学生求助后离开再回来)进入，页面修复记录沿用[2026-10-22 正常环境回放报告](../../../reports/2026-10-22-student-resume-builder-replay.md)。

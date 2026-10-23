@@ -12,34 +12,58 @@
 
 ## 页面职责
 
-本地编辑简历结构；可选粘贴/上传解析填充字段。
+HTTP 模式整理本人草稿，不代表正式简历。手工填写与智能填充共用表单，停止输入约一秒自动保存到本人账号；刷新、重登后重新从服务端读取。读取失败不能显示可编辑的空白表单。
+
+## 从诊断承接本人草稿
+
+保留用户认可的暖色卡片、模块导航、字段排版与固定底部操作。诊断来源通过新增 `POST /api/profile/student/resume-draft/from-report` 承接：请求只含 `report_id`、`improvement_id`、`expected_revision`、`mode`；身份从 Principal 取得，客户端不能提供初始化简历或来源上下文。
+
+- `preview` 不写入，返回转换内容、无法安全映射的项目、当前草稿版本及是否已有内容。服务端只从本人当前确认快照转换，非完整转换不允许创建／替换；原文件修改后重新上传是退路。
+- `start` 仅用于无既有内容；`continue` 只保存旁看建议，不套入预填表单；`replace` 必须经页面明确勾选确认，以预期版本替换。三者在事务中重新核对当前确认、报告摘要与草稿版本；冲突或旧建议拒绝且保留原稿。提交响应丢失先读回，不自动再次创建。
+- `0017_resume_draft_guidance` 为现有草稿增加可空 `guidance_json`。来源由服务端维护，既有 PUT 不接受它。读取和保存回执投影当前／过期／不可核对状态，旧行无指引仍正常编辑；不伪造来源关联。
+- 制作页自动定位到建议模块，指引可展开，包含原文、问题与占位提纲；不会自动采纳或标为解决。原稿与确认来源不一致时说明需要自行对照。刷新、重登从服务端恢复上下文；来源过期不删除个人编辑，也不把旧建议继续叫当前判断。
+- 保存只改变草稿。提交后仍须上传／解析、候选核对、本人确认和实际后续分析；新事实确认前原正式资料与报告不变，不要求分数上涨。项目编辑框沿用本页暖色变量与本地同款工具图标，避免浅色正文配旧深色工具栏。
+
+应用不自动迁移。2026-10-22 已按用户授权备份、恢复演练并将本机正常库升级至0017，5174已接通；原账号只读核对，新增合成账号完成编辑与回访。一次任务首读中断靠刷新同一任务恢复，仍列待定位，不视为无异常体验通过。隔离回放入口仍为 `student_first_resume_browser_probe.py --live --improve --visual-evidence verify`；本机正常维护与回访脚本是一次性执行记录，不能盲目重跑。证据归[原页面修复报告](../../../reports/2026-10-22-real-page-experience-repair.md#5174-正常入口备份迁移重载与真实回访)。
 
 ## 用户操作表
 
 | 操作 | UI 触发 | Method Path | Request 样例 | Response 样例 | Fixture | BE 状态 |
 |------|---------|-------------|--------------|---------------|---------|---------|
-| 粘贴解析 | 导入文本 | `POST /api/pipeline/ext/parse/text` | 见 career-navigation | 结构化字段 | `pipeline/parse.text.json` | backend-ready |
-| 上传解析 | 选文件 | `POST /api/pipeline/ext/parse/upload/resume` | multipart | text/blocks | `pipeline/parse.upload.json` | backend-ready |
-| 真 L0 入库 | 「深度解析」 | `POST /api/profile/student/upload` | multipart | task_id | — | heavy-excluded |
-| 保存简历 | 保存 | —（localStorage） | resume JSON | — | `pipeline/resume.local.json` | backend-gap |
+| 读回草稿 | 打开页面 | `GET /api/profile/student/resume-draft` | 不接受 owner 参数 | revision/form/theme/text | — | HTTP owner-scoped |
+| 自动保存 | 编辑后约一秒、提交或离页前 | `PUT /api/profile/student/resume-draft` | form/theme/expected_revision | 保存版本与时间 | — | MySQL CAS；冲突 409 |
+| 智能填充 | 粘贴本人经历→读取建议 | `POST /api/profile/student/resume-draft/parse-preview` | text，20–20000 字 | ready/partial、form、warnings | — | 只读模型提取 |
+| 提交核对 | 提交并核对简历 | 职途导航重新 GET 本人草稿，再由用户点击解析调用现有 `/api/profile/student/upload?async=1` | 保存版本；随后真实 TXT multipart | 原有 task_id/候选/确认 | — | 不跳过本人确认 |
 | 导出 PDF | 导出 | — | — | — | — | backend-gap |
 
-### parse/text
+## 草稿、建议与正式资料
 
-同 [career-navigation.md](career-navigation.md)；Client：`api.pipeline.parseText`。
+- `student_resume_draft` 每个 owner 一行，保存表单、粘贴原文 `sourceText`、主题色、revision 和 updated_at。使用前按现有 [MySQL 迁移流程](../../../runbooks/mysql-migrations.md)升级到代码 head（含 `0014_student_resume_draft`）；不在 API 中自动建表，也不自动升级共享开发库。
+- 保存失败保留输入并支持重试；多页面冲突不自动覆盖，先复制需保留内容，再明确确认重新载入。离页尝试保存，失败需选择继续填写或放弃未保存修改；浏览器关闭/刷新对未保存输入使用原生离开提醒。
+- 智能填充复用 canonical extractor，关闭实体关联。先呈现建议与原文，默认只补空白；替换对应字段/列表需再次确认。无法映射的日期、课程与工作经历提示人工核对；部分解析不冒充全文。期间编辑或切换账号后，迟到结果失效。
+- 不再调用旧 `parse/text`：该接口只写轻量原文到 `student_profile`，不返回页面曾期待的完整结构。旧路由兼容性未在本轮重写。
+- 提交先保存；职途导航使用 `new_resume=1&draft_revision=…` 重新读取本人保存版本，不能被旧工作台自动恢复覆盖。再点击“解析并核对简历”时复核版本与文本。网址版本不是授权凭据；失配须返回制作页核对。上传成功后由原任务追踪入口接管。
+- 正式画像、匹配、报告仍采用原有确认门禁。草稿和填充建议不修改正式简历、任务或分数。真实模式不从共享 localStorage 读取一次性交接文本。
 
-## 本地-only
+## 展示与边界
+
+填充建议的基本字段逐项排列、项目按块阅读，不把长描述和所有字段压成一段。应用后收起原文／建议，编辑区与实时预览恢复为主体；“查看原文与建议”只读回看本页上次应用内容，不会随编辑更新，也不会重放应用。再次读取建议需重新核对。此应用摘要不跨刷新持久化，不替代已保存草稿或本人确认。
+
+保留原分栏、模块与预览设计，使用周边页面的暖纸品牌色与可读对比；不恢复缺少持久化支持的头像或 PDF 操作。截图复验需同时检查字段标签、项目内容和窄屏按钮，不只判断背景颜色。
+
+窄屏提交与桌面使用同一“提交并核对简历”语义与加载／错误／提交中／冲突禁用条件；不是另一条“使用即确认”的通路。浅色主题下“清空”文字也须保持可读对比，不沿用旧深色主题的浅蓝标签。
 
 | 状态 / 行为 | 说明 |
 |-------------|------|
 | 表单分节编辑 | 前端 |
-| `seedResumeStore` | `resumeSeed.ts` → localStorage |
-| 打印样式 | CSS |
+| 富文本描述 | 沿用现有 Tiptap schema 投影后预览；不直接渲染持久或模型输入的任意 HTML |
+| 头像、PDF 导出 | 本轮不接入头像持久化；HTTP 模式隐藏头像上传，PDF 导出仍禁用 |
 
 ## Demo 说明
 
-- 预置钟梓珉简历 seed；解析用 fixture，不跑 L0
+- Mock 与已有对话成果物分支保持独立；不作为上述账号草稿与真实模型验收。历史说明及 fixture 不证明真实 HTTP 能力。
 
-## 后续实现备注
+## 验证入口
 
-- 主路径保持本地编辑 + 轻量 parse；上传入库二期
+- 后端 `backend/tests/test_resume_draft.py`；前端 `node --test tools/test-resume-draft.mjs`。
+- 真实浏览器入口与执行证据统一从[后端用户旅程指南](../../../guides/backend-user-journey-acceptance.md#真实前端没有现成简历从整理经历到确认分析)接续，不在本页复制测试计数。

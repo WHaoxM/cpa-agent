@@ -93,4 +93,14 @@
 - **原问题：**L2 `partial` 虽可在工作台阅读，却只有任务 ID、`portrait_id=null`；同一学生重新生成或确认新简历后，旧结果无法作为独立成果只读回看。把旧可评分表的非空/默认零字段直接用作历史会把未知伪装成零分。
 - **当前实现：**Alembic `0007_student_portrait_snapshot` 增加按源 L2 任务唯一的快照表。L2 部分/完整结果与任务终态在同一事务写入；完整结果还与旧可评分行同事务提交。稳定 `snapshot_id`、owner、确认任务、自述修订、目标岗位、完整画像 JSON 和 SHA-256 内容摘要一起保留；只追加不覆盖旧快照。工作台对新快照校验 owner、任务状态、哈希和任务结果后返回 `snapshot_id`，未知维度仍为 `null`。当前版本依据现有确认版本、最新 L2 和学校审核门禁选出；旧可评分表和 L3/L4 不借历史快照放宽条件。
 - **历史读面：**`GET /api/profile/student/portrait-snapshots` 列最近 20 份当前账号的无目标岗位画像，`GET /.../<snapshot_id>` 回读指定版本。新确认后旧快照仍可按 owner 读取，但 `is_current=false`、`scoring_eligible=false`；篡改内容摘要或任务结果返回 409，跨账号返回 404。正式 `cpa-xingtu` 页面提供可展开的只读版本列表，不把旧版替换为当前画像。已有旧 L2 没有新快照时仍按旧路径读当前，明确 `snapshot_id=null`，**不**伪造迁移成功。
+
 - **真实验收：**`CPA_TEST_PIPELINE_MYSQL=1` 的工作台 HTTP/MySQL 用例经两次 L2、第二份简历确认与新版 L2 验证 3 份快照、旧版只读、跨账号隔离及哈希篡改拒读，**1 passed**。`CPA_TEST_LIVE_MYSQL=1` 的临时数据库 Alembic 空表/旧显式安装表升级与重复运行 **4 passed**。完整后端套件为 **1142 passed、108 skipped、7 warnings**（未启用 opt-in 真实 MySQL 用例）；默认 Flask 5001/Vite 5174 + 真 worker/Beat/Redis/MySQL/Neo4j + 模型与文字 PDF 的 `--pdf --browser` 再次通过：确认后后台画像 `ready_with_unknowns`、报告 `ready`、新快照与任务 ID/哈希一致，页面展开并查看版本；截图 `output/career-nav-browser-check/l0-text-pdf-history.png`。前端 type-check/build 通过。**未完成：**有证据的旧评分画像迁移、诊断报告历史、并发资料变更与 worker 崩溃的全矩阵测试；扫描 PDF OCR 不由这次文字 PDF 回放证明。
+
+## 10. 首次使用与回访入口约定
+
+- HTTP 模式从菜单进入职途导航、没有 `task_id` 时，先读取本人工作台：优先恢复 `run.task_id`，无最近导入时才使用当前确认任务；后续仍由候选/任务接口核验 owner 和版本。不使用 localStorage 中的账号、画像或旧网址替代服务端真值。离开页面或身份变化后，迟到的入口读取不能再更新该页面。
+- 读取期间暂不展示空白上传表单；读取失败显示重试，不将失败冒充“没有简历”。“重新上传”明确使用前端 `new_resume=1` 入口模式，刷新后仍保留新上传表单，不立即恢复旧任务；选新文件本身不删除旧确认或生成新任务。该 query 不提供任何权限，成功上传后移除。
+- `candidate_profile.source_field_issues` 是可选的服务端抽取警告，不是学生事实。年级没有原文明确写法时不进入候选，不按入学/毕业年份推算；若模型产生了该字段则记录警告，页面单独说明，不能把内部 reason 展示为正文。本轮只补这一已复现字段，不声称所有字段均已做语义事实核验，也不改写旧确认资料。
+- 新报告使用友好的事实名称组成正文和方向依据，内部字段名/抽取警告不进入事实章节；已有持久报告不在读取时悄悄改写。
+- `entity_resolved` 检查点完成只表示该步骤执行结束。`facts.link_status=unresolved/partial` 时，过程组件显示“部分可用”和名称尚未核验的说明；已生成关联候选也不等于已核验技能或完整评分。检查点百分比不替代画像/报告各自的状态。
+- 回放入口、日期化证据及环境边界由[用户旅程指南](../guides/backend-user-journey-acceptance.md)维护，本规格不维护易过期的测试计数。

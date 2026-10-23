@@ -1,6 +1,6 @@
 # 院校背景上下文认知 Skill：有界设计与实现交接
 
-**状态：**产品/能力设计，尚未接入运行链路；不是已上线功能说明
+**状态：**产品/能力设计；截至 2026-10-18，历史 211 正向名单已部分接入被选中的同步 Agent 步骤，但未完成真实模型/页面与持久 run 验收，**不是已上线功能说明**。运行证据见 [院校事实源切片](../guides/school-fact-source-slice.md)。
 **日期：**2026-10-14
 **上游产品目标：**[学生私人工作台体验任务](student-workbench-experience.md)第 5、6 节
 **本任务边界：**只设计 Agent 可调用的院校背景解读能力；不修改 L0、D1 评分、管理员审核、前端或 Agent 拓扑。
@@ -68,7 +68,7 @@ knowledge_version: 本次学校知识快照版本
 
 ## 4. 知识维护和接入路径（待实现会话核实）
 
-**现有现场，不应误称已接入：**
+**设计时现场（2026-10-14），后续变化应以运行证据为准：**
 
 - `backend/app/utils/skill_system.py` 有 Markdown Skill 发现、上下文生成和显式 executor 注册结构；仓库内搜索未见其被当前 Agent 主链调用。单放一个 `SKILL.md` 不会让学生页面获得能力。
 - 主 Agent 实际工具经 `backend/app/services/langgraph_agent.py::_build_langchain_tools`、`agent_runtime/tool_factory.py` 与 `agent_runtime/tool_policy.py` 暴露；现有 profile/qa 提示词在 `backend/config/prompts/agent.profile.system/base.md`、`agent.qa.system/base.md`。如以工具形态接入，需走同一权限、工具事件与双通道输出，不直接往提示词塞一整份学校名单。

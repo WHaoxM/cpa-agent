@@ -163,7 +163,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mysql neo4j
 | 本机后端基础检查 | 从本仓 `.env.example` 复制 `.env`；用 Python 3.10 安装 `backend/requirements.txt`；启动 MySQL/Neo4j/Redis，执行 Alembic 迁移，然后在 `backend/` 运行 `python -B run.py` | `http://127.0.0.1:5001/health` 与路由可用；不等于异步/模型/真实业务成功 |
 | 真实前后端联调 | 在上述基础上设 `CPA_DEMO_MODE=false`、强 `SECRET_KEY`、LLM 凭据；按 [DEPLOY.md](DEPLOY.md) 启动三队列 worker 和 Beat；前端用 `npm run dev:backend` | 通过注册/登录后按 owner 核验简历、任务和最终成果；未发布可信岗位时无法复现正式匹配 |
 
-**可复制的环境变量、命令顺序、验证点与生产层限制统一见 [DEPLOY.md](DEPLOY.md)。** 新克隆时模板 `.env.example` 默认为 demo，当前工作机的私有 `.env` 为 strict；两者不能混用推断。前端是独立仓库，不在本仓的 Git 跟踪范围内。开发 Compose 只负责数据库；生产候选层已含显式迁移、HTTP、worker、Beat，但缺 HTTPS、备份与完整业务验收，不是一键上线方案。
+**本机复现命令与生产阻断项见 [DEPLOY.md](DEPLOY.md)；镜像改造路径见 [生产级镜像改造计划](docs/specs/production-image-hardening.md)。** 新克隆时模板 `.env.example` 默认为 demo，当前工作机的私有 `.env` 为 strict；两者不能混用推断。前端是独立仓库，不在本仓的 Git 跟踪范围内。开发 Compose 只负责数据库。单机生产覆盖层已有显式迁移、Gunicorn HTTP、worker、Beat 与冷卷快照/新项目恢复工具，且默认不发布宿主机应用端口；但尚缺已发布的固定 digest 镜像、依赖锁定、HTTPS 代理、真实 Docker 恢复演练与完整业务验收，不能直接上线。
 
 ## 🏗️ 架构概览
 

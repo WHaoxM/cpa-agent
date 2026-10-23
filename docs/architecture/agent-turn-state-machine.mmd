@@ -1,0 +1,101 @@
+---
+config:
+  theme: base
+  themeVariables:
+    fontFamily: "Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif"
+    fontSize: "15px"
+    background: "#f5f7fb"
+    primaryColor: "#ffffff"
+    primaryTextColor: "#1f2937"
+    primaryBorderColor: "#cbd5e1"
+    lineColor: "#52657a"
+  flowchart:
+    curve: linear
+    htmlLabels: false
+    nodeSpacing: 12
+    rankSpacing: 12
+    padding: 8
+    wrappingWidth: 240
+    minNodeWidth: 135
+---
+%% 绘图基线：主仓 HEAD 590f055b5307f3704afab32df754aa28e14326e1（dirty）；前端 HEAD da7a3fa81cdf28f2ba1ab1d1396a37944e28ea0d（dirty）。
+flowchart LR
+  REQUEST["/api/agent/chat · /chat/stream<br/>Principal / owner 校验<br/>可选 Idempotency-Key · 同会话租约<br/>写 user STM · 组装上下文"]
+  MODE{"interaction_mode"}
+  PROJECT["derive_turn_outcome<br/>completed · needs_input · running(run_id)<br/>partial · failed<br/>completion_scope = turn<br/>resume_state = not_available"]
+  RETURN["本轮结算：assistant + context 写 Redis SessionState<br/>返回 HTTP / SSE"]
+  REQUEST --> MODE
+  PROJECT --> RETURN
+
+  subgraph ASK_LANE["Ask · 只读回答"]
+    direction TB
+    ASK["回答当前问题<br/>附件目标可走 attachment_read"]
+    ASK_RESULT["原始回合结果"]
+    ASK --> ASK_RESULT
+  end
+  MODE -->|Ask| ASK
+  ASK_RESULT --> PROJECT
+
+  subgraph AGENT_LANE["Agent · 单子 Agent 路由"]
+    direction TB
+    ROUTER{"Agent Router"}
+    AGENT_CLARIFY["clarify"]
+    AGENT_TASK["TaskPacket + gate → 单子 Agent<br/>临时 ScopedInvoke；模型 ↔ ToolNode ≤ 6 轮<br/>PreToolUse；student_id 服务端绑定"]
+    AGENT_RESULT{"执行结果"}
+    AGENT_VERIFY["业务写入时：verify_plan_updates<br/>owner-bound MySQL 回读核验<br/>task / result 由 MySQL 独立权威管理；通过后 ACL key 写回"]
+    ROUTER -->|澄清| AGENT_CLARIFY
+    ROUTER -->|执行| AGENT_TASK --> AGENT_RESULT
+    AGENT_RESULT -->|只读 / 完整回答| AGENT_RESULT_OK["原始回合结果"]
+    AGENT_RESULT -->|业务写入| AGENT_VERIFY
+    AGENT_VERIFY -->|证据通过| AGENT_RESULT_OK
+    AGENT_RESULT -->|工具失败 / 预算 / 轮数上限| AGENT_INCOMPLETE["原始不完整结果"]
+    AGENT_VERIFY -->|未验证| AGENT_INCOMPLETE
+    AGENT_TASK -->|gate 阻断 / 子任务不完整| AGENT_INCOMPLETE
+  end
+  MODE -->|Agent| ROUTER
+  AGENT_CLARIFY --> PROJECT
+  AGENT_RESULT_OK --> PROJECT
+  AGENT_INCOMPLETE --> PROJECT
+
+  subgraph EXPERTS_LANE["Experts · Lead 白名单计划"]
+    direction TB
+    LEAD{"Experts Lead"}
+    EXPLAIN["explain → 原始回合结果"]
+    EXPERT_CLARIFY["clarify → 原始回合结果"]
+    STEP["逐步执行：gate → 临时子 Agent<br/>模型 ↔ ToolNode ≤ 6 轮<br/>PreToolUse；student_id 服务端绑定"]
+    STEP_VERIFY["verify_plan_updates · owner-bound MySQL 回读核验<br/>task / result 由 MySQL 独立权威管理<br/>仅通过 ACL key 写回"]
+    MORE{"还有下一步？"}
+    PLAN_DONE["计划完成 → 原始回合结果"]
+    PLAN_INCOMPLETE["step 失败 / 不可验证<br/>停止后续；保留已提交前步"]
+    LEAD -->|解释| EXPLAIN
+    LEAD -->|澄清| EXPERT_CLARIFY
+    LEAD -->|计划| STEP
+    STEP -->|子任务完整| STEP_VERIFY
+    STEP -->|gate / 工具失败 / 预算 / 轮数上限| PLAN_INCOMPLETE
+    STEP_VERIFY -->|证据通过| MORE
+    STEP_VERIFY -->|未验证| PLAN_INCOMPLETE
+    MORE -->|是：继续下一步| STEP
+    MORE -->|否：全部完成| PLAN_DONE
+  end
+  MODE -->|Experts| LEAD
+  EXPLAIN --> PROJECT
+  EXPERT_CLARIFY --> PROJECT
+  PLAN_DONE --> PROJECT
+  PLAN_INCOMPLETE --> PROJECT
+
+  classDef entry fill:#eaf2ff,stroke:#6f93c7,color:#1e3a5f,stroke-width:1.5px;
+  classDef state fill:#edf2ff,stroke:#7c8fd1,color:#273766,stroke-width:1.5px;
+  classDef lane fill:#f8fafc,stroke:#d8e0eb,color:#263445,stroke-width:1px;
+  classDef success fill:#eef7f5,stroke:#65a995,color:#173d35,stroke-width:1.5px;
+  classDef wait fill:#fffaf0,stroke:#c79538,color:#664b1a,stroke-width:1.5px;
+  classDef fail fill:#fff1f0,stroke:#cf7770,color:#672f2a,stroke-width:1.5px;
+  classDef loop fill:#f3efff,stroke:#9178c8,color:#3e315f,stroke-width:1.5px;
+  class REQUEST,RETURN entry;
+  class MODE,ROUTER,AGENT_RESULT,LEAD,MORE state;
+  class ASK,ASK_RESULT,AGENT_TASK,AGENT_VERIFY,AGENT_RESULT_OK,STEP,STEP_VERIFY,EXPLAIN,PLAN_DONE lane;
+  class PROJECT success;
+  class AGENT_CLARIFY,EXPERT_CLARIFY wait;
+  class AGENT_INCOMPLETE,PLAN_INCOMPLETE fail;
+  style ASK_LANE fill:#f8fbfa,stroke:#d5e7e2,stroke-width:1px;
+  style AGENT_LANE fill:#f7f8ff,stroke:#d7dcf0,stroke-width:1px;
+  style EXPERTS_LANE fill:#fffbf4,stroke:#f0dfc2,stroke-width:1px;

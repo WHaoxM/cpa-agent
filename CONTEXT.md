@@ -26,6 +26,10 @@ _Avoid_: 把客户端 role、用户名或 `X-Dev-Student-Id` 当作正式管理�
 已存在 loader 或示例文件，但暂不作为下一阶段主线接入真实业务链路的 workspace 能力，如 seeds 追加和报告 branding。
 _Avoid_: 为未验证的多机构、多租户或演示运营需求继续扩展 workspace 目录结构
 
+**Skill Self-Reflection（技能自述式自评）**:
+学生按服务端版本化题目主动选择接触/实践情况，保存当时方向、题目、选项与回答快照；“暂时无法判断”是未知，不是零分。它不等于考试、岗位标准、能力认证或已确认简历证据，不自动改变画像、匹配或课程进度；与 Agent 的 Memory Reflection 无关。
+_Avoid_: 用本地题目阈值给出竞争力/达标结论，或用当前题包重建旧答卷
+
 **Business Rule（业务规则）**:
 可计算的领域约束与参数，如四维权重、匹配阈值、竞争力档位、R-05~R-08 规则参数。
 _Avoid_: 把 Prompt 话术、API 密钥也叫作「规则」
@@ -67,6 +71,14 @@ _Avoid_: 用文件扩展名或关键词临时决定加载哪组系统提示词
 **Operational Data（运营数据）**:
 按部署环境变化的业务内容增量，如冷启动岗位包、技能增补、图谱补充、报告机构 branding。
 _Avoid_: 用户运行时数据（简历、会话）、冻结 Schema DDL；在运行面未接线前声称 workspace operational data 已完成
+
+**Career Pathway Reference（职业方向参考链）**:
+版本化公共职业方向事实、独立参考薪资、学习技能与课程关联。MySQL 保存业务身份、原文来源和不可变版本；Neo4j/Milvus 是按同一摘要派生、可重建的公共关系/检索投影。首期后端开发链复用现有账号、课程章节和技能词表，不改写个人成果；岗位事实仅供探索，不自动获得正式岗位发布或评分资格。
+_Avoid_: 三库各自生成业务真值、将旧图展示 ID 当课程 ID、用检索相似度作为人岗分数
+
+**Salary Reference Estimate（参考薪资估算）**:
+允许在缺少完整岗位统计样本时给出职业/城市/级别适用的粗略区间，显式保存依据、币种/周期、观察与估算日期、方法版本和不确定性；与招聘方原文报价、样本统计结果分开。启发式系数不是实测分位数，不等于当年实时行情。
+_Avoid_: 用估算填充招聘方薪资、真实平均值/箱线分布或需求量；因缺少完整统计就禁止任何明确标注的参考估算
 
 **Runtime Data（运行时数据）**:
 用户产生的、存在 DB / 上传目录中的数据，随使用增长，不属于配置。
@@ -218,8 +230,11 @@ _Avoid_: 用一个全局 max_chars 截断整段 prompt；附件正文被 head-sl
 _Avoid_: 把记忆全文注入每个子 Agent、或用 SessionManager.context 冒充跨会话 LTM
 
 **STM 单通道注入**:
-进模型的对话短期记忆只走一份：滚动摘要 + 最近 K=8 轮消息；禁止 history 与 structured_context.recent_messages 与 checkpoint 聊天记录三重叠加。
+每个模型调用的会话短期记忆只走一个显式通道：Ask 最多最近 K=8 轮消息；Agent / Experts Lead 最多最近 4 条角色标记历史消息，并可配短摘要。禁止再叠加 structured_context.recent_messages 或 checkpoint 聊天记录。
 _Avoid_: checkpointer 全量回放聊天 + Session 历史再注入一遍
+
+Agent / Experts 的 Lead 不接收完整聊天记录；最近历史在独立 history 槽内注入，并按角色序列化。历史/摘要仅作意图续接与纠正线索，不是事实、业务状态或授权；历史助手的完成/取消声明必须从服务端回读核验。超出字符预算时显式裁剪并将本轮标为上下文不完整；计划子 Agent 仍不接收 STM。
+_Avoid_: 为修复近期历史缺失而将完整会话塞入系统提示或 TaskPacket；把旧助手声明当成果真值
 
 **Conversation Thread（对话线程）**:
 对齐 Claude / Qoder 的多会话：每个线程绑定独立 `session_id`（STM：history / blackboard / summary）；前端消息胶带按线程隔离，新建对话必须 `create_session` 而非复用旧 id。学生级 Memory Store 仍是跨会话 LTM，不属于聊天 STM。
@@ -240,8 +255,8 @@ _Avoid_: 把 Work Manual 整包塞进 Ask system prompt；靠聊天里「过滤�
 | 角色 | 可进模型 | 坚决不进模型 |
 |------|----------|--------------|
 | Ask | 产品契约、本会话摘要/进度卡、最近 K=8 轮 + 当前轮；显式 `use_memory=true` 才挂 LTM 摘要；附件正文只经 Document Access 完整性规则进入 user 通道 | Work Manual、MEMORY 默认、重复 recent_messages、电话/邮箱/`*_json`、把附件 excerpt 当全文 |
-| Agent 路由器 | 已填充进度卡、短摘要、当前轮、可选记忆摘要（≤800字）、附件挂载摘要 | 空黑板枚举、完整历史、约束全文、附件正文、子 Agent 工具表全文 |
-| Experts Lead | 已填充进度卡、短摘要、当前轮、可选记忆摘要（≤800字） | 完整历史、附件正文、LTM 下发到计划子 Agent |
+| Agent 路由器 | 已填充进度卡、短摘要、最多最近 4 条角色标记历史、当前轮、可选记忆摘要（≤800字）、附件挂载摘要 | 空黑板枚举、完整历史、约束全文、附件正文、子 Agent 工具表全文 |
+| Experts Lead | 已填充进度卡、短摘要、最多最近 4 条角色标记历史、当前轮、可选记忆摘要（≤800字） | 完整历史、附件正文、LTM 下发到计划子 Agent |
 | 子 Agent | 角色提示 + system 内瘦 TaskPacket + **投影后**黑板指针切片 + user 内任务正文 + 工具 model_view | USER/MEMORY、完整对话史、`constraints.user.text`、原始 student_id、未声明 key、长正文复制进 TaskPacket JSON |
 _Avoid_: 把 Supervisor 前缀原样灌进子 Agent；`attachment_read` 无上限倾倒简历；Ask+附件仍加载 `agent.manual`
 
@@ -556,6 +571,8 @@ _Avoid_: 把构造测试数据写成线上真实运营数据，或写出无法�
   - UML顺序图不按图片文件名决定位置，而按论文论证作用决定：第三章体现大学生分阶段使用场景，第四章体现GraphRAG、多Agent和工具调用等核心系统交互。
 
 ## Flagged ambiguities
+
+- **职业方向探索 / 尝试轮次（2026-10-22）**：探索保存本人比较和意图；每轮固定所选方向、验证问题、时间及当时资料，关联原有行动计划和练习。目录结构只作未核验线索，不是招聘或适合度。复盘不等于能力认证；继续、调整、换方向必须由学生明确提交，模型不能代选。资料或成果变化不重写旧轮次，不自动修改简历、画像或匹配。页面及接口约定见[职业分析](docs/frontend/cpa-xingtu/pages/career-analysis.md)。
 
 - 「配置」一词有时指 `.env` 密钥、有时指业务 YAML —  resolved: 密钥仅 `.env`；业务参数走 Repo Config + Workspace。
 - 「真实联调」可能被误解为生产部署或全量外部服务验收 — resolved: 当前指 **Real Service Integration**，即本机后端 + dev Docker 数据库依赖 + 真实 HTTP 验证黄金链路。

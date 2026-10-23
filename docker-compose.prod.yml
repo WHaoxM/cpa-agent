@@ -1,8 +1,13 @@
-name: cpa-agent-prod
+name: "${CPA_COMPOSE_PROJECT_NAME:?Set a unique production Compose project name}"
 
 # One image and the same runtime configuration for HTTP, delivery, recovery,
 # and the operator-triggered migration. Migrations are never automatic on up.
-x-backend-image: &backend-image "cpa-agent-backend:${CPA_IMAGE_TAG:-local}"
+x-backend-image: &backend-image "${CPA_BACKEND_IMAGE:?Set the verified backend image digest}"
+x-bounded-logging: &bounded-logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "5"
 x-backend-environment: &backend-environment
   TZ: Asia/Shanghai
   SECRET_KEY: "${SECRET_KEY:?SECRET_KEY is required}"
@@ -21,11 +26,12 @@ x-backend-environment: &backend-environment
   NEO4J_PASSWORD: "${NEO4J_PASSWORD:?NEO4J_PASSWORD is required}"
   MYSQL_HOST: "mysql"
   MYSQL_PORT: "3306"
-  MYSQL_USER: "root"
-  MYSQL_PASSWORD: "${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}"
+  MYSQL_USER: "${MYSQL_APP_USER:-cpa_app}"
+  MYSQL_PASSWORD: "${MYSQL_APP_PASSWORD:?MYSQL_APP_PASSWORD is required}"
   MYSQL_DATABASE: "${MYSQL_DATABASE:-cpa_agent}"
   REDIS_URL: "redis://redis:6379/0"
   CPA_MEDIA_BROKER_URL: "redis://redis:6379/0"
+  CPA_AGENT_QUEUE: "${CPA_AGENT_QUEUE:-cpa.agent}"
   CPA_SESSION_TURN_LOCK_MODE: "redis_required"
   CPA_MILVUS_URI: "/app/milvus_data/milvus.db"
   EMBEDDING_MODEL: "${EMBEDDING_MODEL:-BAAI/bge-m3}"
@@ -50,17 +56,57 @@ x-backend-depends: &backend-depends
     condition: service_healthy
 
 services:
+  mysql:
+    image: "${CPA_MYSQL_IMAGE:?Set the verified MySQL image digest}"
+    # The official MySQL entrypoint creates a user scoped to MYSQL_DATABASE
+    # only on first initialization of a new volume. Existing volumes need an
+    # explicit DBA-managed user migration before this overlay can be used.
+    environment:
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}"
+      MYSQL_USER: "${MYSQL_APP_USER:-cpa_app}"
+      MYSQL_PASSWORD: "${MYSQL_APP_PASSWORD:?MYSQL_APP_PASSWORD is required}"
+    mem_limit: "${CPA_MYSQL_MEM_LIMIT:?Size MySQL memory for this host}"
+    cpus: "${CPA_MYSQL_CPUS:?Size MySQL CPU for this host}"
+    logging: *bounded-logging
+
+  neo4j:
+    image: "${CPA_NEO4J_IMAGE:?Set the verified Neo4j image digest}"
+    environment:
+      NEO4J_AUTH: "${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:?NEO4J_PASSWORD is required}"
+    mem_limit: "${CPA_NEO4J_MEM_LIMIT:?Size Neo4j memory for this host}"
+    cpus: "${CPA_NEO4J_CPUS:?Size Neo4j CPU for this host}"
+    logging: *bounded-logging
+
+  redis:
+    image: "${CPA_REDIS_IMAGE:?Set the verified Redis image digest}"
+    mem_limit: "${CPA_REDIS_MEM_LIMIT:?Size Redis memory for this host}"
+    cpus: "${CPA_REDIS_CPUS:?Size Redis CPU for this host}"
+    logging: *bounded-logging
+
   backend:
     image: *backend-image
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    command:
+      - gunicorn
+      - --bind=0.0.0.0:5001
+      - --workers=${WEB_CONCURRENCY:-2}
+      - --worker-class=gthread
+      - --threads=${GUNICORN_THREADS:-4}
+      - --timeout=${GUNICORN_TIMEOUT_SECONDS:-180}
+      - --graceful-timeout=60
+      - --access-logfile=-
+      - --error-logfile=-
+      - production_wsgi:create_production_app()
     environment: *backend-environment
-    ports:
-      - "127.0.0.1:${BACKEND_PORT:-5001}:5001"
+    # The release layer never publishes an application port. A containerized
+    # HTTPS proxy joins this project's network and reaches backend:5001.
+    expose:
+      - "5001"
     volumes: *backend-volumes
     depends_on: *backend-depends
     restart: unless-stopped
+    mem_limit: "${CPA_BACKEND_MEM_LIMIT:?Size HTTP memory for this host}"
+    cpus: "${CPA_BACKEND_CPUS:?Size HTTP CPU for this host}"
+    logging: *bounded-logging
 
   worker:
     image: *backend-image
@@ -74,7 +120,7 @@ services:
       - worker
       - --pool=solo
       - --concurrency=1
-      - --queues=cpa.pipeline,cpa.media,cpa.graph
+      - --queues=cpa.pipeline,cpa.media,cpa.graph,${CPA_AGENT_QUEUE:-cpa.agent}
       - --loglevel=INFO
     environment: *backend-environment
     # The image's HTTP /health check is only valid for the Flask service.
@@ -84,6 +130,9 @@ services:
     depends_on: *backend-depends
     stop_grace_period: 10m
     restart: unless-stopped
+    mem_limit: "${CPA_WORKER_MEM_LIMIT:?Size worker memory for this host}"
+    cpus: "${CPA_WORKER_CPUS:?Size worker CPU for this host}"
+    logging: *bounded-logging
 
   beat:
     image: *backend-image
@@ -103,6 +152,9 @@ services:
     volumes: *backend-volumes
     depends_on: *backend-depends
     restart: unless-stopped
+    mem_limit: "${CPA_BEAT_MEM_LIMIT:?Size Beat memory for this host}"
+    cpus: "${CPA_BEAT_CPUS:?Size Beat CPU for this host}"
+    logging: *bounded-logging
 
   # Explicit operator action after backup/stop-write; never an up dependency.
   migrate:
@@ -117,13 +169,19 @@ services:
       - alembic.ini
       - upgrade
       - head
-    environment: *backend-environment
+    environment:
+      <<: *backend-environment
+      MYSQL_USER: root
+      MYSQL_PASSWORD: "${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}"
     healthcheck:
       disable: true
     depends_on:
       mysql:
         condition: service_healthy
     restart: "no"
+    mem_limit: "${CPA_MIGRATE_MEM_LIMIT:?Size migration memory for this host}"
+    cpus: "${CPA_MIGRATE_CPUS:?Size migration CPU for this host}"
+    logging: *bounded-logging
 
 volumes:
   backend_uploads:

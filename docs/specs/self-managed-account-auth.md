@@ -27,6 +27,15 @@
 - `opencode` 本机快照 `388406238bd5ca15564a762840a2362c3a45bd9c` 的 `packages/opencode/src/permission/index.ts`、Codex 本机快照 `a06545b311fe01e51ce855c7aa5d8da21e9e7aaf`：二者是 Agent 工具权限/执行策略，不适合替代 Flask 人类账号与 cookie 会话。
 - 当前 `mkg` 安装 Flask-Login 0.6.3、Flask-Session 0.8.0、Flask-WTF 1.3.0、Flask-Limiter 4.1.1、argon2-cffi 25.1.0：复用 `flask_login.logout_user`、`argon2.PasswordHasher.verify/hash`、Flask-WTF 的 cookie 写 CSRF 和 Flask-Limiter 的登录/改密限速；SQLAlchemy 2 的 `Engine.begin()` 在同一事务中锁账号、校验旧密码及 `auth_epoch`、更新哈希并回读触发器产生的新代数。只在项目薄适配层处理 `user_account`、`Principal` 和业务 role/status，不重造会话/加密状态机。`opencode` 快照 `388406238bd5ca15564a762840a2362c3a45bd9c` 的 `packages/opencode/src/permission/index.ts`、Codex 快照 `a06545b311fe01e51ce855c7aa5d8da21e9e7aaf` 属 Agent 工具授权，不承载人类账号改密；没有复用其权限流。参考：[Flask-Login](https://flask-login.readthedocs.io/en/latest/)、[Flask-Session Redis 配置](https://flask-session.readthedocs.io/en/latest/config.html)、[Flask-WTF CSRF](https://flask-wtf.readthedocs.io/en/latest/csrf/)、[Flask-Limiter 配置](https://flask-limiter.readthedocs.io/en/stable/configuration.html)、[argon2-cffi](https://argon2-cffi.readthedocs.io/en/stable/api.html)。
 
+## 退出与异步身份刷新边界
+
+- 普通退出只撤销当前 Redis SID，不递增账号 `auth_epoch`，不登出其他设备。保留现有接口、CSRF、角色重载与限流；无新增 MySQL 迁移或会话数据字段。
+- 复用本机 Flask-Session **0.8.0** 的 `RedisSessionInterface`、`RedisSession` 与原 serializer；项目 `account_session` 薄适配只记录本请求是否从存储载入 SID，并将该 SID 的保存改成原子 `SET ... XX`。已被退出删除或已过期的 SID 不得由迟到请求重新创建；保存被拒绝时既不设置也不删除浏览器 Cookie，避免覆盖后续登录。新匿名会话、登录 SID 轮换、编码和现有 12 小时过期规则仍走原库。Redis 真故障不作为“已撤销保存”吞掉，不伪报退出成功。
+- HTTP 账号响应统一 `Cache-Control: no-store`，前端认证请求也使用 `cache: 'no-store'`。否则本机 Chrome 中新的同 URL 身份查询会等待尚未结束的旧查询，妨碍退出后立即换账号。
+- HTTP 前端的登录/退出开启新身份代次、使原身份查询失效；迟到成功、失败以及查询结束回调均不得覆盖新身份、清掉新查询或更新其缓存时间。退出成功后才清除本地持久化身份；失败仍保留原身份并明确提示。Mock 登录不进入这套 HTTP 状态约定。
+- 兼容既有 Redis 会话载荷，不要求清库或全员改密。应用此修复须更新并重启全部处理账号 HTTP 的 Flask 进程；混用仍会无条件 SET 的旧进程不在撤销保证内。已在退出前通过授权的业务请求可能完成，本修复不追溯回滚其写入。
+- 真实 MySQL/Redis/HTTP 的确定性重现及真实 Vue 账号切换入口见[用户旅程报告中的退出修复部分](../reports/2026-10-21-job-source-to-student-catalog-replay.md#退出与账号切换修复复验)。该报告记录服务/替身边界，不代表全站客户端缓存或生产多节点已审计。
+
 ## 已执行验证（本机 Docker）
 
 - `CPA_TEST_LIVE_MYSQL=1`，mkg Python、D 盘 TEMP：`pytest backend/tests/test_account_auth_http_mysql.py -q` → **4 passed**，包括一个真 socket HTTP 往返与真实 MySQL/Redis，以及开发头不可旁路负测。

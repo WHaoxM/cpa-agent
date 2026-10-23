@@ -1,0 +1,78 @@
+---
+config:
+  theme: base
+  themeVariables:
+    fontFamily: "Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif"
+    fontSize: "15px"
+    background: "#f5f7fb"
+    primaryColor: "#ffffff"
+    primaryTextColor: "#1f2937"
+    primaryBorderColor: "#cbd5e1"
+    lineColor: "#52657a"
+  flowchart:
+    curve: linear
+    htmlLabels: false
+    nodeSpacing: 10
+    rankSpacing: 8
+    padding: 6
+    wrappingWidth: 180
+    minNodeWidth: 100
+---
+%% 绘制基线：主仓 HEAD 590f055b5307f3704afab32df754aa28e14326e1（dirty）；前端 HEAD da7a3fa81cdf28f2ba1ab1d1396a37944e28ea0d（dirty）。
+flowchart LR
+  subgraph FE["01 · 独立前端 · cpa-xingtu"]
+    direction TB
+    Mock["Mock data / 本地 fixture<br/>生产默认 · 不连后端"]
+    Http["HTTP 联调 · 开发默认<br/>真实 API / SSE"]
+  end
+
+  API["02 · Flask API · /api/*<br/>账户身份 · Principal<br/>用户资源按 owner 隔离"]
+
+  subgraph CORE["03 · Agent 与领域服务"]
+    direction TB
+    Supervisor["Supervisor Agent<br/>Ask · Agent · Experts<br/>子 Agent / 工具白名单"]
+    Domain["L0–L4 领域服务<br/>简历 · 图谱 · 画像<br/>匹配 · 报告<br/>异步恢复仅覆盖持久任务子集"]
+  end
+
+  subgraph ASYNC["04 · Celery 异步执行"]
+    WorkerBeat["Worker：pipeline / media / graph<br/>Beat：周期重放 / 调度<br/>Worker / Beat 分进程；任务经 Redis broker"]
+  end
+
+  subgraph DATA["05 · 数据与文件"]
+    direction TB
+    DataStores["领域客户端 / 文件服务<br/>（按域分散）<br/>MySQL：业务结果权威<br/>Neo4j：技能 / 岗位图谱<br/>Redis：broker / session / cache<br/>非业务结果真值<br/>Milvus Lite：向量检索<br/>文件：上传 / agent_files"]
+  end
+
+  LLM["LLM provider<br/>OpenAI-compatible"]
+  Sidecar["Parse Sidecar<br/>可选 HTTP · L0"]
+
+  Http -->|"HTTP /api"| API
+  API --> Supervisor
+  API -->|"领域 API"| Domain
+  Supervisor --> Domain
+  Supervisor -.->|"推理 / 结构化输出"| LLM
+  Domain -.->|"按具体任务 / 配置调用"| LLM
+  Domain -.->|"仅 L0 解析配置启用时"| Sidecar
+  Domain -->|"指定持久任务（仅部分能力）"| WorkerBeat
+  Domain -->|"按领域访问"| DataStores
+  WorkerBeat -->|"Worker 任务处理器读写"| DataStores
+
+  classDef frontend fill:#eaf2ff,stroke:#6f93c7,color:#1e3a5f,stroke-width:1.5px;
+  classDef mock fill:#e5e7eb,stroke:#9ca3af,color:#596273,stroke-width:1.5px;
+  classDef api fill:#e8f5f2,stroke:#65a995,color:#173d35,stroke-width:1.5px;
+  classDef core fill:#edf2ff,stroke:#7c8fd1,color:#273766,stroke-width:1.5px;
+  classDef async fill:#fff4e5,stroke:#d39a48,color:#5a3b13,stroke-width:1.5px;
+  classDef data fill:#f1f5f9,stroke:#718096,color:#263445,stroke-width:1.5px;
+  classDef optional fill:#fffaf0,stroke:#c79538,color:#664b1a,stroke-width:1.5px,stroke-dasharray:5 4;
+  class Mock mock;
+  class Http frontend;
+  class API api;
+  class Supervisor,Domain core;
+  class WorkerBeat async;
+  class DataStores data;
+  class LLM,Sidecar optional;
+  style FE fill:#f8fafc,stroke:#d8e0eb,stroke-width:1px;
+  style API fill:#f5fbf9,stroke:#cde4de,stroke-width:1px;
+  style CORE fill:#f7f8ff,stroke:#d7dcf0,stroke-width:1px;
+  style ASYNC fill:#fffbf4,stroke:#f0dfc2,stroke-width:1px;
+  style DATA fill:#f8fafc,stroke:#d8e0eb,stroke-width:1px;

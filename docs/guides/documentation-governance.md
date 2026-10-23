@@ -17,6 +17,34 @@ Separate four document surfaces:
 
 Do not let logs, generated diagrams, competition drafts, and current engineering guides compete as equal sources of truth.
 
+## Agent Update Loop
+
+The goal is to keep one understandable current home per topic, not to grow the document count.
+
+### Start: find the owner before writing
+
+1. Read `docs/current-work.md` for active handoffs and `docs/README.md` for navigation.
+2. Search by user goal, capability, API/domain name, and likely document title. Read the existing owner document and check its status against code/runtime before relying on it.
+3. Classify the needed update: durable domain language (`CONTEXT.md`), lasting trade-off (ADR), planned product contract (`specs/`), reusable maintainer procedure (`guides/` or `runbooks/`), or evidence from an execution (`reports/`). A plan is not a report; test output is not a product contract.
+
+### During: update in place by default
+
+- Add a new user scenario to the existing capability/acceptance document that owns that business journey. Do not create a sibling Guide just to hold a second scenario list or a portfolio table.
+- Create a new Guide only when it describes a recurring procedure used across multiple capabilities and no current Guide owns that procedure. Create a new Spec only for a material, independently reviewable product/architecture proposal.
+- Keep one active owner document for one subject. If two active docs repeat the same rules, choose the canonical home, merge useful facts, then mark the duplicate superseded or archive it with a pointer; do not leave both looking authoritative.
+- Runtime behavior and current code outrank old reports. Reports preserve what happened on a specific date; never edit an old report to make it reflect a later run.
+
+### Close: record only what was proved
+
+- After a real verification run, write/update a dated report with exact command, code/runtime context, user journey, authoritative result, services vs substitutes, cleanup, and uncovered scope. Mark skips and unavailable dependencies **not accepted**, not pass.
+- Link the newest report from the existing owner Guide or active handoff. Keep `docs/README.md` focused on stable navigation and document ownership; do not append every run report to every index.
+- If full stdout, request traces, screenshots, or result artifacts were not retained, label the report as a summary and say so. Never reconstruct details as if they were raw evidence.
+- Update `docs/current-work.md` only when the result changes active handoff, priority, or unresolved status. Keep it a short pointer, not another copy of report details.
+
+### Periodic cleanup
+
+When reopening a topic, check whether the owner doc is still current and whether nearby drafts/reports duplicate it. Update or supersede stale content as part of the task when the evidence is available; otherwise mark the exact gap and owner. Do not perform speculative bulk archival unrelated to the current task.
+
 ## Document Types
 
 ### Context
@@ -143,4 +171,5 @@ For short files, a plain sentence is enough.
 - Some architecture docs are generated snapshots and need consolidation.
 - Docker/deployment docs must be checked against `docker-compose.yml` and `.env.example`.
 - Workspace seeds/branding must remain documented as deferred capabilities, not live runtime promises.
+- The backend business-journey acceptance material has one owner guide; scenario expansions belong there, while each actual dated replay belongs in `docs/reports/` and is linked from that guide.
 
