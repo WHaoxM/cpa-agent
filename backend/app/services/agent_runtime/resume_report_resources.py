@@ -18,6 +18,78 @@ from .tool_egress import redact_text
 RESUME_REPORTS_URI = "career://me/resume-reports"
 _RESOURCE = re.compile(r"^career://me/resume-reports(?:/(resume_[0-9a-f]{32}))?$")
 
+# Only the resume-reading conversation uses this boundary. It neither rewrites
+# model prose nor applies career-advice wording rules to unrelated Ask tasks.
+_READING_PADDING = (r'[\s\S]*(例如|比如|譬如|闭环|工程实践|立得住|招聘方|'
+                    r'不是简单查表|真实参与|(?:有|具备|体现|反映|说明)[^。；\n]{0,12}(意识|能力|敏感度))'
+                    r'[\s\S]*')
+
+
+def resume_reading_answer_scope(pack):
+    return isinstance(pack, dict) and any(
+        isinstance(item, dict) and _RESOURCE.fullmatch(str(item.get('uri') or ''))
+        and item.get('section') == 'analysis' for item in pack.get('items') or [])
+
+
+def resume_reading_answer_error(answer, pack):
+    if not resume_reading_answer_scope(pack):
+        return None
+    if re.search(_READING_PADDING, answer):
+        return ('本轮只读已有经历和来源问题，不举假设例子，不评定意识、能力、实践是否成立或招聘方是否认可；'
+                '说明原文已讲清什么和本轮还需补清哪一点即可。')
+    if len(re.findall(r'[？?]', answer)) > 1:
+        return '本轮最多保留一个必要问题，不追加背景、技术、协作问卷。'
+    return None
+
+
+def resume_reading_answer_format():
+    return {'type': 'json_schema', 'json_schema': {'name': 'resume_reading_reply', 'strict': True,
+        'schema': {'type': 'object', 'additionalProperties': False, 'required': ['reply'],
+            'properties': {'reply': {'type': 'string', 'minLength': 1, 'not': {'pattern': _READING_PADDING}}}}}}
+
+
+def source_readback_answer(pack):
+    """Read the real saved interpretation, never compose another version of it.
+
+    Reuse the existing selector -> authoritative read -> local projection path
+    used for section counts. Only a source-readback intent can enter; new
+    analysis questions still use the actual model. Text comes from this pack,
+    not a canned successful answer, old session cache or a captured fixture.
+    """
+    if not isinstance(pack, dict) or pack.get('answer_kind') != 'source_readback' or pack.get('budget_exceeded'):
+        return None
+    report = [item for item in pack.get('items') or [] if isinstance(item, dict)
+              and re.fullmatch(r'career://me/resume-reports/resume_[0-9a-f]{32}', str(item.get('uri') or ''))
+              and item.get('section') == 'analysis' and item.get('analysis_content_status') == 'current'
+              and isinstance(item.get('data'), dict)]
+    if not report or any(not item.get('version') for item in report) or len({(item['uri'],item.get('version')) for item in report}) != 1:
+        return None
+    observations = [item['data'] for item in pack.get('items') or [] if isinstance(item,dict)
+                    and item.get('uri') == 'career://me/portrait' and item.get('dimension') == 'D3'
+                    and isinstance(item.get('data'),dict) and isinstance(item['data'].get('text'),str)
+                    and item['data'].get('provenance',{}).get('kind') == 'user_self_report']
+    if observations:
+        labels={'communication':'沟通','teamwork':'协作','responsibility':'责任','stress_tolerance':'应对压力'}
+        blocks=['### 已读到的补充（本人自述）']
+        for item in observations:
+            label=labels.get(item.get('trait'),'补充经历')
+            blocks.append('**'+label+'**\n\n> '+item['text'].replace('\n','\n> '))
+        blocks += ['### 还不能据此判断',
+                   '这些是你提交的经历说明，可以据此讨论具体行动，但还不是独立核验的事实，也不能据此认定岗位胜任。']
+    else:
+        summary=next((item['data'].get('text') for item in report if item['data'].get('kind') == 'summary'),None)
+        questions=[item['data'] for item in report if item['data'].get('kind') == 'unclear_expression']
+        if not isinstance(summary,str) or not summary.strip():return None
+        blocks=['### 已经讲清的部分',summary]
+        notes=[item['data']['text'] for item in report if item['data'].get('kind')=='strengths'
+               and isinstance(item['data'].get('text'),str)]
+        if notes:blocks += ['### 其他经历解读',*notes]
+        if questions:
+            blocks += ['### 值得先补清的一点',questions[0]['text'],questions[0].get('why') or '']
+    if (pack.get('coverage') or {}).get('complete') is not True:
+        blocks.append('这次读取尚不完整，以上只列已读到的内容；未读部分不能判断，可以继续读取。')
+    return '\n\n'.join(block for block in blocks if block)
+
 
 def handles_uri(uri: str) -> bool:
     return isinstance(uri, str) and _RESOURCE.fullmatch(uri) is not None
@@ -68,10 +140,16 @@ def list_resume_report_resources(mysql, *, student_id: str) -> dict:
         "coverage": "catalog_only", "business_artifact_verified": False,
     }]
     if report:
+        analysis=report.get('analysis') or {}
+        preview=([{'kind':'summary','text':analysis['summary']['text']}]
+                 if isinstance(analysis.get('summary'),dict) and isinstance(analysis['summary'].get('text'),str) else [])
+        preview.extend({k:q[k] for k in ('kind','text','why') if k in q}
+                       for q in analysis.get('questions',[]) if isinstance(q,dict) and isinstance(q.get('text'),str))
         resources.append({
             "uri": f"{RESUME_REPORTS_URI}/{report['report_id']}",
             "title": "当前已确认简历诊断", "status": report["status"],
             "version": report["source_confirmation_task_id"],
+            **({'reading_preview':_safe(preview)} if report.get('analysis_content_status')=='current' and preview else {}),
             "sections": ["overview", "chapters", "analysis", "limitations", "job_catalog"] + [
                 f"chapter:{chapter['id']}" for chapter in report.get("chapters", [])
                 if isinstance(chapter, dict) and isinstance(chapter.get("id"), str)
@@ -127,6 +205,7 @@ def read_resume_report_resource(
     base = {"success": True, "uri": uri, "status": report["status"],
             "version": report["source_confirmation_task_id"], "report_type": report["report_type"],
             "quality_status": report.get("quality_status"),
+            "analysis_content_status": report.get("analysis_content_status"),
             "resource_id": report_id, "resource_type": "resume_diagnostic_report",
             "business_artifact_verified": True}
     if section == "job_catalog":

@@ -156,7 +156,8 @@ def test_historical_assessment_read_strips_seed_market_claims_and_old_cache(monk
     assert body["data"]["recommended_roles"] == [
         {"role_name": "后端开发", "category": "软件工程"}
     ]
-    assert all("assessment-v2" in key for key in cache_keys)
+    # Latest reads must not be replaced by an older Redis projection.
+    assert cache_keys == []
 
 
 def test_generic_latest_assessment_does_not_replay_ext_publication_envelope(monkeypatch):

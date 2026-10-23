@@ -54,9 +54,11 @@ class CareerDataReadTool(BaseTool):
 
     def execute(self, **kwargs) -> str:
         from flask import has_request_context
-        from ...api._helpers import ScopeError, resolve_request_scope
+        from ...api._helpers import (
+            ScopeError, has_trusted_agent_worker_scope, resolve_request_scope,
+        )
 
-        if not has_request_context():
+        if not has_request_context() and not has_trusted_agent_worker_scope():
             return json.dumps({"success": False, "status": "denied", "message": "缺少可信服务端身份"}, ensure_ascii=False)
         try:
             scope = resolve_request_scope()
@@ -64,6 +66,8 @@ class CareerDataReadTool(BaseTool):
             return json.dumps({"success": False, "status": "denied", "message": "缺少可信服务端身份"}, ensure_ascii=False)
         try:
             operation = kwargs.get("operation") or "list"
+            from ..career_exploration_analysis import check_read_scope
+            check_read_scope(kwargs.get('uri') or '', kwargs.get('section') or 'overview', operation)
             mysql = get_mysql_client()
             if operation == "list":
                 data = list_platform_resources(mysql, student_id=scope.student_id)

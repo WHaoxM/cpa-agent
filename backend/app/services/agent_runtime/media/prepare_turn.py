@@ -119,9 +119,22 @@ def prepare_user_turn(
             from ..resource_catalog import read_platform_resource
             for uri in resource_uris:
                 overview = read_platform_resource(mysql, student_id=student_id, uri=uri)
-                if not isinstance(overview, dict) or overview.get("success") is not True or overview.get("status") in {
+                if not isinstance(overview, dict) or overview.get("success") is not True:
+                    raise LookupError("当前用户无法引用该业务资料")
+                if overview.get("status") in {
                     "unavailable", "not_available", "failed", "empty", "denied", "stale",
                 }:
+                    # A report row may still belong to this student while its
+                    # publication/source snapshot has become stale. Preserve
+                    # only that owner-bound status so Ask can explain why it
+                    # cannot reuse the old result; never mount stale content.
+                    if (uri.startswith("career://me/reports/")
+                            and overview.get("business_artifact_verified") is False):
+                        verified_resources.append({
+                            "uri": uri, "status": "reference_not_current",
+                        })
+                        resource_overviews.append(overview)
+                        continue
                     raise LookupError("当前用户无法引用该业务资料")
                 verified_resources.append({
                     "uri": uri, "status": overview.get("status"),

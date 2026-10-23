@@ -330,6 +330,19 @@ def _run_supervisor(
     history = session_mgr.get_history_for_agent(session_id, max_messages=16)
     summary = session_mgr.get_conversation_summary(session_id)
     session_ctx = dict(session.context) if session and isinstance(session.context, dict) else {}
+    # Server-derived Ask continuity projections. Never accept owner/session
+    # scope or these capability flags from the request body/session context.
+    student_id = session.student_id
+    bound_state = session_mgr.get_session(session_id)
+    if bound_state is not None and bound_state.student_id == student_id:
+        session_ctx["_ask_message_count"] = len(bound_state.messages)
+        session_ctx["_ask_history_lookup_available"] = len(bound_state.messages) > 16
+        session_ctx["_ask_has_component_snapshots"] = session_mgr.has_owner_scoped_component_snapshots(
+            session_id, student_id,
+        )
+        session_ctx["_ask_conversation_state_v1"] = session_mgr.get_validated_conversation_state(
+            session_id, student_id,
+        )
 
     result = get_supervisor_service().chat(
         message=message,
@@ -358,6 +371,12 @@ def _run_supervisor(
         # Server-held, owner-bound Ask paging state. Never accept a cursor from
         # request JSON or expose the internal state through the public context.
         ctx["ask_evidence_continuation"] = result.get("ask_evidence_continuation")
+        if "action_plan_handoff_context" in result:
+            action_context = result.get("action_plan_handoff_context")
+            if isinstance(action_context, dict):
+                ctx["action_plan_handoff"] = action_context
+            else:
+                ctx.pop("action_plan_handoff", None)
         orch = dict(ctx.get("orchestration") or {}) if isinstance(ctx.get("orchestration"), dict) else {}
         orch["interaction_mode"] = imode
         ctx["orchestration"] = orch
@@ -446,7 +465,7 @@ def _compute_tool_stats(tool_results: list) -> tuple:
 
 def _prepare_and_record_user_turn(
     session_mgr, *, session_id, student_id, message, attachment_ids,
-    content_parts, voice_turn_id, require_authoritative=False,
+    content_parts, voice_turn_id, require_authoritative=False, session_context=None,
 ):
     """Normalize one user turn once for both persisted STM and Supervisor."""
     from ..services.agent_runtime.fast_path import visible_user_text
@@ -462,6 +481,31 @@ def _prepare_and_record_user_turn(
         voice_turn_id=voice_turn_id,
         mount=True,
     )
+    requested_handoffs = [
+        p for p in (prepared.get("parts") or [])
+        if isinstance(p, dict) and p.get("type") == "action_plan_handoff"
+    ]
+    raw_requested = [
+        p for p in (content_parts or [])
+        if isinstance(p, dict) and p.get("type") == "action_plan_handoff"
+    ]
+    if raw_requested:
+        if len(raw_requested) != 1 or len(requested_handoffs) != 1:
+            raise LookupError("行动计划交接不存在或无访问权限")
+        requested = requested_handoffs[0]
+        context = session_context.get("action_plan_handoff") if isinstance(session_context, dict) else None
+        action = requested.get("action")
+        expected_phase = "offered" if action == "start" else "awaiting_time" if action == "answer" else ""
+        if (not isinstance(context, dict)
+                or context.get("handoff_id") != requested.get("handoff_id")
+                or context.get("phase") != expected_phase):
+            raise LookupError("行动计划交接不存在或无访问权限")
+        prepared["action_plan_command"] = {
+            "action": action,
+            # The source binding is read only from this authenticated session,
+            # never from the browser's content part.
+            "context": dict(context),
+        }
     stm_text = (prepared.get("visible_text") or raw_message or "").strip() or "[附件/语音回合]"
     session_mgr.add_message(
         session_id=session_id,
@@ -538,6 +582,7 @@ def _run_recorded_supervisor_turn(
             message=message, attachment_ids=attachment_ids,
             content_parts=content_parts, voice_turn_id=voice_turn_id,
             require_authoritative=require_authoritative_session,
+            session_context=getattr(session, "context", None),
         )
         data_dict, _result = _run_supervisor(
             message, session_id, session, session_mgr,
@@ -1127,6 +1172,31 @@ def get_history(session_id: str):
         return scope_error_response(e)
 
     messages = project_session_messages(session_mgr.get_messages(session_id, limit=limit))
+    try:
+        from ..services.agent_runtime.task_context import TaskContextStore
+        from ..services.db import get_mysql_client
+        task = TaskContextStore(get_mysql_client()).read(session_id, scope.student_id, session.incarnation_id)
+        for turn in task.get('turns', []):
+            for role, content in [('user',turn['message']),('assistant',turn.get('reply'))]:
+                if not content:
+                    continue
+                mid = ('task-user-' if role=='user' else 'task-reply-') + turn['run_id']
+                if any(m.get('id',m.get('message_id'))==mid for m in messages):
+                    continue
+                parts = [{'type':'text','text':content}]
+                sources = [r for r in turn.get('evidence_summary',[]) if isinstance(r,dict) and isinstance(r.get('name'),str)]
+                if role=='assistant' and sources:
+                    parts.append({'type':'evidence_summary','title':'参考资料','status':'complete' if all(r['status']=='read' for r in sources) else 'partial',
+                                  **({'scope_note':'student_submitted_unverified'} if any(r.get('provenance')=='student_submitted_unverified' for r in sources) else {}),
+                                  'sources':[{'label':r['name'],'status':r['status']} for r in sources]})
+                messages.append({'id':mid,'message_id':mid,'role':role,'content':content,'parts':parts,'timestamp':turn['created_at'],
+                                 'metadata':{'parts_v1':parts}})
+        messages.sort(key=lambda m:str(m.get('timestamp') or m.get('created_at') or ''))
+        messages=messages[-limit:]
+    except Exception as exc:
+        from sqlalchemy.exc import ProgrammingError, OperationalError
+        if not isinstance(exc,(ProgrammingError,OperationalError)) or getattr(exc.orig,'args',[None])[0] != 1054:
+            raise
 
     return {
         "session_id": session_id,
@@ -1166,8 +1236,129 @@ def get_artifact(artifact_id: str):
         )
         if not plan:
             return jsonify(safe_not_found("学习计划记录不存在")), 404
-        artifact["content"] = {"body": plan["body"], "status": plan["status"]}
+        artifact["content"] = _public_action_plan_content(plan)
     return artifact
+
+
+def _public_action_plan_content(plan: dict) -> dict:
+    """Project an owner-bound plan without exposing internal file references."""
+    steps = []
+    for step in plan.get("steps") or []:
+        item = dict(step)
+        evidence = item.get("evidence")
+        if isinstance(evidence, dict):
+            public_evidence = {
+                "summary": evidence.get("summary") or "",
+                "source": "student_submitted",
+                "verified": False,
+                "created_at": evidence.get("created_at"),
+                "updated_at": evidence.get("updated_at"),
+                "attachment": None,
+            }
+            raw_attachment = evidence.get("attachment")
+            file_id = raw_attachment.get("file_id") if isinstance(raw_attachment, dict) else None
+            if isinstance(file_id, str) and file_id:
+                try:
+                    from ..services.agent_runtime.media.file_store import get_agent_file_service
+
+                    meta = get_agent_file_service().get(file_id)
+                except Exception:
+                    meta = None
+                if (meta and meta.get("student_id") == plan.get("student_id")
+                        and meta.get("session_id") == plan.get("session_id")):
+                    status = str(meta.get("status") or "unavailable")
+                    public_evidence["attachment"] = {
+                        "filename": meta.get("filename"),
+                        "ingest_status": status,
+                        "read_status": (
+                            "available" if status == "ready" and meta.get("excerpt")
+                            else "processing" if status in {"queued", "ingesting"}
+                            else "unavailable"
+                        ),
+                    }
+                else:
+                    public_evidence["attachment"] = {
+                        "filename": None, "ingest_status": "unavailable",
+                        "read_status": "unavailable",
+                    }
+            item["evidence"] = public_evidence
+        steps.append(item)
+    return {
+        "body": plan["body"], "status": plan["status"], "steps": steps,
+        "progress": plan.get("progress") or {
+            "completed": 0, "total": 0, "status": plan["status"],
+        },
+        "source": plan.get("source"),
+    }
+
+
+@agent_bp.route('/action-plans/<plan_id>/steps/<step_id>', methods=['PATCH'])
+@api_handler("更新学习计划步骤进度")
+def update_action_plan_step(plan_id: str, step_id: str):
+    """Set one owner-bound step state; repeated identical writes are idempotent."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or set(data.keys()) != {"completed"} or type(data.get("completed")) is not bool:
+        return jsonify(safe_bad_request("请求只允许提供 completed: boolean")), 400
+    try:
+        scope = resolve_request_scope()
+    except ScopeError as e:
+        return scope_error_response(e)
+    from ..services.agent_runtime.action_plan_store import get_action_plan_store
+
+    plan = get_action_plan_store().set_step_completed(
+        plan_id, step_id, data["completed"], student_id=scope.student_id,
+    )
+    if not plan:
+        return jsonify(safe_not_found("学习计划步骤不存在")), 404
+    return {"plan_id": plan["plan_id"], **_public_action_plan_content(plan)}
+
+
+@agent_bp.route('/action-plans/<plan_id>/steps/<step_id>/evidence', methods=['PUT'])
+@api_handler("保存练习成果记录")
+def save_action_plan_step_evidence(plan_id: str, step_id: str):
+    """Upsert one owner-submitted practice note and an optional owned file."""
+    data = request.get_json(silent=True)
+    if (not isinstance(data, dict) or "summary" not in data
+            or set(data) - {"summary", "attachment_id"}
+            or not isinstance(data.get("summary"), str)
+            or not 1 <= len(data["summary"].strip()) <= 2000
+            or ("attachment_id" in data and data["attachment_id"] is not None
+                and (not isinstance(data["attachment_id"], str)
+                     or not data["attachment_id"].strip()))):
+        return jsonify(safe_bad_request(
+            "请求需要 1 至 2000 字的 summary，且只允许可选 attachment_id"
+        )), 400
+    try:
+        scope = resolve_request_scope()
+    except ScopeError as e:
+        return scope_error_response(e)
+    from ..services.agent_runtime.action_plan_store import get_action_plan_store
+
+    store = get_action_plan_store()
+    current = store.get_for_owner(plan_id, student_id=scope.student_id)
+    if not current or not any(step.get("step_id") == step_id for step in current.get("steps") or []):
+        return jsonify(safe_not_found("学习计划步骤不存在")), 404
+    current_step = next(step for step in current.get("steps") or [] if step.get("step_id") == step_id)
+    current_evidence = current_step.get("evidence") if isinstance(current_step.get("evidence"), dict) else {}
+    current_attachment = current_evidence.get("attachment") if isinstance(current_evidence.get("attachment"), dict) else {}
+    attachment_id = data.get(
+        "attachment_id",
+        current_attachment.get("file_id"),
+    )
+    if attachment_id:
+        from ..services.agent_runtime.media.file_store import get_agent_file_service
+
+        meta = get_agent_file_service().get(attachment_id)
+        if (not meta or meta.get("student_id") != scope.student_id
+                or meta.get("session_id") != current.get("session_id")):
+            return jsonify(safe_not_found("附件不存在或无访问权限")), 404
+    plan = store.save_step_evidence(
+        plan_id, step_id, data["summary"], attachment_id,
+        student_id=scope.student_id,
+    )
+    if not plan:
+        return jsonify(safe_not_found("学习计划步骤不存在")), 404
+    return {"plan_id": plan["plan_id"], **_public_action_plan_content(plan)}
 
 
 @agent_bp.route('/session/<session_id>', methods=['DELETE'])
@@ -1233,14 +1424,76 @@ def get_session_context(session_id: str):
     except ScopeError as e:
         return scope_error_response(e)
 
+    task = None
+    try:
+        from ..services.agent_runtime.task_context import TaskContextStore
+        from ..services.db import get_mysql_client
+        task = TaskContextStore(get_mysql_client()).read(session_id, scope.student_id, session.incarnation_id)
+    except Exception as exc:
+        # Old deployments stay readable, but never pretend the new capability exists.
+        from sqlalchemy.exc import ProgrammingError, OperationalError
+        if not isinstance(exc, (ProgrammingError, OperationalError)) or getattr(exc.orig, 'args', [None])[0] != 1054:
+            raise
     return {
         "session_id": session_id,
         "student_id": session.student_id,
         "context": project_session_context(session.context),
+        "task": task,
         "status": session.status.value,
         "created_at": session.created_at,
         "updated_at": session.updated_at,
     }
+
+
+@agent_bp.route('/session/<session_id>/handoffs', methods=['POST'])
+def handoff_task_resource(session_id):
+    from ..services.agent_runtime.task_context import TaskContextStore, TaskContextConflict
+    from ..services.db import get_mysql_client
+    try:
+        scope = resolve_request_scope(session_id=session_id)
+        session = get_session_manager().refresh_session(session_id, require_authoritative=True)
+        if not session:
+            return jsonify(safe_not_found('会话不存在或已过期')), 404
+        require_owner(session.student_id, scope, resource='会话')
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            raise ValueError('交接请求必须是 JSON 对象')
+        result = TaskContextStore(get_mysql_client()).handoff(session, scope.student_id, payload,
+                                                            request.headers.get('Idempotency-Key'))
+        return jsonify(success=True, data=result)
+    except ScopeError as exc:
+        return scope_error_response(exc)
+    except PermissionError:
+        return jsonify(safe_not_found('资料不存在或不可读取')), 404
+    except TaskContextConflict as exc:
+        return jsonify(success=False, code='TASK_CONTEXT_CONFLICT', error=str(exc)), 409
+    except ValueError as exc:
+        return jsonify(safe_bad_request(str(exc))), 400
+
+
+@agent_bp.route('/session/<session_id>/resume-submissions', methods=['POST'])
+def submit_task_resume(session_id):
+    from ..services.agent_runtime.task_context import TaskContextStore, TaskContextConflict
+    from ..services.db import get_mysql_client
+    try:
+        scope = resolve_request_scope(session_id=session_id)
+        session = get_session_manager().refresh_session(session_id, require_authoritative=True)
+        if not session:
+            return jsonify(safe_not_found('会话已过期')), 404
+        require_owner(session.student_id, scope, resource='会话')
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or set(data) != {'file_id', 'expected_revision'}:
+            raise ValueError('仅接受文件引用和任务版本')
+        result = TaskContextStore(get_mysql_client()).submit_resume(session, scope.student_id, data['file_id'], data['expected_revision'])
+        return jsonify(success=True, data=result), 202
+    except ScopeError as exc:
+        return scope_error_response(exc)
+    except PermissionError:
+        return jsonify(safe_not_found('简历文件不可用')), 404
+    except TaskContextConflict as exc:
+        return jsonify(success=False, code='TASK_CONTEXT_CONFLICT', error=str(exc)), 409
+    except ValueError as exc:
+        return jsonify(safe_bad_request(str(exc))), 400
 
 
 @agent_bp.route('/session/<session_id>/context', methods=['PUT'])

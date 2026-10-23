@@ -76,6 +76,60 @@ def test_truncated_review_never_approves_partial_json():
     assert "unsafe" not in answer
 
 
+def test_json_object_gate_keeps_local_pydantic_validation_and_default_is_unchanged():
+    c = Client(PASS, PASS)
+    answer, status = ground_evidence_answer(c, "draft", "q", PACK)
+    assert answer == "draft"
+    assert status["status"] == "model_checked"
+    assert c.calls[0]["response_format"]["type"] == "json_schema"
+
+    object_client = Client(PASS)
+    answer, status = ground_evidence_answer(
+        object_client, "draft", "q", PACK, response_format_kind="json_object",
+        max_checks=1,
+    )
+    assert answer == "draft"
+    assert status == {"status": "model_checked", "checks": 1, "revised": False}
+    assert object_client.calls[0]["response_format"] == {"type": "json_object"}
+
+    malformed = Client({"verdict": "supported", "reasons": [], "corrected_reply": "wrong"})
+    answer, status = ground_evidence_answer(
+        malformed, "draft", "q", PACK, response_format_kind="json_object",
+        max_checks=1,
+    )
+    assert status["status"] == "blocked"
+    assert "draft" not in answer
+
+
+def test_single_check_diagnostic_names_initial_unsupported_and_never_returns_raw_review():
+    c = Client(FAIL)
+    answer, status = ground_evidence_answer(
+        c, "draft", "q", PACK, response_format_kind="json_object",
+        max_checks=1, include_diagnostics=True,
+    )
+    assert status["status"] == "blocked"
+    assert status["checks"] == 1
+    assert status["reason"] == "unsupported_initial_draft"
+    assert status["review_verdict"] == "unsupported"
+    assert status["review_reason_count"] == 1
+    assert status["review_reason_chars"] == len(FAIL["reasons"][0])
+    assert status["corrected_reply_chars"] == len(FAIL["corrected_reply"])
+    assert "reasons" not in status
+    assert "corrected_reply" not in status
+    assert FAIL["reasons"][0] not in json.dumps(status)
+    assert FAIL["corrected_reply"] not in answer
+    non_diagnostic_client = Client(FAIL)
+    ground_evidence_answer(
+        non_diagnostic_client, "draft", "q", PACK,
+        response_format_kind="json_object", max_checks=1,
+    )
+    assert c.calls[0]["messages"] == non_diagnostic_client.calls[0]["messages"]
+    # The shared default two-check path retains its old public contract.
+    _, default_status = ground_evidence_answer(Client(FAIL, FAIL), "draft", "q", PACK)
+    assert default_status == {"status": "blocked", "checks": 2,
+                              "reason": "unsupported_after_revision"}
+
+
 def test_public_quality_diagnostics_do_not_leak_review_reasoning():
     assert _public_progress({"grounding": {"status": "blocked", "checks": 1,
         "reason": "review_unavailable", "private": "hidden"}}) == {

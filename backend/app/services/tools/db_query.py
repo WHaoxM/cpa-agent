@@ -221,9 +221,11 @@ class DbQueryTool(BaseTool):
                 return self._failure("[db_query] 不可用: 岗位表缺少可验证的公共来源/归属标记，请使用已隔离的公共图谱。")
 
             from flask import has_request_context
-            from ...api._helpers import resolve_request_scope, ScopeError
+            from ...api._helpers import (
+                ScopeError, has_trusted_agent_worker_scope, resolve_request_scope,
+            )
 
-            if not has_request_context():
+            if not has_request_context() and not has_trusted_agent_worker_scope():
                 return self._failure("[db_query] 权限拒绝: 缺少可信服务端 Principal；不会使用工具参数 student_id 代替认证。", "denied")
             try:
                 scope = resolve_request_scope()

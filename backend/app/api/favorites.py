@@ -7,11 +7,12 @@ HTTP 层: 参数解析 + 调用 repository + 包装响应
 """
 
 import json
+import re
 from flask import request, jsonify
 
 from . import favorites_bp
 from ._helpers import ScopeError, parse_json_field, resolve_request_scope, safe_error, scope_error_response
-from ..repositories.favorites_repo import favorites_repo
+from ..repositories.favorites_repo import favorites_repo, SavedJobPublicationError
 from ..utils.logger import get_logger
 
 logger = get_logger('cpa-agent.api.favorites')
@@ -46,6 +47,46 @@ def save_job():
         data = request.get_json(silent=True)
         if not isinstance(data, dict):
             return jsonify({"success": False, "error": "请求体必须是 JSON 对象"}), 400
+
+        if "publication_ref" in data:
+            reference = data.get("publication_ref")
+            if not isinstance(reference, dict):
+                return jsonify({"success": False, "error": "publication_ref 必须是对象"}), 400
+            job_portrait_id = reference.get("job_portrait_id")
+            publication_version = reference.get("publication_version")
+            content_digest = reference.get("content_sha256")
+            if (not isinstance(job_portrait_id, str) or not job_portrait_id.strip()
+                    or len(job_portrait_id) > 64
+                    or not isinstance(publication_version, str) or not publication_version.strip()
+                    or len(publication_version) > 64
+                    or not isinstance(content_digest, str)
+                    or not re.fullmatch(r"[0-9a-fA-F]{64}", content_digest)):
+                return jsonify({"success": False, "error": "岗位版本引用不完整或格式无效"}), 400
+            if job_portrait_id.strip().startswith("source_csb_"):
+                return jsonify({"success": False, "error": "官方来源岗位只供查看，不能收藏为已审核岗位"}), 400
+            try:
+                record_id = favorites_repo.save_published_job(
+                    user_id=scope.student_id,
+                    job_portrait_id=job_portrait_id.strip(),
+                    publication_version=publication_version.strip(),
+                    content_sha256=content_digest.lower(),
+                )
+                saved = favorites_repo.get_saved_job_by_record(record_id, user_id=scope.student_id)
+                if not saved or saved.get("saved_job_id") != record_id:
+                    return jsonify({"success": False, "status": "unverified",
+                                    "error": "收藏写入未通过回读核验"}), 503
+                return jsonify({"success": True, "data": {
+                    "saved_job_id": record_id,
+                    "job_portrait_id": job_portrait_id.strip(),
+                    "publication_version": publication_version.strip(),
+                    "publication_status": saved.get("publication_status"),
+                    "vacancy_validity": "unknown",
+                    "message": "已保存这份岗位资料",
+                }})
+            except SavedJobPublicationError as e:
+                return jsonify({"success": False, "status": "stale_or_unavailable",
+                                "error": str(e)}), 409
+
         job_id = _pick(data, 'job_id', 'jobId')
         if not isinstance(job_id, str) or not job_id.strip():
             return jsonify({"success": False, "error": "job_id 必填，不能为收藏生成虚构岗位 ID"}), 400
@@ -88,6 +129,23 @@ def unsave_job(job_id: str):
         if favorites_repo.get_saved_job(job_id, user_id=user_id):
             return jsonify({"success": False, "error": "取消收藏未通过回读核验"}), 503
         return jsonify({"success": True, "data": {"message": f"岗位 {job_id} 已取消收藏"}})
+    except ScopeError as e:
+        return scope_error_response(e)
+    except Exception as e:
+        return jsonify(safe_error("取消收藏", e)), 500
+
+
+@favorites_bp.route('/saved-jobs/records/<int:record_id>', methods=['DELETE'])
+def unsave_job_record(record_id: int):
+    """Remove exactly one owner-scoped favorite, including a version-bound save."""
+    try:
+        user_id = resolve_request_scope().student_id
+        if not favorites_repo.get_saved_job_by_record(record_id, user_id=user_id):
+            return jsonify({"success": False, "error": "收藏记录不存在"}), 404
+        favorites_repo.delete_saved_job_record(record_id, user_id=user_id)
+        if favorites_repo.get_saved_job_by_record(record_id, user_id=user_id):
+            return jsonify({"success": False, "error": "取消收藏未通过回读核验"}), 503
+        return jsonify({"success": True, "data": {"message": "已从心仪岗位移除"}})
     except ScopeError as e:
         return scope_error_response(e)
     except Exception as e:

@@ -116,7 +116,8 @@ def _read_plan(mysql, *, student_id: str, uri: str, section: str,
                offset: int, limit: int) -> dict:
     plan_id = _PLAN_URI.fullmatch(uri).group(1)
     sql = """
-        SELECT p.plan_id,p.title,p.status,p.body_text,p.body_sha256,
+        SELECT p.plan_id,p.student_id,p.session_id,p.title,p.status,p.body_text,p.body_sha256,
+               p.report_uri,p.report_version,p.resume_version,p.gap_summary,p.exploration_round_id,
                p.created_at,p.updated_at,a.artifact_id,a.version AS artifact_version
         FROM agent_action_plan p JOIN agent_artifact a
           ON a.resource_type='agent_action_plan' AND a.resource_id=p.plan_id
@@ -140,6 +141,31 @@ def _read_plan(mysql, *, student_id: str, uri: str, section: str,
         "uri": uri, "version": version,
         "artifact_id": row["artifact_id"],
     }
+    source_status = None
+    source_note = "普通文本计划没有结构化来源记录，不能视为已核验建议。"
+    gap_summary = str(row.get("gap_summary") or "")
+    if row.get('exploration_round_id'):
+        from ..career_exploration import ExplorationService
+        source_status = ExplorationService(mysql).plan_source(row['exploration_round_id'], student_id)['status']
+        source_note = '学生为验证职业兴趣制定的尝试计划，不是岗位胜任或已核验简历事实。'
+        if source_status != 'current':
+            source_note += ' 原参考资料已变化或不可核对，只作历史尝试复盘。'
+    if row.get("report_uri"):
+        try:
+            from .action_plan_store import _action_plan_source_status
+
+            source_status = _action_plan_source_status(
+                mysql, student_id=student_id, report_uri=str(row.get("report_uri")),
+                report_version=str(row.get("report_version") or ""),
+                resume_version=str(row.get("resume_version") or ""),
+            )
+        except Exception:
+            source_status = "unavailable"
+        source_note = (
+            "计划关联的原报告与已确认简历仍匹配当前版本。"
+            if source_status == "current" else
+            "计划来源已过期或暂时无法核验；以下只能作为历史记录，不能用于当前求职判断。"
+        )
     if section == "overview":
         if offset:
             raise ValueError("overview 不支持 offset")
@@ -149,14 +175,125 @@ def _read_plan(mysql, *, student_id: str, uri: str, section: str,
             "body_chunks": math.ceil(len(safe_body) / _BODY_CHUNK_CHARS),
             "created_at": str(row.get("created_at") or ""),
             "updated_at": str(row.get("updated_at") or ""),
-        }, "continuation": "按 section=body 分块读取初稿；初稿不是已核验的学习建议。"}
+            "source_status": source_status,
+        }, "source_note": source_note,
+            "continuation": "按 section=body 分块读取计划正文，按 section=steps/evidence 读取步骤和学生提交记录。"}
+    if section in {"steps", "evidence"}:
+        rows = mysql.fetch_all("""
+            SELECT s.step_id,s.position,s.title,s.detail,s.completed,s.completed_at,
+                   e.summary AS evidence_summary,e.attachment_file_id,
+                   e.created_at AS evidence_created_at,e.updated_at AS evidence_updated_at
+            FROM agent_action_plan_step s
+            LEFT JOIN agent_action_plan_step_evidence e
+              ON e.step_id=s.step_id AND e.plan_id=s.plan_id AND e.student_id=:sid
+            WHERE s.plan_id=:plan_id
+            ORDER BY s.position ASC LIMIT :limit OFFSET :offset
+        """, {"sid": student_id, "plan_id": plan_id, "limit": limit, "offset": offset})
+        total_rows = mysql.fetch_all(
+            "SELECT COUNT(*) AS n FROM agent_action_plan_step WHERE plan_id=:plan_id",
+            {"plan_id": plan_id},
+        )
+        total = int((total_rows[0] if total_rows else {}).get("n") or 0)
+        data = []
+        for step in rows:
+            entry = {
+                "position": int(step.get("position") or 0),
+                "title": _clean(step.get("title")),
+                "detail": _clean(step.get("detail")),
+                "completed": bool(step.get("completed")),
+                "completed_at": str(step.get("completed_at") or "") or None,
+                "practice_record": None,
+            }
+            if step.get("evidence_summary") is not None:
+                record = {
+                    "summary": _clean(step.get("evidence_summary")),
+                    "source": "student_submitted",
+                    "verified": False,
+                    "updated_at": str(step.get("evidence_updated_at") or ""),
+                    "attachment": None,
+                }
+                file_id = step.get("attachment_file_id")
+                if file_id:
+                    record["attachment"] = _read_student_attachment(
+                        student_id=student_id, session_id=str(row.get("session_id") or ""),
+                        file_id=str(file_id), query=gap_summary,
+                        include_content=(section == "evidence"),
+                    )
+                entry["practice_record"] = record
+            if row.get('exploration_round_id') and section == 'evidence':
+                # Do not couple an assignment title with completed=true in the
+                # model's practice evidence. The checkbox is not execution proof.
+                entry = {'position': entry['position'],
+                         'progress_self_marked': entry['completed'],
+                         'practice_record': entry['practice_record'],
+                         'boundary': '勾选仅为本人标记的进度；实际做过什么只能依据本人文字和已读附件，不得从计划步骤推断。'}
+            data.append(entry)
+        coverage = _coverage(total, offset, len(data))
+        return {**base, "status": "user_submitted", "section": section,
+                "coverage": coverage,
+                "data": [{"historical_gap": _clean(gap_summary),
+                          "source_status": source_status,
+                          "source_note": source_note,
+                          "step": item,
+                          "evidence_boundary": "练习说明和附件均由学生提交，未经能力/经历核验；不更新简历、画像或匹配分数。"}
+                         for item in data],
+                "source_note": source_note,
+                "continuation": "使用同一 URI 和 next_offset 继续读取步骤" if coverage["has_more"] else None}
     if section != "body":
-        raise ValueError("学习计划仅支持 overview/body")
+        raise ValueError("学习计划仅支持 overview/body/steps/evidence")
     chunks = [safe_body[i:i + _BODY_CHUNK_CHARS] for i in range(0, len(safe_body), _BODY_CHUNK_CHARS)]
     page = chunks[offset:offset + limit]
     coverage = _coverage(len(chunks), offset, len(page))
+    if row.get('exploration_round_id'):
+        page = [{'task_instructions_not_execution_evidence': item,
+                 'boundary': '这是尝试安排，不是已执行事实；不得据此认定学生做过这些动作。'} for item in page]
     return {**base, "section": section, "coverage": coverage, "data": page,
             "continuation": "使用同一 URI 和 next_offset 继续读取" if coverage["has_more"] else None}
+
+
+def _read_student_attachment(*, student_id: str, session_id: str, file_id: str,
+                             query: str, include_content: bool) -> dict:
+    """Read only through the existing mounted, owner-scoped document pipeline."""
+    try:
+        from .media.file_store import get_agent_file_service
+
+        service = get_agent_file_service()
+        meta = service.get(file_id)
+    except Exception:
+        meta = None
+        service = None
+    if (not meta or meta.get("student_id") != student_id
+            or meta.get("session_id") != session_id):
+        return {"filename": None, "ingest_status": "unavailable",
+                "read_status": "unavailable", "content": None}
+    ingest_status = str(meta.get("status") or "unavailable")
+    result = {"filename": _clean(meta.get("filename")),
+              "ingest_status": ingest_status,
+              "read_status": "processing" if ingest_status in {"queued", "ingesting"} else
+                  "failed" if ingest_status == "failed" else "unavailable",
+              "content": None}
+    if not include_content or ingest_status != "ready":
+        return result
+    try:
+        from .media.session_resources import mount_resources
+        from .media.document_access import materialize_for_ask
+
+        mount_resources(session_id, [{"type": "file", "file_id": file_id}],
+                        student_id=student_id)
+        packed, report = materialize_for_ask(
+            [file_id], inline_budget=1800, query=query,
+            student_id=student_id, session_id=session_id,
+        )
+        file_report = (report.get("files") or [{}])[0]
+        if not int(file_report.get("total_chars") or 0):
+            result["read_status"] = "unavailable"
+            return result
+        result["read_status"] = "read" if report.get("all_complete") else "partial"
+        result["content"] = packed[:2200]
+    except Exception:
+        # A file can finish ingestion after this read; the next turn can retry.
+        result["read_status"] = "unavailable"
+    return result
 
 
 def read_personal_resource(

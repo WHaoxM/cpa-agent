@@ -24,8 +24,22 @@ logger = get_logger("cpa-agent.agent_runtime.gated")
 # Only repeat idempotent reads. Mutating pipeline/report tools must never be
 # re-executed merely because their response was lost after a timeout.
 _TRANSIENT_RETRY_READS = frozenset({
-    "attachment_read", "career_data_read", "graph_query", "semantic_search",
+    "attachment_read", "career_data_read", "component_snapshot_read",
+    "component_snapshot_discover", "conversation_history_lookup",
+    "graph_query", "semantic_search",
 })
+
+
+def _egress_tool_args(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Avoid retaining outward search terms in audit/UI parameter payloads."""
+    if tool_name != "public_web_search":
+        return args
+    query = args.get("query")
+    return {
+        "query": "[redacted before audit/UI persistence]",
+        "query_chars": len(query) if isinstance(query, str) else 0,
+        "max_results": args.get("max_results"),
+    }
 
 
 def _failure(code: str, *, retryable: bool, attempts: int) -> Dict[str, Any]:
@@ -83,9 +97,11 @@ def build_gated_tools(
         student_id=gate_ctx.student_id,
         session_id=gate_ctx.session_id,
         extra_tools=(
-            {"attachment_read"}
-            if gate_ctx.plan_tool_allowlist and "attachment_read" in gate_ctx.plan_tool_allowlist
-            else None
+            ({name for name in ("attachment_read", "component_snapshot_read",
+                                "component_snapshot_discover", "conversation_history_lookup",
+                                "public_web_search")
+              if name in gate_ctx.plan_tool_allowlist}
+             if gate_ctx.plan_tool_allowlist else None)
         ),
     )
     gated: List[Any] = []
@@ -112,14 +128,14 @@ def _wrap_one(
             raw = _failure("permission_denied", retryable=False, attempts=0)
             msg = json.dumps(raw, ensure_ascii=False)
             ui_collector.append(
-                build_ui_view(name, raw, parameters=gate.args, status="error")
+                build_ui_view(name, raw, parameters=_egress_tool_args(name, gate.args), status="error")
             )
             enqueue_audit(
                 session_id=gate_ctx.session_id,
                 student_id=gate_ctx.student_id,
                 tool_name=name,
                 decision="deny",
-                args=gate.args,
+                args=_egress_tool_args(name, gate.args),
                 result_text=msg,
                 reason=gate.verdict.reason,
             )
@@ -179,13 +195,23 @@ def _wrap_one(
 
         text = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False)
         model_view = build_model_view(name, raw)
-        ui_view = build_ui_view(name, raw, parameters=gate.args, status=execution_status)
+        persisted_args = _egress_tool_args(name, gate.args)
+        ui_view = build_ui_view(name, raw, parameters=persisted_args, status=execution_status)
         candidates = ui_view.pop("artifact_candidates", [])
-        artifact_refs = get_artifact_committer().commit_candidates(
-            candidates,
-            student_id=gate_ctx.student_id,
-            session_id=gate_ctx.session_id,
-        )
+        artifact_refs = []
+        if gate_ctx.allow_artifact_commit:
+            artifact_refs = get_artifact_committer().commit_candidates(
+                candidates,
+                student_id=gate_ctx.student_id,
+                session_id=gate_ctx.session_id,
+            )
+        elif candidates:
+            # Durable read-only plans must not gain artifact-write side effects
+            # through a tool-result channel, even if a future tool adds one.
+            logger.warning(
+                "plan-scoped artifact candidates suppressed: tool=%s count=%s",
+                name, min(len(candidates), 8),
+            )
         if artifact_refs:
             ui_view["artifact_refs"] = artifact_refs
         ui_collector.append(ui_view)
@@ -194,11 +220,31 @@ def _wrap_one(
             student_id=gate_ctx.student_id,
             tool_name=name,
             decision="allow",
-            args=gate.args,
+            args=persisted_args,
             result_text=text[:2000],
             reason="ok" if not gate.rewritten else "student_id_rewritten",
         )
         return model_view
+
+    # Sync LangGraph ToolNode may execute tools on a worker thread. Propagate
+    # only the already-authenticated internal run claim (never HTTP g/request
+    # state) so owner-bound tools can revalidate Principal and auth_epoch.
+    from ...api._helpers import (
+        capture_trusted_agent_worker_scope,
+        run_with_trusted_agent_worker_scope,
+    )
+
+    worker_identity = capture_trusted_agent_worker_scope()
+    from ..career_exploration_analysis import capture_read_scope, read_scope
+    exploration_scope = capture_read_scope()
+    if worker_identity is not None:
+        original_gated_func = gated_func
+
+        def gated_func(**kwargs: Any) -> str:
+            if exploration_scope is not None:
+                with read_scope(exploration_scope):
+                    return run_with_trusted_agent_worker_scope(worker_identity, original_gated_func, **kwargs)
+            return run_with_trusted_agent_worker_scope(worker_identity, original_gated_func, **kwargs)
 
     if args_schema is not None:
         return StructuredTool.from_function(
@@ -221,6 +267,7 @@ def make_gate_context(
     session_id: Optional[str] = None,
     student_id: Optional[str] = None,
     plan_tool_allowlist: Optional[set] = None,
+    allow_artifact_commit: bool = True,
 ) -> GateContext:
     return GateContext(
         interaction_mode=interaction_mode,
@@ -228,4 +275,5 @@ def make_gate_context(
         session_id=session_id,
         student_id=student_id,
         plan_tool_allowlist=plan_tool_allowlist,
+        allow_artifact_commit=allow_artifact_commit,
     )

@@ -224,3 +224,32 @@ def test_budget_stop_in_agent_turn_is_partial_not_fake_completion():
         blackboard=Blackboard(), incomplete=True,
     )
     assert derive_turn_outcome(packed)["status"] == "partial"
+
+
+def test_d3_resource_reads_current_self_report_without_promoting_it_to_resume_fact():
+    repo = BusinessRepo()
+    repo.profile['_user_self_report'] = {'revision': 1}
+    portrait = repo.l2['portrait_candidate']
+    portrait['source_self_report_revision'] = 1
+    portrait['D3_quality']['communication'] = {
+        'evidence': '我在展示前整理大家的问题，逐项沟通并确认了分工。',
+        'provenance': {'kind': 'user_self_report', 'revision': 1}, 'score': 12,
+    }
+    before = json.dumps(repo.profile, ensure_ascii=False, sort_keys=True)
+    result = read_current_resource(repo, student_id=repo.student_id,
+        uri=PORTRAIT_URI, section='evidence', dimension='D3')
+    assert result['data'] == [{'trait': 'communication',
+        'text': '我在展示前整理大家的问题，逐项沟通并确认了分工。',
+        'provenance': {'kind': 'user_self_report', 'revision': 1}}]
+    assert result['source_resume_version'] == repo.resume_task
+    assert result['published'] is False and result['coverage']['total'] == 1
+    assert json.dumps(repo.profile, ensure_ascii=False, sort_keys=True) == before
+    with pytest.raises(LookupError):
+        read_current_resource(repo, student_id='student_other', uri=PORTRAIT_URI, section='evidence', dimension='D3')
+
+
+def test_ask_practice_restriction_does_not_discard_student_statements():
+    from app.services.agent_runtime.mode_runtime import _ask_evidence_card
+    card = _ask_evidence_card({'items': [{'data': {'provenance': {'kind': 'user_self_report'}}}]})
+    assert '行动计划中的实际尝试' in card
+    assert '本人补充可以按自述讨论' in card

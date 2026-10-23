@@ -29,6 +29,92 @@ REPORT = {
 }
 
 
+def test_resume_reading_uses_existing_single_repair_without_rewriting_or_rerolling():
+    import json
+    from app.services.agent_runtime.mode_runtime import _ask_answer_or_repair
+    pack={'items': [{'uri': URI, 'section': 'analysis', 'data': {'kind': 'unclear_expression'}}]}
+    bad='这能看出你有数据聚合意识和落地能力。比如按身份证号和手机号判重？'
+    good='原文写明了用SQL统计各活动报名人数。核对重复报名的判断依据还没写明，补清后读者才能看懂结果怎样得出。'
+    class Client:
+        calls=[]
+        def chat(self, **kwargs):
+            self.calls.append(kwargs)
+            return json.dumps({'reply': good}, ensure_ascii=False)
+    client=Client()
+    messages=[{'role':'system','content':'只读当前资料'},{'role':'user','content':'已有原文及当前来源问题'}]
+    assert _ask_answer_or_repair(client,bad,messages,temperature=.4,max_tokens=1000,evidence_pack=pack)==([],good)
+    assert len(client.calls)==1 and client.calls[0]['messages'][1]==messages[1]
+    assert client.calls[0]['response_format']['type']=='json_schema'
+    # A second bad draft is not retried or published as a successful answer.
+    client.calls=[]
+    client.chat=lambda **kwargs: (client.calls.append(kwargs) or json.dumps({'reply': bad},ensure_ascii=False))
+    assert _ask_answer_or_repair(client,bad,messages,temperature=.4,max_tokens=1000,evidence_pack=pack)==([],'')
+    assert len(client.calls)==1
+
+
+def test_resume_reading_boundary_is_not_a_global_ask_filter():
+    from app.services.agent_runtime.resume_report_resources import resume_reading_answer_error
+    assert resume_reading_answer_error('比如用SQL说明原理。', {'items': []}) is None
+
+
+def test_source_readback_projects_current_actual_data_and_never_calls_answer_model(monkeypatch):
+    import time
+    from app.services.agent_runtime.mode_runtime import ModeRuntime
+    from app.services.agent_runtime.blackboard import Blackboard
+    from app.services.agent_runtime.resume_report_resources import source_readback_answer
+    pack={'answer_kind':'source_readback','status':'completed','coverage':{'complete':True},
+        'items':[{'uri':URI,'section':'analysis','version':'confirm1','analysis_content_status':'current',
+                  'data':{'kind':'summary','text':'这一份报告实际解释了按活动统计报名人数。'}},
+                 {'uri':URI,'section':'analysis','version':'confirm1','analysis_content_status':'current',
+                  'data':{'kind':'unclear_expression','text':'当时依据什么判断重复？','why':'补清后能看懂结果怎样得出。'}}]}
+    monkeypatch.setattr('app.utils.llm_client.get_llm_client', lambda: (_ for _ in ()).throw(AssertionError('Do not regenerate a saved reading')))
+    reply=ModeRuntime()._run_ask(message='读回这份解读',blackboard=Blackboard(),prefix='',hist=[],
+        start=time.time(),session_id=None,upgrade_hint=None,memory_mount='',evidence_pack=pack)['reply']
+    assert '这一份报告实际解释了按活动统计报名人数。' in reply and '当时依据什么判断重复？' in reply
+    more=deepcopy(pack)
+    more['items'].append({**pack['items'][0],'data':{'kind':'strengths','text':'另一项经历有自己的独有解读，仍须完整保留。'}})
+    assert '另一项经历有自己的独有解读，仍须完整保留。' in source_readback_answer(more)
+    assert source_readback_answer({**pack,'budget_exceeded':True}) is None
+    other=deepcopy(pack);other['items'][0]['data']['text']='另一份当前报告中的不同解读。'
+    assert '另一份当前报告中的不同解读。' in source_readback_answer(other)
+    assert '这一份报告实际解释了' not in source_readback_answer(other)
+    legacy=deepcopy(pack)
+    for item in legacy['items']:item['analysis_content_status']='legacy'
+    assert source_readback_answer(legacy) is None
+    assert source_readback_answer({**pack,'answer_kind':'analysis'}) is None
+    supplemented=deepcopy(pack)
+    supplemented['items'].append({'uri':'career://me/portrait','dimension':'D3',
+        'data':{'trait':'communication','text':'我整理并沟通了同学的问题。','provenance':{'kind':'user_self_report','revision':1}}})
+    answer=source_readback_answer(supplemented)
+    assert '本人自述' in answer and '我整理并沟通了同学的问题。' in answer
+    assert '当时依据什么判断重复？' not in answer
+    assert '独立核验' in answer
+
+
+def test_reading_evidence_labels_survive_public_and_history_normalization():
+    from app.services.agent_runtime.turn_contract import normalize_message_parts
+    part={'type':'evidence_summary','status':'complete','sources':[
+        {'label':'简历解读','status':'read'}, {'label':'沟通与协作补充','status':'read'}]}
+    assert normalize_message_parts([part])[0]['sources']==part['sources']
+
+
+def test_catalog_preview_uses_the_actual_current_reading_not_only_a_title(monkeypatch):
+    monkeypatch.setattr(resources,'_current',lambda mysql,student_id:{**deepcopy(REPORT),'analysis_content_status':'current'})
+    found=resources.list_resume_report_resources(object(),student_id='owner')['resources'][-1]
+    assert found['reading_preview'][0]['text']==REPORT['analysis']['summary']['text']
+
+
+def test_missing_readback_never_falls_through_to_new_model_advice(monkeypatch):
+    import time
+    from app.services.agent_runtime.mode_runtime import ModeRuntime
+    from app.services.agent_runtime.blackboard import Blackboard
+    monkeypatch.setattr('app.utils.llm_client.get_llm_client',lambda:(_ for _ in ()).throw(AssertionError('No new inference for a failed readback')))
+    result=ModeRuntime()._run_ask(message='读回原结果',blackboard=Blackboard(),prefix='',hist=[],
+        start=time.time(),session_id=None,upgrade_hint=None,memory_mount='',evidence_pack={'answer_kind':'source_readback','items':[]})
+    from app.services.agent_runtime.turn_contract import derive_turn_outcome
+    assert '还没有读到' in result['reply'] and derive_turn_outcome(result)['status']=='partial'
+
+
 def test_list_and_page_current_resume_report(monkeypatch):
     seen = []
 

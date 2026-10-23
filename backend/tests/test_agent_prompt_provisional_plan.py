@@ -1,4 +1,6 @@
-"""A broad learning-plan request can complete as advice without fake artifacts."""
+"""A broad learning-plan request does not claim a saved artifact without proof."""
+
+import json
 
 from app.services.agent_runtime.blackboard import Blackboard
 from app.services.agent_runtime.mode_runtime import ModeRuntime
@@ -30,12 +32,26 @@ def test_agent_learning_plan_without_owner_cannot_claim_saved_artifact(monkeypat
     packets = []
 
     class RouterLLM:
-        def chat_json(self, **kwargs):
-            routed_prompts.append(kwargs["messages"][0]["content"])
-            return {
-                "action": "call", "subagent": "planner", "goal": "制定本周学习计划",
-                "document_view": "answer", "confidence": 0.9,
-            }
+        def chat(self, **kwargs):
+            prompt = kwargs["messages"][0]["content"]
+            if "允许的角色 ID：" in prompt:
+                routed_prompts.append(prompt)
+                return json.dumps({
+                    "user_job": "execute",
+                    "action": "run_plan",
+                    "template": None,
+                    "steps": [{
+                        "role": "planner",
+                        "goal": "制定本周学习计划",
+                        "skill_ids": [],
+                    }],
+                    "goal_summary": "制定本周学习计划",
+                    "vagueness": "clear",
+                    "missing_slots": [],
+                    "handoff_brief": "给出一份可调整的本周学习安排",
+                    "plan_sketch": ["制定学习安排"],
+                }, ensure_ascii=False)
+            return "暂按每天 30 分钟：周一梳理目标，周二至周四完成一个练习，周五复盘并留下作品。你本周每天能投入多久？"
 
     def invoke(packet, blackboard, _session_id, **_kwargs):
         packets.append(packet)

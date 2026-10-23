@@ -13,6 +13,14 @@ from typing import Any, Dict, List, Optional
 
 from .field_keys import NEVER_KEYS as _SENSITIVE_KEYS
 
+# These values are injected from the authenticated request/session scope. They
+# are useful inside the runtime and audit trail, but do not help users interpret
+# a read-only tool card and can expose cross-service identifiers.
+_OWNER_SCOPE_KEYS = frozenset({
+    "student_id", "studentid", "user_id", "userid",
+    "session_id", "sessionid", "conversation_id", "conversationid",
+})
+
 _PHONE_RE = re.compile(r"(?<!\d)(1[3-9]\d)\d{4}(\d{4})(?!\d)")
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 _ID_CARD_RE = re.compile(r"\b(\d{6})\d{8}(\d{3}[\dXx])\b")
@@ -35,13 +43,18 @@ def redact_text(text: str, *, max_len: Optional[int] = 160) -> str:
 
 
 def sanitize_parameters(params: Any) -> Dict[str, str]:
-    """Public-safe arg digest for UI (ids ok, secrets/blobs no)."""
+    """Public-safe arg digest for UI (owner scope IDs, secrets/blobs excluded)."""
     if not isinstance(params, dict):
         return {}
     safe: Dict[str, str] = {}
     for key, val in params.items():
         lk = str(key).lower()
-        if lk in _SENSITIVE_KEYS or lk.endswith("_json") or lk.endswith("_token"):
+        if (
+            lk in _SENSITIVE_KEYS
+            or lk in _OWNER_SCOPE_KEYS
+            or lk.endswith("_json")
+            or lk.endswith("_token")
+        ):
             continue
         s = str(val) if val is not None else ""
         if len(s) > 80:
@@ -55,7 +68,8 @@ def public_tool_summary(tool_name: str, result_text: str = "", ok: bool = True, 
     labels = {"done": "调用已结束", "completed": "调用已结束", "error": "未成功",
               "failed": "未成功", "partial": "部分完成", "needs_input": "待补充或确认",
               "running": "进行中", "pending": "等待执行", "queued": "等待执行",
-              "unverified": "结果待核验", "cancelled": "已取消"}
+              "unverified": "结果待核验", "cancelled": "已取消",
+              "unavailable": "资料不可用"}
     state = status or ("done" if ok else "error")
     return f"{tool_name or 'tool'} {labels.get(state, '结果待核验')}（已脱敏）"
 

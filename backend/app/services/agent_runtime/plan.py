@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .blackboard import Blackboard, BlackboardError
-from .task_packet import TaskPacket, build_lean_packet, build_standard_packet
+from .task_packet import SUBAGENTS, TaskPacket, build_lean_packet, build_standard_packet
+from .skill_registry import allowed_skill_ids
 
 # Whitelisted plan templates (plan D)
 PLAN_TEMPLATES: Dict[str, List[str]] = {
@@ -14,6 +15,15 @@ PLAN_TEMPLATES: Dict[str, List[str]] = {
     "profile_match": ["profile", "match"],
     "match_report": ["match", "report"],
     "match_planner": ["match", "planner"],
+}
+MAX_PLAN_STEPS = 6
+MAX_DISTINCT_ROLES = 3
+_ROLE_LABELS = {
+    "profile": "画像",
+    "match": "匹配",
+    "report": "报告",
+    "planner": "规划",
+    "qa": "问答",
 }
 
 @dataclass
@@ -23,6 +33,7 @@ class PlanStepResult:
     reply: str = ""
     error: str = ""
     blackboard_updates: Dict[str, Any] = field(default_factory=dict)
+    skill_versions: List[Dict[str, str]] = field(default_factory=list)
 
 
 def detect_plan_template(message: str, plan_mode: bool = False) -> Optional[str]:
@@ -31,28 +42,37 @@ def detect_plan_template(message: str, plan_mode: bool = False) -> Optional[str]
 
 
 def build_plan_packets(
-    template_id: str,
+    template_id: str | Sequence[Dict[str, Any]],
     user_utterance: str,
     *,
     handoff_brief: str = "",
     goal_summary: str = "",
+    capability_id: Optional[str] = None,
 ) -> List[TaskPacket]:
     """
     Give every step the bounded, self-contained task brief. Later steps remain
     lean (no raw utterance/history); blackboard pointers alone do not preserve
     the current request's target and constraints.
     """
-    steps = PLAN_TEMPLATES.get(template_id)
-    if not steps:
-        raise ValueError(f"unknown plan template: {template_id}")
+    if isinstance(template_id, str):
+        roles = PLAN_TEMPLATES.get(template_id)
+        if not roles:
+            raise ValueError(f"unknown plan template: {template_id}")
+        step_specs = [{"role": role, "goal": "", "skill_ids": []} for role in roles]
+        plan_id = template_id
+    else:
+        step_specs = validate_plan_steps(template_id, capability_id=capability_id)
+        plan_id = "agent_plan"
     brief = (handoff_brief or goal_summary or user_utterance or "").strip()
     packets: List[TaskPacket] = []
-    for i, sub in enumerate(steps):
-        step_id = f"{template_id}:{i}:{sub}"
-        if brief:
-            goal = f"执行计划步骤 {i + 1}/{len(steps)}: {sub}。任务：{brief[:400]}"
-        else:
-            goal = f"执行计划步骤 {i + 1}/{len(steps)}: {sub}"
+    for i, spec in enumerate(step_specs):
+        sub = str(spec["role"])
+        step_id = f"{plan_id}:{i}:{sub}"
+        task = str(spec.get("goal") or "").strip()
+        task = task or brief
+        goal = f"执行计划步骤 {i + 1}/{len(step_specs)}（{_ROLE_LABELS[sub]}）。"
+        if task:
+            goal += f"任务：{task[:400]}"
         if i == 0:
             packets.append(
                 build_standard_packet(
@@ -60,6 +80,8 @@ def build_plan_packets(
                     goal=goal,
                     user_utterance=user_utterance,
                     plan_step_id=step_id,
+                    skill_ids=list(spec.get("skill_ids") or []),
+                    capability_id=capability_id,
                 )
             )
         else:
@@ -68,9 +90,52 @@ def build_plan_packets(
                     subagent=sub,
                     goal=goal,
                     plan_step_id=step_id,
+                    skill_ids=list(spec.get("skill_ids") or []),
+                    capability_id=capability_id,
                 )
             )
     return packets
+
+
+def validate_plan_steps(
+    raw_steps: Any,
+    *,
+    capability_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Validate model-proposed serial steps; tools/permissions stay server-owned."""
+    if not isinstance(raw_steps, list) or not 1 <= len(raw_steps) <= MAX_PLAN_STEPS:
+        raise ValueError(f"plan must contain 1..{MAX_PLAN_STEPS} steps")
+    normalized: List[Dict[str, Any]] = []
+    roles = set()
+    for index, raw in enumerate(raw_steps):
+        if not isinstance(raw, dict):
+            raise ValueError(f"step {index + 1} must be an object")
+        role = str(raw.get("role") or raw.get("subagent") or "").strip().lower()
+        if role not in SUBAGENTS:
+            raise ValueError(f"step {index + 1} role is not allowlisted")
+        goal = str(raw.get("goal") or raw.get("task") or "").strip()
+        if not goal or len(goal) > 400:
+            raise ValueError(f"step {index + 1} goal must be 1..400 characters")
+        raw_skills = raw.get("skill_ids", [])
+        if not isinstance(raw_skills, list) or len(raw_skills) > 3:
+            raise ValueError(f"step {index + 1} skill_ids must be a short list")
+        allowed = allowed_skill_ids(role, capability_id=capability_id)
+        skill_ids: List[str] = []
+        for item in raw_skills:
+            skill_id = str(item or "").strip()
+            if skill_id not in allowed:
+                raise ValueError(f"step {index + 1} skill is not allowlisted for role")
+            if skill_id not in skill_ids:
+                skill_ids.append(skill_id)
+        # A plan is intentionally sequential; model-supplied dependency graphs,
+        # arbitrary tools, and runtime permission overrides are not accepted.
+        if any(key in raw for key in ("depends_on", "tools", "permissions", "parallel")):
+            raise ValueError(f"step {index + 1} contains unsupported execution controls")
+        normalized.append({"role": role, "goal": goal, "skill_ids": skill_ids})
+        roles.add(role)
+    if len(roles) > MAX_DISTINCT_ROLES:
+        raise ValueError(f"plan exceeds {MAX_DISTINCT_ROLES} distinct roles")
+    return normalized
 
 
 def commit_step_updates(
@@ -129,6 +194,7 @@ def run_plan(
                 reply=reply,
                 error=err,
                 blackboard_updates=committed,
+                skill_versions=list(out.get("skill_versions") or []),
             ))
             if ok:
                 summaries.append(f"[{packet.subagent}] 完成")
@@ -142,7 +208,7 @@ def run_plan(
             summaries.append(f"[{packet.subagent}] 失败: {e}")
             break
 
-    narrative = "计划执行结果:\n" + "\n".join(summaries)
+    narrative = "\n".join(summaries)
     # Prefer last successful substantive reply; avoid appending failed hollow prose as "success"
     ok_replies = [r.reply for r in results if r.ok and r.reply]
     if ok_replies:

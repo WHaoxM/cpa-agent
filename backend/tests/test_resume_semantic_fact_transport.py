@@ -6,6 +6,54 @@ from app.pipeline.entity_extractor.resume_structure import (
     _canonical_response_format, _merge_grounded_facts, _semantic_fact_instruction, extract_canonical_profile,
 )
 from config.loader import get_rules_config
+import pytest
+
+
+@pytest.mark.parametrize('body', ['计算机相关课程，未填写年级与成绩。', '计算机课程练习。' * 1400], ids=['single','map-reduce'])
+def test_degree_cannot_be_supplied_without_explicit_resume_evidence(body):
+    class Client:
+        def chat(self, **kwargs):
+            return json.dumps({'name': '林知夏', 'degree': '本科'})
+    result = extract_canonical_profile(Client(), body, link_entities=False)
+    assert 'degree' not in result
+    assert {'field': 'degree', 'reason': 'not_explicit_in_source'} in result['source_field_issues']
+
+
+def test_degree_explicitly_written_in_resume_remains_readable():
+    class Client:
+        def chat(self, **kwargs):
+            return json.dumps({'name': '林知夏', 'degree': '本科'})
+    assert extract_canonical_profile(Client(), '林知夏，本科在读。', link_entities=False)['degree'] == '本科'
+
+
+def test_grade_from_prompt_example_is_not_a_resume_fact():
+    class Client:
+        def chat(self, **kwargs):
+            return json.dumps({"school": "武汉理工大学", "grade": "大二"})
+
+    result = extract_canonical_profile(Client(), "武汉理工大学，本科，2023.09—2027.06（预计）", link_entities=False)
+    assert "grade" not in result
+    assert {"field": "grade", "reason": "not_explicit_in_source"} in result["source_field_issues"]
+
+
+def test_explicit_grade_keeps_the_original_writing():
+    class Client:
+        def chat(self, **kwargs):
+            return json.dumps({"school": "武汉理工大学", "grade": "大三"})
+
+    result = extract_canonical_profile(Client(), "武汉理工大学，大三在读", link_entities=False)
+    assert result["grade"] == "大三"
+    assert not result.get("source_field_issues")
+
+
+def test_reduce_may_not_reintroduce_a_grade_absent_from_the_resume():
+    class Client:
+        def chat(self, **kwargs):
+            return json.dumps({"school": "武汉理工大学", "grade": "大二"})
+
+    result = extract_canonical_profile(Client(), "武汉理工大学课程项目经历。" * 1400, link_entities=False)
+    assert result["structure_path"] == "chunk_merge"
+    assert "grade" not in result
 
 
 def test_prompt_exposes_configured_categories_without_name_heuristics():

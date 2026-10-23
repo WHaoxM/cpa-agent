@@ -340,6 +340,20 @@ def read_current_resource(
         raise ValueError("画像依据需指定 section=evidence 与 dimension=D1-D4")
     evidence = _payload(portrait.get(_DIMENSIONS[dimension])).get("evidence") or []
     items = evidence if isinstance(evidence, list) else []
+    if dimension == 'D3':
+        # L2 stores self-reported examples on each trait, not on the aggregate
+        # evidence list. Read only current, explicitly attributed observations;
+        # neither a score nor the plan's instructions are personal evidence.
+        items = list(items)
+        for trait in ('communication', 'teamwork', 'responsibility', 'stress_tolerance'):
+            observation = _payload(_payload(portrait.get('D3_quality')).get(trait))
+            provenance = _payload(observation.get('provenance'))
+            example = observation.get('evidence')
+            if (provenance.get('kind') == 'user_self_report'
+                    and type(provenance.get('revision')) is int and provenance['revision'] > 0
+                    and provenance['revision'] == portrait.get('source_self_report_revision')
+                    and isinstance(example, str) and example.strip()):
+                items.append({'trait': trait, 'text': example, 'provenance': provenance})
     page, coverage = _page(items, offset=offset, limit=limit)
     return {
         "success": True, "status": status, "uri": uri, "section": section,

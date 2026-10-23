@@ -73,3 +73,25 @@ def tmp_workspace(tmp_path, monkeypatch) -> Path:
     init_rules_config(force=True)
     init_prompt_registry(force=True)
     return tmp_path
+
+
+@pytest.fixture
+def offline_budget_estimator(monkeypatch):
+    """Use the deterministic UTF-8 estimator in tests that must not fetch tiktoken."""
+    from app.services.agent_runtime import budget
+
+    monkeypatch.setenv("CPA_LLM_CONTEXT_WINDOW_TOKENS_OPENAI", "16384")
+
+    def deterministic_capability(provider, model):
+        configured_window = os.getenv(
+            f"CPA_LLM_CONTEXT_WINDOW_TOKENS_{provider.upper()}", "16384",
+        )
+        return budget.ModelCapability(
+            provider=provider,
+            model=model,
+            context_window_tokens=int(configured_window),
+            tokenizer="utf8_bytes_conservative",
+            source="offline_test_injection",
+        )
+
+    monkeypatch.setattr(budget, "model_capability_for", deterministic_capability)

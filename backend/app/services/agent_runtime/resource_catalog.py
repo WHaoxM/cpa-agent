@@ -32,12 +32,14 @@ def list_platform_resources(mysql, *, student_id: str) -> dict:
     from .match_report_resources import list_match_report_resources
     from .personal_resources import list_personal_resources
     from .resume_report_resources import list_resume_report_resources
+    from ..career_exploration_resources import list_exploration_resources
 
     providers = (
         ("resume_portrait", list_current_resources),
         ("match_report", list_match_report_resources),
         ("resume_report", list_resume_report_resources),
         ("personal", list_personal_resources),
+        ("exploration", list_exploration_resources),
     )
     for name, provider in providers:
         try:
@@ -68,6 +70,10 @@ def read_platform_resource(
             mysql, student_id=student_id, uri=uri, section=section,
             offset=offset, limit=limit, dimension=dimension,
         )
+    from ..career_exploration_resources import URI, read_exploration_resource
+    if URI.fullmatch(uri):
+        return read_exploration_resource(mysql, student_id=student_id, uri=uri,
+                                         section=section, offset=offset, limit=limit)
     from .match_report_resources import handles_uri, read_match_report_resource
     if handles_uri(uri):
         return read_match_report_resource(

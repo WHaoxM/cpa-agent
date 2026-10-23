@@ -136,6 +136,13 @@ def confirmed_semantic_fact(profile, key):
 def _ground_semantic_facts(profile, data, text):
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     profile["source_sha256"] = digest
+    # Enrollment or course names prove neither year nor degree. Use the same
+    # existing grounding seam for map AND reduce; do not fill unknown scalars.
+    for field in ('grade', 'degree'):
+        value = profile.get(field)
+        if value and "".join(str(value).split()).casefold() not in "".join(text.split()).casefold():
+            profile.pop(field)
+            profile.setdefault("source_field_issues", []).append({"field": field, "reason": "not_explicit_in_source"})
     facts = {}
     issues = []
     scoring_categories = get_rules_config().scoring_tables

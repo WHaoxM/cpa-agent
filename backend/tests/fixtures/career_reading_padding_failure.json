@@ -1,0 +1,267 @@
+{
+  "source_run": "03b983bd6ef6",
+  "candidate": {
+    "reply": "",
+    "question": null,
+    "comparisons": [],
+    "proposal": null,
+    "review": null,
+    "positioning": {
+      "role": "数据分析",
+      "anchors": [
+        {
+          "evidence_id": "resume.project.0",
+          "fragment_id": "resume.project.0/f1"
+        }
+      ],
+      "starting_point": "任务结果是按活动维度统计出的报名人数数字，回答的问题是‘每个活动有多少人报名’。",
+      "connections": [
+        {
+          "text": "SQL 分组查询产出的计数结果，是数据分析中描述性统计（如频次分布）的典型输出形式。",
+          "evidence_ids": [
+            "resume.project.0"
+          ],
+          "anchors": [
+            {
+              "evidence_id": "resume.project.0",
+              "fragment_id": "resume.project.0/f1"
+            }
+          ]
+        },
+        {
+          "text": "目录中列出的‘数据清洗’与‘逐项核对重复报名’存在动作呼应——核对重复即在处理报名数据中的冗余或异常记录。",
+          "evidence_ids": [
+            "resume.project.0",
+            "direction.0.6"
+          ],
+          "anchors": [
+            {
+              "evidence_id": "resume.project.0",
+              "fragment_id": "resume.project.0/f2"
+            },
+            {
+              "evidence_id": "direction.0.6",
+              "fragment_id": "direction.0.6/f0"
+            }
+          ]
+        }
+      ],
+      "uncertainties": [
+        {
+          "kind": "needs_detail",
+          "text": "‘逐项核对重复报名’依据什么规则判断重复？例如是同一人报多个活动、同一活动报多次，还是其他条件？",
+          "evidence_ids": [
+            "resume.project.0"
+          ],
+          "anchors": [
+            {
+              "evidence_id": "resume.project.0",
+              "fragment_id": "resume.project.0/f2"
+            }
+          ]
+        }
+      ],
+      "next_action": {
+        "kind": "clarify_experience",
+        "text": "说明当时判断‘重复报名’的具体依据或规则",
+        "reason": "让读者能准确理解‘核对重复’这一步实际在解决什么数据问题，从而判断它是否构成数据清洗的初步实践",
+        "evidence_ids": [
+          "resume.project.0"
+        ],
+        "anchors": [
+          {
+            "evidence_id": "resume.project.0",
+            "fragment_id": "resume.project.0/f2"
+          }
+        ]
+      }
+    }
+  },
+  "bank": [
+    {
+      "id": "resume.project.0",
+      "label": "校园活动查询练习",
+      "quote": "校园活动查询练习；负责报名查询与结果核对；我编写 SQL 分组查询统计各活动报名人数，逐项核对重复报名；用 Vue 展示查询结果。",
+      "kind": "resume_experience",
+      "fragments": [
+        {
+          "id": "resume.project.0/f0",
+          "text": "负责报名查询与结果核对"
+        },
+        {
+          "id": "resume.project.0/f1",
+          "text": "我编写 SQL 分组查询统计各活动报名人数"
+        },
+        {
+          "id": "resume.project.0/f2",
+          "text": "逐项核对重复报名"
+        },
+        {
+          "id": "resume.project.0/f3",
+          "text": "用 Vue 展示查询结果"
+        }
+      ],
+      "interpretation_scope": "原文的统计对象是报名；可以解释按活动计数或分布。计数本身不说明喜好、受欢迎程度、异常、资源安排合理性、真实意愿或实际到场。只读描述不证明数值正确，也不证明检查采用何种实现方式。"
+    },
+    {
+      "id": "resume.skill.0",
+      "label": "简历列出的技能",
+      "quote": "SQL",
+      "kind": "resume_skill",
+      "fragments": [
+        {
+          "id": "resume.skill.0/f0",
+          "text": "SQL"
+        }
+      ]
+    },
+    {
+      "id": "resume.skill.1",
+      "label": "简历列出的技能",
+      "quote": "Vue",
+      "kind": "resume_skill",
+      "fragments": [
+        {
+          "id": "resume.skill.1/f0",
+          "text": "Vue"
+        }
+      ]
+    },
+    {
+      "id": "resume.skill.2",
+      "label": "简历列出的技能",
+      "quote": "Python",
+      "kind": "resume_skill",
+      "fragments": [
+        {
+          "id": "resume.skill.2/f0",
+          "text": "Python"
+        }
+      ]
+    },
+    {
+      "id": "student.message",
+      "label": "本次本人补充",
+      "quote": "我想了解数据分析。请结合我已经做过的具体任务，解释我可以从哪里开始、哪个问题最值得先澄清，以及优先做什么。先看起点，不生成计划，也不需要先问投入时间。",
+      "kind": "student_statement",
+      "declares_not_done": false,
+      "fragments": [
+        {
+          "id": "student.message/f0",
+          "text": "我想了解数据分析"
+        },
+        {
+          "id": "student.message/f1",
+          "text": "请结合我已经做过的具体任务"
+        },
+        {
+          "id": "student.message/f2",
+          "text": "解释我可以从哪里开始、哪个问题最值得先澄清"
+        },
+        {
+          "id": "student.message/f3",
+          "text": "以及优先做什么"
+        },
+        {
+          "id": "student.message/f4",
+          "text": "先看起点"
+        },
+        {
+          "id": "student.message/f5",
+          "text": "不生成计划"
+        },
+        {
+          "id": "student.message/f6",
+          "text": "也不需要先问投入时间"
+        }
+      ]
+    },
+    {
+      "id": "direction.0.0",
+      "label": "数据分析 · 目录技能线索",
+      "quote": "Python",
+      "kind": "direction_catalogue",
+      "fragments": [
+        {
+          "id": "direction.0.0/f0",
+          "text": "Python"
+        }
+      ]
+    },
+    {
+      "id": "direction.0.1",
+      "label": "数据分析 · 目录技能线索",
+      "quote": "SQL",
+      "kind": "direction_catalogue",
+      "fragments": [
+        {
+          "id": "direction.0.1/f0",
+          "text": "SQL"
+        }
+      ]
+    },
+    {
+      "id": "direction.0.2",
+      "label": "数据分析 · 目录技能线索",
+      "quote": "统计分析",
+      "kind": "direction_catalogue",
+      "fragments": [
+        {
+          "id": "direction.0.2/f0",
+          "text": "统计分析"
+        }
+      ]
+    },
+    {
+      "id": "direction.0.3",
+      "label": "数据分析 · 目录技能线索",
+      "quote": "BI 工具",
+      "kind": "direction_catalogue",
+      "fragments": [
+        {
+          "id": "direction.0.3/f0",
+          "text": "BI 工具"
+        }
+      ]
+    },
+    {
+      "id": "direction.0.4",
+      "label": "数据分析 · 目录技能线索",
+      "quote": "指标体系",
+      "kind": "direction_catalogue",
+      "fragments": [
+        {
+          "id": "direction.0.4/f0",
+          "text": "指标体系"
+        }
+      ]
+    },
+    {
+      "id": "direction.0.5",
+      "label": "数据分析 · 目录技能线索",
+      "quote": "A/B 测试",
+      "kind": "direction_catalogue",
+      "fragments": [
+        {
+          "id": "direction.0.5/f0",
+          "text": "A/B 测试"
+        }
+      ]
+    },
+    {
+      "id": "direction.0.6",
+      "label": "数据分析 · 目录技能线索",
+      "quote": "数据清洗",
+      "kind": "direction_catalogue",
+      "fragments": [
+        {
+          "id": "direction.0.6/f0",
+          "text": "数据清洗"
+        }
+      ]
+    }
+  ],
+  "roles": [
+    "数据分析"
+  ]
+}

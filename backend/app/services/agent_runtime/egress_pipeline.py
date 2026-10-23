@@ -26,6 +26,7 @@ _PUBLIC_EVIDENCE_COVERAGE_REASONS = frozenset({
     "not_read", "char_budget", "budget_too_small", "reference_not_current",
     "reference_version_conflict", "continuation_invalid", "evidence_not_needed",
     "selection_unavailable", "no_valid_selection", "no_valid_reference",
+    "stale_report_reference",
     "item_limit", "source_unavailable", "complete",
 })
 
@@ -344,6 +345,24 @@ def _public_persisted_progress(raw: Any) -> Dict[str, Any]:
         }
     if "document_complete" in raw:
         out["document_complete"] = bool(raw.get("document_complete"))
+    role_labels = {
+        "profile": "职业画像",
+        "match": "岗位匹配",
+        "report": "职业报告",
+        "planner": "行动规划",
+        "qa": "资料问答",
+    }
+    if isinstance(raw.get("executed_steps"), list):
+        executed = []
+        for row in raw["executed_steps"][:6]:
+            if not isinstance(row, dict):
+                continue
+            role = str(row.get("role") or "")
+            status = str(row.get("status") or "")
+            if role in role_labels and status in {"completed", "not_completed"}:
+                executed.append({"label": role_labels[role], "status": status})
+        if executed:
+            out["executed_steps"] = executed
     if isinstance(raw.get("evidence"), dict):
         evidence = raw["evidence"]
         coverage = evidence.get("coverage") if isinstance(evidence.get("coverage"), dict) else {}
@@ -406,6 +425,25 @@ def _public_progress(view: Any) -> Dict[str, Any]:
         out["missing_slots"] = [str(x) for x in view["missing_slots"][:4]]
     if isinstance(view.get("plan_sketch"), list):
         out["plan_sketch"] = [sanitize_user_reply(str(x), max_len=120) for x in view["plan_sketch"][:4]]
+    role_labels = {
+        "profile": "职业画像",
+        "match": "岗位匹配",
+        "report": "职业报告",
+        "planner": "行动规划",
+        "qa": "资料问答",
+    }
+    if isinstance(view.get("executed_steps"), list):
+        executed = []
+        for row in view["executed_steps"][:6]:
+            if not isinstance(row, dict):
+                continue
+            role = str(row.get("role") or "")
+            status = str(row.get("status") or "")
+            if role not in role_labels or status not in {"completed", "not_completed"}:
+                continue
+            executed.append({"label": role_labels[role], "status": status})
+        if executed:
+            out["executed_steps"] = executed
     evidence = view.get("evidence_pack") if isinstance(view.get("evidence_pack"), dict) else {}
     if evidence:
         coverage = evidence.get("coverage") if isinstance(evidence.get("coverage"), dict) else {}

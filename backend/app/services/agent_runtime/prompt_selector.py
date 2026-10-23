@@ -75,9 +75,15 @@ class PromptSelector:
 
         prompt_ids = [str(pid) for pid in route.get("prompt_ids") or []]
         rendered: List[str] = []
+        prompt_versions: Dict[str, int] = {}
+        prompt_fingerprints: Dict[str, str] = {}
         try:
             for prompt_id in prompt_ids:
                 entry = self._registry.get_entry(prompt_id)
+                prompt_versions[prompt_id] = int(entry.get("version", 1))
+                fingerprint = getattr(self._registry, "prompt_fingerprint", None)
+                if callable(fingerprint):
+                    prompt_fingerprints[prompt_id] = str(fingerprint(prompt_id))
                 declared = list(entry.get("variables") or [])
                 missing = [name for name in declared if name not in variables]
                 if missing:
@@ -92,6 +98,13 @@ class PromptSelector:
             rendered = [str(route.get("fallback_text") or "").strip()]
 
         system = "\n\n".join(p for p in rendered if p)
+        prompt_manifest = hashlib.sha256(
+            json.dumps(
+                {"versions": prompt_versions, "content": prompt_fingerprints},
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
         digest = hashlib.sha256(
             json.dumps(
                 {
@@ -102,6 +115,7 @@ class PromptSelector:
                         "subagent": key.subagent or "",
                     },
                     "prompt_ids": prompt_ids,
+                    "prompt_manifest": prompt_manifest,
                     "variables": {k: str(v) for k, v in sorted(variables.items())},
                 },
                 ensure_ascii=False,
@@ -116,6 +130,9 @@ class PromptSelector:
             metadata={
                 "description": route.get("description"),
                 "demo_fallback": bool(route.get("demo_fallback")),
+                "prompt_versions": prompt_versions,
+                "prompt_content_hashes": prompt_fingerprints,
+                "prompt_sha256": prompt_manifest,
             },
         )
 

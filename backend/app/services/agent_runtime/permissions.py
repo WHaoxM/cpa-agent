@@ -13,11 +13,10 @@ from enum import Enum
 from typing import Any, Dict, Optional, Set
 
 from .modes import InteractionMode
-from .tool_policy import tools_for
+from .tool_policy import ASK_READONLY_TOOLS, tools_for
 
 # Tools that must never appear in Ask
 ASK_DENY_TOOLS = frozenset({
-    "career_data_read",
     "pipeline_run",
     "portrait_generate",
     "report_generate",
@@ -27,11 +26,11 @@ ASK_DENY_TOOLS = frozenset({
     "learning_path",
     "skill_recommend",
     "db_query",
-    "graph_query",
     "semantic_search",
     "llm_reason",
     "normalize_entity",
-    # attachment_read: Ask may allow via plan_tool_allowlist when files mounted
+    # career_data_read / graph_query / attachment_read are eligible only through
+    # a server-selected explicit read allowlist; all writes stay denied.
 })
 
 # Tools that need a bound student scope when session has student_id
@@ -84,9 +83,13 @@ def visible_tools_for(
 ) -> Set[str]:
     """Model-visible tool names for this turn."""
     if interaction == InteractionMode.ASK:
-        # Ask: zero business tools, except explicit plan allowlist (attachment_read only)
+        # No ambient Ask tools: the server must select a bounded read-only set
+        # for this request. Attachment reads remain available only when the
+        # caller explicitly supplies that per-turn capability.
+        if subagent != "qa":
+            return set()
         if plan_tool_allowlist:
-            return set(plan_tool_allowlist) & {"attachment_read"}
+            return set(ASK_READONLY_TOOLS) & set(plan_tool_allowlist)
         return set()
     allowed = tools_for(subagent)
     if interaction == InteractionMode.EXPERTS and plan_tool_allowlist is not None:
@@ -115,7 +118,7 @@ def evaluate(
         interaction, subagent, plan_tool_allowlist=plan_tool_allowlist,
     )
 
-    # Ask: deny everything not in the narrow visible set (attachment_read when mounted)
+    # Ask: deny everything not in the server-selected, read-only visible set.
     if pmode == PermissionMode.DONT_ASK:
         if name not in visible:
             return PermissionVerdict(
@@ -131,7 +134,7 @@ def evaluate(
             reason=f"工具 '{name}' 对当前子 Agent/模式不可见。",
         )
 
-    if name in ASK_DENY_TOOLS and interaction == InteractionMode.ASK and name != "attachment_read":
+    if name in ASK_DENY_TOOLS and interaction == InteractionMode.ASK:
         return PermissionVerdict(Decision.DENY, reason="Ask 模式拒绝该工具。")
 
     # Experts: only plan-allowlisted tools

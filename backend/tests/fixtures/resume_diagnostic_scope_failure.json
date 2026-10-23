@@ -1,0 +1,88 @@
+{
+  "profile": {
+    "name": "林知夏",
+    "skills": [
+      "SQL",
+      "Vue",
+      "Python"
+    ],
+    "projects": [
+      {
+        "desc": "我编写 SQL 分组查询统计各活动报名人数，逐项核对重复报名；用 Vue 展示查询结果。",
+        "name": "校园活动查询练习",
+        "role": "负责报名查询与结果核对"
+      }
+    ],
+    "_user_self_report": {
+      "items": {
+        "teamwork": {
+          "level": "中",
+          "example": "我和两位同学约定每周检查进度，在合并代码前共同检查接口。"
+        },
+        "communication": {
+          "level": "中",
+          "example": "我在课程展示前主动整理大家的问题，逐项沟通并确认了最终分工。"
+        },
+        "responsibility": {
+          "level": "中",
+          "example": "我负责数据校验和提交检查，发现遗漏后及时补齐并通知组员。"
+        },
+        "stress_tolerance": {
+          "level": "中",
+          "example": "截止日期前我把未完成任务拆开安排，先修复阻塞问题再做演示。"
+        }
+      },
+      "revision": 1,
+      "updated_at": "2026-10-23T01:05:06.007335+00:00",
+      "source_kind": "user_self_report",
+      "source_confirmation_task_id": "task_b9714f451668"
+    },
+    "_resume_confirmation": {
+      "task_id": "task_b9714f451668",
+      "student_id": "acct_5eaff8a9eb464a8d9ecb2169eaf985a2",
+      "source_evidence": {
+        "page_count": 1,
+        "missing_pages": [],
+        "observed_pages": [
+          1
+        ]
+      }
+    }
+  },
+  "analysis": {
+    "summary": {
+      "text": "您完成了一个校园活动报名数据查询练习：用 SQL 实现分组统计，人工或程序化核对重复报名，并用 Vue 展示结果；同时简历中列出了 SQL、Vue 和 Python 三项技能。该练习可作为数据处理+基础前端协作的探索起点，Python 虽未在项目中体现具体应用，但构成潜在技术延展方向。",
+      "evidence_ids": [
+        "projects_0",
+        "skills_0",
+        "skills_1",
+        "skills_2"
+      ]
+    },
+    "questions": [
+      {
+        "text": "在‘校园活动查询练习’中，您提到‘逐项核对重复报名’，请问这是人工比对还是通过 SQL 或 Python 实现的去重逻辑？需要明确您实际编写的代码范围（如是否写了去重查询、是否用 Python 辅助校验）以区分 SQL 与 Python 的应用深度。",
+        "evidence_ids": [
+          "projects_0"
+        ]
+      },
+      {
+        "text": "Vue 用于‘展示查询结果’，请问是否包含前端交互（如筛选、分页、导出）或仅静态渲染？需确认您在该项目中承担的前端实现边界，以便判断 Vue 实践的真实颗粒度。",
+        "evidence_ids": [
+          "projects_0"
+        ]
+      }
+    ],
+    "strengths": [
+      {
+        "text": "记录了使用 SQL 编写分组统计查询，并用 Vue 将结果可视化呈现，表明具备从数据提取到轻量前端展示的端到端小流程实践线索。",
+        "evidence_ids": [
+          "projects_0",
+          "skills_0",
+          "skills_1"
+        ]
+      }
+    ]
+  },
+  "source_run": "output\\career-exploration-replay\\b9714f451668"
+}

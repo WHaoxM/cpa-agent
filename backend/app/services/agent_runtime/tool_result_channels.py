@@ -43,7 +43,10 @@ def build_ui_view(
     payload = _maybe_json_payload(raw_result)
     text = _display_text(raw_result, payload)
     result_status = str(payload.get("status") or "").lower()
-    explicit_failed = payload.get("success") is False or result_status in {"failed", "error", "denied", "unavailable"}
+    explicit_failed = (
+        (payload.get("success") is False and result_status != "unavailable")
+        or result_status in {"failed", "error", "denied"}
+    )
     needs_input = result_status in {"needs_input", "approval_required"}
     # Legacy free text cannot attest business success/failure. Surface unknown
     # outcome as partial until that producer adopts the structured contract.
@@ -56,6 +59,10 @@ def build_ui_view(
         ui_status = result_status
     elif result_status == "partial":
         ui_status = "partial"
+    elif result_status == "unavailable":
+        # Absence of an optional owner resource is not an executor crash.
+        # Keep the producer's explicit status intact for the user and finalizer.
+        ui_status = "unavailable"
     elif explicit_failed:
         ui_status = "error"
     elif partial:

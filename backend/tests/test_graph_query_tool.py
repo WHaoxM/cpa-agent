@@ -94,6 +94,43 @@ def test_scalar_result_through_agent_tool_adapter_and_gate(monkeypatch):
     assert ctx.denials == []
 
 
+def test_plan_scoped_tool_suppresses_artifact_candidate_commits(monkeypatch):
+    from langchain_core.tools import StructuredTool
+    from app.services.agent_runtime import gated_tools
+    from app.services.agent_runtime.modes import InteractionMode
+
+    commits = []
+    audits = []
+    monkeypatch.setattr(gated_tools, "enqueue_audit", lambda **kw: audits.append(kw))
+    monkeypatch.setattr(gated_tools, "pre_tool_use", lambda _name, args, _ctx: type(
+        "Gate", (), {"allowed": True, "args": args, "rewritten": False,
+                     "verdict": type("V", (), {"reason": "ok"})()},
+    )())
+    monkeypatch.setattr(gated_tools, "get_artifact_committer", lambda: type(
+        "Committer", (), {"commit_candidates": lambda self, *a, **k: commits.append((a, k))},
+    )())
+    base = StructuredTool.from_function(
+        func=lambda query: json.dumps({
+            "success": True, "status": "completed", "summary": "read complete",
+            "artifact_candidates": [{"kind": "file", "resource_id": "artifact-x"}],
+        }),
+        name="career_data_read", description="read",
+    )
+    context = gated_tools.make_gate_context(
+        interaction_mode=InteractionMode.AGENT, subagent="qa",
+        student_id="owner_a", session_id="session_a",
+        plan_tool_allowlist={"career_data_read"}, allow_artifact_commit=False,
+    )
+    ui_events = []
+    wrapped = gated_tools._wrap_one(base, context, ui_events)
+
+    wrapped.invoke({"query": "read"})
+
+    assert commits == []
+    assert audits and audits[0]["tool_name"] == "career_data_read"
+    assert "artifact_refs" not in ui_events[0]
+
+
 def test_person_cypher_cannot_be_submitted_as_template_or_executed():
     tool, client, llm = _tool([{"name": "private student"}])
     output = tool.execute(

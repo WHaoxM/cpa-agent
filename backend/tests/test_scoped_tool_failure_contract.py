@@ -117,6 +117,65 @@ def test_transient_read_failure_retries_once_then_settles_as_success(monkeypatch
     assert result["tool_calls"][0]["attempts"] == 2
 
 
+def test_unavailable_optional_read_remains_unavailable_without_executor_failure(monkeypatch):
+    scoped = importlib.import_module("app.services.agent_runtime.scoped_invoke")
+    gated = importlib.import_module("app.services.agent_runtime.gated_tools")
+    seen = []
+    base = StructuredTool.from_function(
+        func=lambda operation: json.dumps({
+            "success": False, "status": "unavailable",
+            "message": "当前用户没有已确认简历",
+        }, ensure_ascii=False),
+        name="career_data_read", description="read",
+    )
+    monkeypatch.setattr(gated, "pre_tool_use", lambda _name, args, _ctx: SimpleNamespace(
+        allowed=True, args=args, rewritten=False, verdict=SimpleNamespace(reason="ok"),
+    ))
+    monkeypatch.setattr(gated, "enqueue_audit", lambda **_kwargs: None)
+    monkeypatch.setattr(gated, "get_artifact_committer", lambda: SimpleNamespace(
+        commit_candidates=lambda *_a, **_k: [],
+    ))
+    monkeypatch.setattr(
+        scoped, "build_gated_tools",
+        lambda _subagent, ctx, collector: [gated._wrap_one(base, ctx, collector)],
+    )
+
+    class Model:
+        def invoke(self, messages):
+            seen.append(list(messages))
+            if len(seen) == 1:
+                return AIMessage(content="", tool_calls=[{
+                    "name": "career_data_read", "args": {"operation": "read"},
+                    "id": "call-unavailable",
+                }])
+            return AIMessage(content="资料不可用；以下只根据用户提供的文字回答。")
+
+    monkeypatch.setattr("app.services.langgraph_agent._build_llm_with_tools", lambda *_a: Model())
+    result = scoped.scoped_invoke(
+        TaskPacket(goal="只读分析用户提供的背景", subagent="qa", read_keys=[], write_keys=[]),
+        Blackboard(), interaction_mode=InteractionMode.AGENT,
+        plan_tool_allowlist={"career_data_read"}, allow_artifact_commit=False,
+    )
+
+    assert result["incomplete"] is False
+    assert result["reply"].startswith("资料不可用")
+    assert result["tool_calls"][0]["status"] == "unavailable"
+    assert "未成功" not in result["tool_calls"][0]["summary"]
+
+
+def test_tool_result_channel_preserves_unavailable_as_non_crash():
+    from app.services.agent_runtime.tool_result_channels import build_ui_view
+
+    card = build_ui_view("career_data_read", {
+        "success": False, "status": "unavailable",
+        "message": "当前用户没有已确认简历",
+    })
+
+    assert card["status"] == "unavailable"
+    assert "资料不可用" in card["summary"]
+    assert "未成功" not in card["summary"]
+
+
 def test_permission_gate_is_terminal_and_mutating_tool_is_not_retried(monkeypatch):
     gated = importlib.import_module("app.services.agent_runtime.gated_tools")
     calls = []

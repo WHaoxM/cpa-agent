@@ -17,10 +17,12 @@ from __future__ import annotations
 import functools
 import json
 import logging
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, Tuple
 
-from flask import g, jsonify, request
+from flask import g, has_request_context, jsonify, request
 
 from ..exceptions import ErrorCode
 
@@ -50,6 +52,98 @@ class RequestScope:
     @property
     def student_id(self) -> str:
         return self.principal.student_id
+
+
+_agent_worker_identity: ContextVar[Optional[Tuple[Principal, Callable[[str, str], bool], str, str]]] = ContextVar(
+    "cpa_agent_worker_principal", default=None,
+)
+
+
+@contextmanager
+def trusted_agent_worker_scope(
+    *,
+    run_id: str,
+    claim_token: str,
+    load_claim_binding: Callable[[str, str], Optional[Dict[str, Any]]],
+    scope_is_current: Callable[[str, str], bool],
+):
+    """Bind tool calls to a MySQL-verified run owner outside Flask requests.
+
+    This is an internal Celery-only identity bridge, not an HTTP/request
+    emulator. The caller must provide the DB-loaded owner and the dispatch
+    store's claim verifier; no model/tool argument can establish this scope.
+    The scope is reset even when a tool or model call raises.
+    """
+    run_id = str(run_id or "")
+    claim_token = str(claim_token or "")
+    if (not run_id.startswith("run_") or len(claim_token) != 32
+            or not callable(load_claim_binding) or not callable(scope_is_current)):
+        raise ScopeError("缺少有效的 Agent worker claim")
+    binding = load_claim_binding(run_id, claim_token)
+    if not isinstance(binding, dict):
+        raise ScopeError("Agent worker claim 已过期")
+    student_id = str(binding.get("student_id") or "").strip()
+    principal_id = str(binding.get("principal_id") or "").strip()
+    principal_source = str(binding.get("principal_source") or "")
+    if (not student_id or len(student_id) > 64 or not principal_id
+            or len(principal_id) > 64 or principal_source != "account"
+            or type(binding.get("principal_auth_epoch")) is not int):
+        raise ScopeError("Agent run 未绑定可核验账号")
+    if not scope_is_current(run_id, claim_token):
+        raise ScopeError("Agent worker claim 已过期")
+    principal = Principal(
+        principal_id=principal_id,
+        student_id=student_id,
+        source=principal_source,
+    )
+    token = _agent_worker_identity.set(
+        (principal, scope_is_current, run_id, claim_token),
+    )
+    try:
+        yield RequestScope(principal=principal)
+    finally:
+        _agent_worker_identity.reset(token)
+
+
+def has_trusted_agent_worker_scope() -> bool:
+    """Whether this execution context has the internal run-owner binding."""
+    identity = _agent_worker_identity.get()
+    if identity is None:
+        return False
+    principal, validator, run_id, claim_token = identity
+    del principal
+    try:
+        return bool(validator(run_id, claim_token))
+    except Exception:
+        return False
+
+
+def capture_trusted_agent_worker_scope():
+    """Capture only the internal MySQL-claim identity for sync tool threads.
+
+    LangGraph's synchronous ToolNode may invoke tools in executor threads,
+    where ordinary ContextVar values are not guaranteed to be inherited.
+    Capture returns no value for HTTP/non-worker calls, so it cannot manufacture
+    an identity from request arguments.
+    """
+    identity = _agent_worker_identity.get()
+    if identity is None or not has_trusted_agent_worker_scope():
+        return None
+    return identity
+
+
+def run_with_trusted_agent_worker_scope(identity, function, *args, **kwargs):
+    """Rebind a previously captured claim identity around one sync tool call."""
+    if identity is None:
+        return function(*args, **kwargs)
+    principal, validator, run_id, claim_token = identity
+    if not validator(run_id, claim_token):
+        raise ScopeError("Agent worker claim 已过期")
+    token = _agent_worker_identity.set(identity)
+    try:
+        return function(*args, **kwargs)
+    finally:
+        _agent_worker_identity.reset(token)
 
 
 class ScopeError(Exception):
@@ -105,6 +199,17 @@ def resolve_request_scope(*, session_id: Optional[str] = None) -> RequestScope:
     real auth middleware populates flask.g with a principal.
     """
     from ..config import Config
+
+    # A verified Celery claim can authorize owner-scoped service tools without
+    # manufacturing a Flask request context. Real requests always prefer the
+    # authenticated request Principal and cannot be overridden by this scope.
+    if not has_request_context():
+        identity = _agent_worker_identity.get()
+        if identity is not None:
+            principal, validator, run_id, claim_token = identity
+            if not validator(run_id, claim_token):
+                raise ScopeError("Agent worker claim 已过期")
+            return RequestScope(principal=principal, session_id=session_id)
 
     if getattr(Config, "DEMO_MODE", True):
         principal = _configured_demo_principal()

@@ -101,6 +101,8 @@ def install_account_auth(app):
     )
     app.config.setdefault("RATELIMIT_KEY_PREFIX", "cpa-account-auth")
     Session(app)
+    from .account_session import LogoutSafeRedisSessionInterface
+    app.session_interface = LogoutSafeRedisSessionInterface.wrap(app, app.session_interface)
     login_manager = LoginManager()
     login_manager.init_app(app)
     csrf = CSRFProtect(app)

@@ -8,6 +8,7 @@
 5. internship_months 为整数累计月数；原文只写「实习」未写月数时填 0，不要默认猜测。
 6. projects[].is_team 仅当原文体现团队/负责人时为 true。
 7. 只返回一个 JSON 对象，不要 Markdown、不要解释。
+8. grade 只保留原文明确写出的年级，不根据入学/毕业日期或当前时间推算；未写年级则省略或填 null，禁止照抄示例。
 
 文本：
 {text}
@@ -17,7 +18,7 @@
   "name": "姓名",
   "phone": "",
   "email": "",
-  "grade": "大二",
+  "grade": null,
   "school": "学校全称",
   "major": "专业",
   "degree": "本科",

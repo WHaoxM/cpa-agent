@@ -50,14 +50,35 @@ def agent_upload_file():
 
     # Import leaf module — avoid pulling LangGraph via agent_runtime package side effects
     from ..services.agent_runtime.media.file_store import get_agent_file_service
+    from ..services.agent_runtime.task_context import TaskContextStore, TaskContextConflict
+    from ..services.db import get_mysql_client
 
     try:
+        revision_raw = request.form.get('task_context_version')
+        task_store = None
+        if revision_raw is not None:
+            if not session_id or not revision_raw.isdigit():
+                raise ValueError('任务附件需要有效会话及整数任务版本')
+            from ..services.session_manager import get_session_manager
+            session = get_session_manager().refresh_session(session_id, require_authoritative=True)
+            if not session or session.student_id != scope.student_id:
+                return jsonify(safe_not_found('任务不存在或已过期')), 404
+            revision = int(revision_raw)
+            task_store = TaskContextStore(get_mysql_client())
+            task_store.check_upload(session, scope.student_id, revision)
         meta = get_agent_file_service().upload(
             file_storage=f,
             student_id=scope.student_id,
             session_id=session_id,
             purpose=purpose,
         )
+        if task_store:
+            # Do not acknowledge an upload as selected before durable handoff commits.
+            meta['task_context'] = task_store.attach_upload(session, scope.student_id, revision, meta['file_id'])
+    except TaskContextConflict as e:
+        return jsonify(success=False, code='TASK_CONTEXT_CONFLICT', error=str(e)), 409
+    except PermissionError:
+        return jsonify(safe_not_found('附件不可读取或关联')), 404
     except ValueError as e:
         return jsonify(safe_bad_request(str(e))), 400
 

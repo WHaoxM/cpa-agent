@@ -11,6 +11,10 @@ def test_create_app_registers_core_routes():
 
     assert "/health" in rules
     assert "/api/agent/chat" in rules
+    assert "/api/agent/runs" in rules
+    assert "/api/agent/runs/<run_id>" in rules
+    assert "/api/agent/runs/<run_id>/events" in rules
+    assert "/api/agent/runs/<run_id>/cancel" in rules
     assert "/api/agent/files" in rules
     assert "/api/agent/voice/turns" in rules
     assert "/api/agent/session/<session_id>/resources" in rules

@@ -10,6 +10,7 @@ registry.yaml 为唯一索引; base.md 不可被 workspace 覆盖。
 from __future__ import annotations
 
 import os
+import hashlib
 import string
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -145,6 +146,22 @@ class PromptRegistry:
         if prompt_id not in self._entries:
             raise PromptRegistryError(f"未知 prompt_id: {prompt_id}")
         return dict(self._entries[prompt_id])
+
+    def prompt_fingerprint(self, prompt_id: str) -> str:
+        """Hash the effective, unrendered prompt layers and declared version."""
+        entry = self.get_entry(prompt_id)
+        digest = hashlib.sha256()
+        digest.update(str(entry.get("version", 1)).encode("utf-8"))
+        for layer in ("base", "tone"):
+            relative = str(entry[layer])
+            path = (
+                self._prompts_dir / relative
+                if layer == "base"
+                else self._resolve_tone_path(prompt_id, relative)
+            )
+            digest.update(b"\0" + layer.encode("utf-8") + b"\0")
+            digest.update(path.read_bytes())
+        return digest.hexdigest()
 
     def get_runtime_route(
         self,

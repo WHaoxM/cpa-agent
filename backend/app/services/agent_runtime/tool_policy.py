@@ -12,6 +12,23 @@ SHARED_READONLY = frozenset({
     "attachment_read",
 })
 
+# Ask exposes only reads that already have an explicit provenance and scope
+# contract. `semantic_search` is deliberately excluded until its collections
+# have owner/public-source isolation; `normalize_entity` can register OOV rows.
+ASK_READONLY_TOOLS = frozenset({
+    "career_data_read",
+    "graph_query",
+    "attachment_read",
+    "component_snapshot_read",
+    "component_snapshot_discover",
+    "conversation_history_lookup",
+    "public_web_search",
+})
+ASK_SEARCH_TOOLS = frozenset({"career_data_read", "graph_query"})
+ASK_PUBLIC_WEB_TOOLS = frozenset({"public_web_search"})
+ASK_HISTORY_TOOLS = frozenset({"conversation_history_lookup"})
+ASK_COMPONENT_TOOLS = frozenset({"component_snapshot_read", "component_snapshot_discover"})
+
 # Hard partitions (plan D)
 TOOL_ALLOWLIST: Dict[str, FrozenSet[str]] = {
     "profile": frozenset({
@@ -52,6 +69,9 @@ TOOL_ALLOWLIST: Dict[str, FrozenSet[str]] = {
         "db_query",
         "normalize_entity",
         "attachment_read",
+        "component_snapshot_read",
+        "component_snapshot_discover",
+        "conversation_history_lookup",
     }),
     # Supervisor has NO business tools — only orchestration decisions
     "supervisor": frozenset(),
@@ -75,7 +95,12 @@ def describe_allowlist(subagent: str) -> List[str]:
 
 
 def visible_tools_for_interaction(interaction_mode: str, subagent: str) -> Set[str]:
-    """Ask → empty; otherwise subagent allowlist."""
+    """Return safe model-visible tools for a mode/subagent pair."""
     if (interaction_mode or "").lower() == "ask":
-        return set()
+        if subagent != "qa":
+            return set()
+        # Keep the legacy/default view narrow. New Ask capabilities are never
+        # ambient: permissions.visible_tools_for only exposes them when the
+        # server explicitly grants them for the current turn.
+        return set(ASK_SEARCH_TOOLS)
     return tools_for(subagent)

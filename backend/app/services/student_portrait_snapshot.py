@@ -138,12 +138,14 @@ def read_snapshot_for_task(mysql, *, student_id: str, source_task_id: str) -> di
     return _validated(rows[0], student_id=student_id) if rows else None
 
 
-def list_portrait_snapshots(mysql, *, student_id: str, limit: int = 20) -> list[dict]:
+def list_portrait_snapshots(mysql, *, student_id: str, limit: int = 20, offset: int = 0) -> list[dict]:
     if type(limit) is not int or not 1 <= limit <= 50:
         raise ValueError("画像历史条数无效")
+    if type(offset) is not int or offset < 0:
+        raise ValueError("画像历史偏移无效")
     rows = mysql.fetch_all(_SELECT + "WHERE s.student_id=:sid AND s.target_job_id IS NULL "
-                           "ORDER BY s.created_at DESC,s.snapshot_id DESC LIMIT :lim",
-                           {"sid": student_id, "lim": limit})
+                           "ORDER BY s.created_at DESC,s.snapshot_id DESC LIMIT :lim OFFSET :off",
+                           {"sid": student_id, "lim": limit, "off": offset})
     return [_validated(row, student_id=student_id) for row in rows]
 
 

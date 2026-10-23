@@ -20,15 +20,19 @@ home_bp = Blueprint('home', __name__)
 
 from . import graph      # noqa: E402, F401
 from . import profile    # noqa: E402, F401
+from . import resume_draft  # noqa: E402, F401
 from . import match      # noqa: E402, F401
 from . import report     # noqa: E402, F401
 from . import agent      # noqa: E402, F401
+from . import agent_runs  # noqa: E402, F401 — durable run submit/status/events/cancel façade
 from . import agent_media  # noqa: E402, F401 — files / resources / voice turns
 from . import pipeline   # noqa: E402, F401 - pipeline.py defines its own pipeline_bp
 from . import learning   # noqa: E402, F401
 from . import admin      # noqa: E402, F401
 from . import favorites  # noqa: E402, F401
 from . import career    # noqa: E402, F401
+from . import career_pathway  # noqa: E402, F401 — versioned public role facts
+from . import career_exploration  # noqa: E402, F401 — owner exploration lifecycle
 from . import messages  # noqa: E402, F401
 from . import ability   # noqa: E402, F401
 from . import ai_analysis  # noqa: E402, F401

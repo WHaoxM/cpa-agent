@@ -11,6 +11,7 @@ from ._helpers import (
     resolve_request_scope, safe_error, scope_error_response,
 )
 from ..services.db import get_mysql_client
+from ..services.course_catalog import category_label, category_options
 from ..utils.logger import get_logger
 
 logger = get_logger('cpa-agent.api.learning')
@@ -50,22 +51,52 @@ def list_courses():
     try:
         mysql = get_mysql_client()
         category = request.args.get('category')
+        keyword = (request.args.get('keyword') or '').strip()
+        if len(keyword) > 200:
+            return jsonify({"success": False, "error": "课程标题关键词不能超过 200 字"}), 400
         limit, offset = clamp_pagination(
             request.args.get('limit', type=int),
             request.args.get('offset', type=int),
             default_limit=20,
         )
 
-        if category:
-            sql = "SELECT * FROM course WHERE category = :category ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
-            results = mysql.execute(sql, {"category": category, "limit": limit, "offset": offset})
-        else:
-            sql = "SELECT * FROM course ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
-            results = mysql.execute(sql, {"limit": limit, "offset": offset})
+        filters, params = [], {}
+        if category == '__uncategorized__':
+            filters.append("(category IS NULL OR category = '')")
+        elif category == '__needs_review__':
+            raw_categories = mysql.execute('SELECT DISTINCT category FROM course')
+            pending = [r['category'] for r in raw_categories if category_label(r['category']) == '分类待整理']
+            names = []
+            for index, value in enumerate(pending):
+                key = f'pending_category_{index}'
+                params[key] = value
+                names.append(':' + key)
+            filters.append('category IN (' + ','.join(names) + ')' if names else '1=0')
+        elif category:
+            filters.append("category = :category")
+            params["category"] = category
+        if keyword:
+            # Literal substring search: user '%'/'_' are not wildcard operators.
+            filters.append("LOCATE(:keyword, title) > 0")
+            params["keyword"] = keyword
+        where = " WHERE " + " AND ".join(filters) if filters else ""
+        total = mysql.execute("SELECT COUNT(*) AS total FROM course" + where, params)[0]["total"]
+        results = mysql.execute(
+            "SELECT course.*, (SELECT COUNT(*) FROM chapter ch WHERE ch.course_id=course.course_id) AS chapter_count FROM course" + where + " ORDER BY created_at DESC, id DESC LIMIT :limit OFFSET :offset",
+            {**params, "limit": limit, "offset": offset})
+        for row in results:
+            row['category_label'] = category_label(row.get('category'))
+        categories = mysql.execute(
+            "SELECT category, COUNT(*) AS course_count FROM course GROUP BY category ORDER BY category")
+        options = category_options(categories)
 
         return jsonify({
             "success": True,
-            "data": {"courses": results, "count": len(results)}
+            "data": {"courses": results, "count": len(results), "total": int(total),
+                     "categories": [row["category"] for row in categories if row['category']],
+                     "category_options": options,
+                     "catalog_summary": {"total": sum(row['course_count'] for row in options), "scope": "all_courses"},
+                     "limit": limit, "offset": offset}
         })
 
     except Exception as e:
@@ -85,6 +116,7 @@ def get_course(course_id: str):
             return jsonify({"success": False, "error": "课程不存在"}), 404
 
         course = results[0]
+        course['category_label'] = category_label(course.get('category'))
         chapters = mysql.execute(
             """
             SELECT id, course_id, title, sequence, duration_hours, content_summary,

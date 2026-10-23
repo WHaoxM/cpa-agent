@@ -21,6 +21,12 @@ from ..services.db import get_mysql_client
 auth_bp = Blueprint("auth", __name__)
 
 
+@auth_bp.after_request
+def no_cached_account_response(response):
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 def _account_limit_key():
     """Keep app-factory test/deployment limit namespaces distinct per request.
 

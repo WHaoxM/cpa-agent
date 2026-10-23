@@ -44,4 +44,19 @@ def build_tools_for_subagent(
     if "attachment_read" in allow:
         from ..tools.attachment_read import create_attachment_read_tool
         out.append(create_attachment_read_tool(student_id=student_id, session_id=session_id))
+    if "component_snapshot_read" in allow:
+        from ..tools.component_snapshot_read import create_component_snapshot_read_tool
+        out.append(create_component_snapshot_read_tool(student_id=student_id, session_id=session_id))
+    if "component_snapshot_discover" in allow:
+        from ..tools.component_snapshot_discover import create_component_snapshot_discover_tool
+        out.append(create_component_snapshot_discover_tool(student_id=student_id, session_id=session_id))
+    if "conversation_history_lookup" in allow:
+        from ..tools.conversation_history_lookup import create_conversation_history_lookup_tool
+        out.append(create_conversation_history_lookup_tool(student_id=student_id, session_id=session_id))
+    if "public_web_search" in allow:
+        from ..tools.public_web_search import TavilySearchProvider, create_public_web_search_tool
+        provider = TavilySearchProvider.from_environment()
+        if provider is not None:
+            out.append(create_public_web_search_tool(provider))
+    out.sort(key=lambda tool: str(getattr(tool, "name", "")))
     return out

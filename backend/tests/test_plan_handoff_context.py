@@ -42,5 +42,15 @@ def test_handoff_precedence_and_existing_size_boundary_are_preserved():
 @pytest.mark.parametrize("template", sorted(PLAN_TEMPLATES))
 def test_empty_brief_keeps_step_only_goals(template):
     packets = build_plan_packets(template, "")
+    role_labels = {
+        "profile": "画像",
+        "match": "匹配",
+        "report": "报告",
+        "planner": "规划",
+        "qa": "问答",
+    }
     for index, packet in enumerate(packets):
-        assert packet.goal == f"执行计划步骤 {index + 1}/{len(packets)}: {packet.subagent}"
+        assert packet.goal == (
+            f"执行计划步骤 {index + 1}/{len(packets)}"
+            f"（{role_labels[packet.subagent]}）。"
+        )

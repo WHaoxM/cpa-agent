@@ -1,8 +1,8 @@
-"""Durable Celery transport for long-running media parsing jobs.
+"""Celery configuration and durable transport for backend background jobs.
 
-The business record in :mod:`file_store` remains authoritative.  Celery only
-provides durable delivery/redelivery through the existing Redis service.  This
-keeps OCR state queryable even when Celery's optional result backend is absent.
+Media business records in :mod:`file_store` remain authoritative. Celery only
+provides delivery/redelivery through Redis. Agent runs use a separate queue and
+MySQL outbox/claim state; the optional Celery result backend is not used.
 
 Celery's late acknowledgement can redeliver a job after a worker loss, so the
 worker entries deliberately call idempotent ``AgentFileService`` methods and
@@ -23,6 +23,7 @@ logger = get_logger("cpa-agent.agent_runtime.media.jobs")
 
 MEDIA_QUEUE = "cpa.media"
 PIPELINE_QUEUE = os.environ.get("CPA_PIPELINE_QUEUE", "cpa.pipeline").strip() or "cpa.pipeline"
+AGENT_QUEUE = os.environ.get("CPA_AGENT_QUEUE", "cpa.agent").strip() or "cpa.agent"
 _SAFE_ID = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
@@ -53,30 +54,49 @@ def _redis_url() -> str:
 celery_app = Celery("cpa_agent_media", broker=_redis_url())
 celery_app.conf.update(
     task_default_queue=MEDIA_QUEUE,
-    task_routes={"cpa.media.*": {"queue": MEDIA_QUEUE}, "cpa.graph.*": {"queue": "cpa.graph"},
-                 "cpa.pipeline.*": {"queue": PIPELINE_QUEUE},
-                 "cpa.catalog.*": {"queue": PIPELINE_QUEUE}},
-    imports=("app.services.personal_graph_jobs", "app.services.personal_entity_link_jobs",
-             "app.services.pipeline_match_jobs", "app.services.pipeline_resume_jobs",
-             "app.services.pipeline_portrait_jobs",
-             "app.services.resume_diagnostic_jobs",
-             "app.services.job_source_verification_jobs"),
-    beat_schedule={"pipeline-match-replay": {
-        "task": "cpa.pipeline.replay", "schedule": _pipeline_replay_interval(),
-        "options": {"queue": PIPELINE_QUEUE},
-    }, "pipeline-resume-replay": {
-        "task": "cpa.pipeline.resume_replay", "schedule": _pipeline_replay_interval(),
-        "options": {"queue": PIPELINE_QUEUE},
-    }, "pipeline-portrait-replay": {
-        "task": "cpa.pipeline.portrait_replay", "schedule": _pipeline_replay_interval(),
-        "options": {"queue": PIPELINE_QUEUE},
-    }, "resume-diagnostic-replay": {
-        "task": "cpa.pipeline.diagnostic_replay", "schedule": _pipeline_replay_interval(),
-        "options": {"queue": PIPELINE_QUEUE},
-    }, "official-source-refresh": {
-        "task": "cpa.catalog.refresh_source_feed", "schedule": 60,
-        "options": {"queue": PIPELINE_QUEUE},
-    }},
+    task_routes={
+        "cpa.media.*": {"queue": MEDIA_QUEUE},
+        "cpa.graph.*": {"queue": "cpa.graph"},
+        "cpa.pipeline.*": {"queue": PIPELINE_QUEUE},
+        "cpa.agent.*": {"queue": AGENT_QUEUE},
+        "cpa.catalog.*": {"queue": PIPELINE_QUEUE},
+    },
+    imports=(
+        "app.services.personal_graph_jobs",
+        "app.services.personal_entity_link_jobs",
+        "app.services.pipeline_match_jobs",
+        "app.services.pipeline_resume_jobs",
+        "app.services.pipeline_portrait_jobs",
+        "app.services.resume_diagnostic_jobs",
+        "app.services.agent_runtime.agent_run_jobs",
+        "app.services.job_source_verification_jobs",
+    ),
+    beat_schedule={
+        "pipeline-match-replay": {
+            "task": "cpa.pipeline.replay", "schedule": _pipeline_replay_interval(),
+            "options": {"queue": PIPELINE_QUEUE},
+        },
+        "pipeline-resume-replay": {
+            "task": "cpa.pipeline.resume_replay", "schedule": _pipeline_replay_interval(),
+            "options": {"queue": PIPELINE_QUEUE},
+        },
+        "pipeline-portrait-replay": {
+            "task": "cpa.pipeline.portrait_replay", "schedule": _pipeline_replay_interval(),
+            "options": {"queue": PIPELINE_QUEUE},
+        },
+        "resume-diagnostic-replay": {
+            "task": "cpa.pipeline.diagnostic_replay", "schedule": _pipeline_replay_interval(),
+            "options": {"queue": PIPELINE_QUEUE},
+        },
+        "agent-run-replay": {
+            "task": "cpa.agent.replay", "schedule": _pipeline_replay_interval(),
+            "options": {"queue": AGENT_QUEUE},
+        },
+        "official-source-refresh": {
+            "task": "cpa.catalog.refresh_source_feed", "schedule": 60,
+            "options": {"queue": PIPELINE_QUEUE},
+        },
+    },
     task_serializer="json",
     accept_content=["json"],
     result_serializer="json",

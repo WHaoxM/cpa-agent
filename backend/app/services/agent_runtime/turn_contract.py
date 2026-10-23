@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 import uuid
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urlsplit
 
 from .reply_egress import sanitize_user_reply
+from .tool_egress import sanitize_tool_calls
 
 MESSAGE_PART_TYPES = {
     "text",
@@ -17,6 +21,8 @@ MESSAGE_PART_TYPES = {
     "artifact_ref",
     "citation",
     "data_card",
+    "evidence_summary",
+    "action_plan_handoff",
     "upgrade_hint",
     "notice",
 }
@@ -41,7 +47,9 @@ TURN_REASONS = frozenset({
 _FAILED_TOOL_STATUSES = frozenset({"failed", "error", "denied", "unavailable"})
 _PARTIAL_TOOL_STATUSES = frozenset({"partial", "needs_input", "approval_required"})
 _ACTIVE_ARTIFACT_STATUSES = frozenset({"queued", "pending", "running", "processing"})
-_CONTEXT_SLOTS = frozenset({"summary", "memory_digest", "attachment_context"})
+_CONTEXT_SLOTS = frozenset({
+    "summary", "history", "memory_digest", "attachment_context", "component_context",
+})
 
 
 def derive_turn_outcome(raw: Any) -> Dict[str, Any]:
@@ -270,11 +278,18 @@ def build_message_parts(
     for idx, call in enumerate(tool_calls if isinstance(tool_calls, list) else []):
         if not isinstance(call, dict):
             continue
+        call_payload = sanitize_tool_calls([call])
+        if not call_payload:
+            continue
+        snapshot = call_payload[0]
         parts.append({
             "type": "tool_call",
-            "tool_call": call,
-            "status": str(call.get("status") or "done"),
-            "title": sanitize_user_reply(str(call.get("summary") or call.get("tool_name") or f"工具 {idx + 1}"), max_len=120),
+            "schema_version": 1,
+            "component_id": _component_id("tool_call", snapshot),
+            "generated_at": utc_now_iso(),
+            "tool_call": snapshot,
+            "status": _safe_component_status(call.get("status")),
+            "title": sanitize_user_reply(str(snapshot.get("summary") or f"工具 {idx + 1}"), max_len=120),
         })
 
     for ref in artifacts or []:
@@ -288,7 +303,13 @@ def build_message_parts(
 
     for card in (orch.get("data_cards") if isinstance(orch, dict) else []) or []:
         if isinstance(card, dict):
-            parts.append(_normalize_data_card(card))
+            candidate = dict(card)
+            candidate.setdefault("type", "data_card")
+            candidate.setdefault("schema_version", 1)
+            candidate.setdefault("generated_at", utc_now_iso())
+            normalized = _normalize_data_card(candidate)
+            if normalized:
+                parts.append(normalized)
 
     for denial in permission_denials or []:
         if not isinstance(denial, dict):
@@ -325,8 +346,25 @@ def normalize_message_parts(parts: Any, *, fallback_text: str = "") -> List[Dict
             if ptype not in MESSAGE_PART_TYPES:
                 continue
             # Explicit parts and persisted parts_v1 must cross the same public
-            # citation boundary as citations generated from orchestration.
-            out.append(_normalize_citation(part) if ptype == "citation" else part)
+            # boundary as parts generated from orchestration.
+            if ptype == "citation":
+                out.append(_normalize_citation(part))
+            elif ptype == "tool_call":
+                normalized = _normalize_tool_call_part(part)
+                if normalized:
+                    out.append(normalized)
+            elif ptype == "data_card":
+                normalized = _normalize_data_card(part)
+                if normalized:
+                    out.append(normalized)
+            elif ptype == "evidence_summary":
+                out.append(_normalize_evidence_summary(part))
+            elif ptype == "action_plan_handoff":
+                normalized = _normalize_action_plan_handoff(part)
+                if normalized:
+                    out.append(normalized)
+            else:
+                out.append(part)
         if out:
             return out
     if fallback_text:
@@ -368,6 +406,16 @@ def build_turn_events(
             add("tool_done", {"tool_call": call})
         elif part.get("type") == "citation":
             add("citation", {"citation": _normalize_citation(part)})
+        elif part.get("type") == "data_card":
+            normalized = _normalize_data_card(part)
+            if normalized:
+                add("component", {"component": normalized})
+        elif part.get("type") == "evidence_summary":
+            add("evidence_summary", {"summary": _normalize_evidence_summary(part)})
+        elif part.get("type") == "action_plan_handoff":
+            normalized = _normalize_action_plan_handoff(part)
+            if normalized:
+                add("action_plan_handoff", {"handoff": normalized})
 
     for ref in artifacts or []:
         normalized = normalize_artifact_ref(ref)
@@ -512,6 +560,8 @@ def _default_artifact_title(kind: str) -> str:
 
 
 def _progress_title(progress: Dict[str, Any]) -> str:
+    if isinstance(progress.get("executed_steps"), list):
+        return "本轮实际执行步骤"
     if progress.get("lead_action"):
         return f"当前阶段：{progress.get('lead_action')}"
     if progress.get("path"):
@@ -520,6 +570,10 @@ def _progress_title(progress: Dict[str, Any]) -> str:
 
 
 def _progress_summary(progress: Dict[str, Any]) -> str:
+    executed = progress.get("executed_steps")
+    if isinstance(executed, list) and executed:
+        done = sum(1 for row in executed if isinstance(row, dict) and row.get("status") == "completed")
+        return f"已完成 {done}/{len(executed)} 步；这里只展示实际执行结果"
     plan = progress.get("plan_sketch")
     if isinstance(plan, list) and plan:
         return " → ".join(str(x) for x in plan[:4])
@@ -551,6 +605,54 @@ def _normalize_citation(raw: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _normalize_evidence_summary(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Allow only presentation labels/states; never echo resource identifiers."""
+    label_allowlist = {
+        "岗位报告", "一周行动计划", "练习附件", "已确认简历", "当前画像", "简历诊断报告", "职业资料概览", "业务资料", "本轮方向探索", "简历解读", "沟通与协作补充",
+    }
+    state_allowlist = {"read", "partial", "unavailable"}
+    sources = []
+    seen = set()
+    for item in raw.get("sources") if isinstance(raw.get("sources"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        label = item.get("label")
+        label = label if label in label_allowlist else "业务资料"
+        state = item.get("status")
+        state = state if state in state_allowlist else "unavailable"
+        if label in seen:
+            continue
+        seen.add(label)
+        sources.append({"label": label, "status": state})
+    status = raw.get("status")
+    status = status if status in {"complete", "partial", "unavailable"} else "partial"
+    result = {
+        "type": "evidence_summary",
+        "title": "本轮参考资料",
+        "status": status,
+        "sources": sources[:4],
+    }
+    scope_note = raw.get("scope_note")
+    if scope_note in {
+        "resume_not_cross_checked", "resume_partially_cross_checked",
+        "student_submitted_unverified",
+    }:
+        result["scope_note"] = scope_note
+    return result
+
+
+def _normalize_action_plan_handoff(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    handoff_id = raw.get("handoff_id")
+    stage = raw.get("stage")
+    if (not isinstance(handoff_id, str) or len(handoff_id) != 36
+            or not handoff_id.startswith("aph_")
+            or any(ch not in "0123456789abcdef" for ch in handoff_id[4:])):
+        return None
+    if stage not in {"offer", "awaiting_time"}:
+        return None
+    return {"type": "action_plan_handoff", "handoff_id": handoff_id, "stage": stage}
+
+
 def _safe_citation_url(raw: Any) -> Optional[str]:
     """Only browser-safe absolute web links may reach the public href field."""
     if not isinstance(raw, str) or not raw or len(raw) > 2048:
@@ -571,39 +673,190 @@ def _safe_citation_url(raw: Any) -> Optional[str]:
     return raw
 
 
-def _normalize_data_card(raw: Dict[str, Any]) -> Dict[str, Any]:
-    title = sanitize_user_reply(str(raw.get("title") or ""), max_len=80)
-    card_type = str(raw.get("card_type") or "kv").strip()
-    if card_type not in {"kv", "score", "bar", "list", "comparison"}:
-        card_type = "kv"
+def _normalize_data_card(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    allowed_fields = {
+        "type", "component_id", "schema_version", "generated_at", "title",
+        "card_type", "items", "source_refs",
+    }
+    if (not isinstance(raw, dict) or set(raw) - allowed_fields
+            or raw.get("type", "data_card") != "data_card"):
+        return None
+    schema_version = raw.get("schema_version", 1)
+    if type(schema_version) is not int or schema_version != 1:
+        return None
+    title = sanitize_user_reply(str(raw.get("title") or ""), max_len=80).strip()
+    card_type = str(raw.get("card_type") or "").strip()
+    if not title or card_type not in {"kv", "score", "bar", "list", "comparison"}:
+        return None
+
+    source_refs = raw.get("source_refs")
+    if not isinstance(source_refs, list) or not 1 <= len(source_refs) <= 6:
+        return None
+    safe_sources = []
+    for source in source_refs:
+        normalized_source = _normalize_data_card_source(source)
+        if normalized_source is None:
+            return None
+        safe_sources.append(normalized_source)
+
     items = raw.get("items")
-    if not isinstance(items, list):
-        items = []
+    if not isinstance(items, list) or not 1 <= len(items) <= 12:
+        return None
     safe_items: List[Dict[str, Any]] = []
-    for item in items[:12]:
-        if not isinstance(item, dict):
-            continue
+    for index, item in enumerate(items):
+        if (not isinstance(item, dict)
+                or set(item) - {"label", "value", "entity_id", "entity_version"}
+                or "value" not in item):
+            return None
+        label = sanitize_user_reply(str(item.get("label") or ""), max_len=60).strip()
+        if not label:
+            return None
+        value, valid_value = _sanitize_card_value(item.get("value"))
+        if not valid_value:
+            return None
+        entity_version = item.get("entity_version")
+        if entity_version is not None and (
+            not isinstance(entity_version, (str, int)) or isinstance(entity_version, bool)
+            or not 1 <= len(str(entity_version)) <= 80
+        ):
+            return None
+        entity_id = item.get("entity_id")
+        if entity_id is not None and (
+            not isinstance(entity_id, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,119}", entity_id)
+        ):
+            return None
         safe_items.append({
-            "label": sanitize_user_reply(str(item.get("label") or ""), max_len=60),
-            "value": _sanitize_card_value(item.get("value")),
+            "entity_id": entity_id or _entity_id(safe_sources, index, label, value),
+            "entity_version": str(entity_version) if entity_version is not None else None,
+            "label": label,
+            "value": value,
         })
-    return {
+    if raw.get("generated_at") is not None and not _valid_timestamp(raw.get("generated_at")):
+        return None
+
+    result = {
         "type": "data_card",
+        "schema_version": 1,
         "title": title,
         "card_type": card_type,
         "items": safe_items,
+        "source_refs": safe_sources,
     }
-
-
-def _sanitize_card_value(value: Any) -> Any:
-    if value is None:
+    if isinstance(raw.get("generated_at"), str):
+        result["generated_at"] = raw["generated_at"]
+    component_id = _component_id("data_card", result)
+    supplied_id = raw.get("component_id")
+    if supplied_id is not None and supplied_id != component_id:
         return None
-    if isinstance(value, (str, int, float, bool)):
-        return sanitize_user_reply(str(value), max_len=200) if isinstance(value, str) else value
+    result["component_id"] = component_id
+    return result
+
+
+def _normalize_tool_call_part(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if set(raw) - {"type", "tool_call", "status", "title", "schema_version", "component_id", "generated_at"}:
+        return None
+    if type(raw.get("schema_version", 1)) is not int or raw.get("schema_version", 1) != 1:
+        return None
+    call = raw.get("tool_call")
+    if not isinstance(call, dict):
+        return None
+    normalized_calls = sanitize_tool_calls([call])
+    if not normalized_calls:
+        return None
+    normalized: Dict[str, Any] = {
+        "type": "tool_call",
+        "schema_version": 1,
+        "tool_call": normalized_calls[0],
+        "status": _safe_component_status(raw.get("status")),
+        "title": sanitize_user_reply(str(normalized_calls[0].get("summary") or "工具结果"), max_len=120),
+    }
+    if isinstance(raw.get("generated_at"), str) and _valid_timestamp(raw["generated_at"]):
+        normalized["generated_at"] = raw["generated_at"]
+    component_id = _component_id("tool_call", normalized["tool_call"])
+    if raw.get("component_id") is not None and raw["component_id"] != component_id:
+        return None
+    normalized["component_id"] = component_id
+    return normalized
+
+
+def _normalize_data_card_source(raw: Any) -> Optional[Dict[str, str]]:
+    if not isinstance(raw, dict) or set(raw) - {"source_id", "label", "url", "version"}:
+        return None
+    source_id = raw.get("source_id")
+    if source_id is not None and (
+        not isinstance(source_id, str)
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}", source_id)
+    ):
+        return None
+    url = raw.get("url")
+    safe_url = _safe_citation_url(url) if url is not None else None
+    if url is not None and safe_url is None:
+        return None
+    label = sanitize_user_reply(str(raw.get("label") or ""), max_len=120).strip()
+    if not label or not (source_id or safe_url):
+        return None
+    result = {"label": label}
+    if source_id:
+        result["source_id"] = source_id
+    if safe_url:
+        result["url"] = safe_url
+    version = raw.get("version")
+    if version is not None:
+        if not isinstance(version, (str, int)) or isinstance(version, bool):
+            return None
+        result["version"] = sanitize_user_reply(str(version), max_len=80)
+    return result
+
+
+def _sanitize_card_value(value: Any) -> tuple[Any, bool]:
+    if value is None:
+        return None, True
+    if isinstance(value, bool) or isinstance(value, int):
+        return value, True
+    if isinstance(value, float):
+        return (value, value == value and abs(value) != float("inf"))
+    if isinstance(value, str):
+        return sanitize_user_reply(value, max_len=200), True
     if isinstance(value, list):
-        return [
-            sanitize_user_reply(str(v), max_len=80)
-            for v in value[:8]
-            if isinstance(v, (str, int, float, bool))
-        ]
-    return str(value)[:200]
+        if len(value) > 8 or any(not isinstance(v, (str, int, float, bool)) for v in value):
+            return None, False
+        if any(isinstance(v, float) and (v != v or abs(v) == float("inf")) for v in value):
+            return None, False
+        return [sanitize_user_reply(str(v), max_len=80) if isinstance(v, str) else v for v in value], True
+    return None, False
+
+
+def _component_id(component_type: str, snapshot: Dict[str, Any]) -> str:
+    blob = json.dumps(
+        {"type": component_type, "snapshot": snapshot},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return f"cmp_{hashlib.sha256(blob.encode('utf-8')).hexdigest()[:24]}"
+
+
+def _entity_id(sources: List[Dict[str, str]], index: int, label: str, value: Any) -> str:
+    blob = json.dumps(
+        {"sources": sources, "index": index, "label": label, "value": value},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return f"ent_{hashlib.sha256(blob.encode('utf-8')).hexdigest()[:24]}"
+
+
+def _valid_timestamp(value: Any) -> bool:
+    if not isinstance(value, str) or not 1 <= len(value) <= 64:
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
+
+
+def _safe_component_status(value: Any) -> str:
+    allowed = {"done", "partial", "unavailable", "error", "needs_input", "unverified"}
+    return value if isinstance(value, str) and value in allowed else "unverified"

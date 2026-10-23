@@ -159,6 +159,12 @@ def get_match_result(student_id: str, job_portrait_id: str):
                 "reason": resource.get("reason"), "next_action": resource.get("next_action"),
             }}), 409
 
+        # A publication snapshot is the authoritative source for the current
+        # job title. The legacy job_portrait_4d row may not exist for a valid
+        # published-only role, so do not return a nameless match in that case.
+        result["position_name"] = (result.get("position_name")
+                                   or (resource.get("data") or {}).get("position_name"))
+
         result['result_json'] = parse_json_field(result.get('result_json'))
 
         # 构造 D1-D4 维度 (match 特有 passed/skill_coverage 字段在 helper 返回基础上补充)
@@ -175,6 +181,9 @@ def get_match_result(student_id: str, job_portrait_id: str):
             "success": True,
             "status": resource["status"],
             "data": {
+                "match_id": str(result['id']),
+                "source_match_task_id": (result.get('result_json') or {}).get('source_match_task_id'),
+                "sources": (result.get('result_json') or {}).get('sources', {}),
                 "student_id": result['student_id'],
                 "student_name": result.get('student_name'),
                 "school": result.get('school'),

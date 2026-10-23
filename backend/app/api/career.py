@@ -16,6 +16,7 @@ from ._helpers import (
     resolve_request_scope, safe_error, scope_error_response,
 )
 from ..services.career_role_inference import infer_roles_from_skills
+from ..services.self_reflection import ReflectionError, questionnaire, save_reflection, project_record
 from ..services.db import get_mysql_client, get_neo4j_client, get_redis_client, get_milvus_client
 from ..utils.logger import get_logger
 
@@ -741,7 +742,7 @@ def semantic_explore():
 def _query_promotion_chains(cypher: str, params: dict) -> list:
     """Q28: 执行晋升链 Cypher 并转换为 path dict 列表"""
     neo4j = get_neo4j_client()
-    results = neo4j.execute(cypher, params)
+    results = neo4j.execute_query(cypher, params)
     return [
         {
             "chain": r["chain"],
@@ -788,8 +789,8 @@ def get_career_paths():
             paths = _query_promotion_chains(cypher, {"role": role})
         elif category:
             cypher = """
-            MATCH (start:CareerNode)-[:PROMOTION*1..{depth}]->(end:CareerNode)
-            WHERE start.category = $category OR start.position_name CONTAINS $category
+            MATCH path = (start:CareerNode)-[:PROMOTION*1..{depth}]->(end:CareerNode)
+            WHERE coalesce(start.category, start.family) = $category OR start.position_name CONTAINS $category
             RETURN [node in nodes(path) | node.position_name] as chain,
                    [rel in relationships(path) | rel.requirements] as requirements,
                    length(path) as depth
@@ -958,12 +959,18 @@ def get_transfer_options():
 
 @career_bp.route('/assessment', methods=['POST'])
 def submit_self_assessment():
-    """提交技能自评 — 冷启动用户从自评→推荐方向→画像"""
+    """兼容旧式自评；self_reflection 只保存本人自述，不推荐或生成画像。"""
     try:
         student_id = resolve_request_scope().student_id
         body = request.get_json(silent=True)
         if not isinstance(body, dict):
             return jsonify({"success": False, "error": "请求体必须是 JSON 对象"}), 400
+        if body.get('assessment_kind') == 'self_reflection':
+            result = save_reflection(get_mysql_client(), student_id, body)
+            _cache_delete(_cache_key('assessment-v3', student_id=student_id))
+            return jsonify(result)
+        if 'assessment_kind' in body:
+            return jsonify({'success': False, 'error': '不支持的自评提交方式'}), 400
         assessed_skills = body.get('assessed_skills', [])
         assessed_abilities = body.get('assessed_abilities', {})
 
@@ -1058,7 +1065,7 @@ def submit_self_assessment():
         )
         if not persisted or str(persisted[0].get("assessment_id")) != assessment_id:
             return jsonify({"success": False, "error": "自评写入后未能核验归属"}), 500
-        _cache_delete(_cache_key("assessment-v2", student_id=student_id))
+        _cache_delete(_cache_key("assessment-v3", student_id=student_id))
 
         return jsonify({
             "success": True,
@@ -1089,6 +1096,8 @@ def submit_self_assessment():
             }
         })
 
+    except ReflectionError as e:
+        return jsonify({'success': False, 'reason': e.reason, 'error': str(e)}), e.status
     except ScopeError as e:
         return scope_error_response(e)
     except Exception as e:
@@ -1100,20 +1109,18 @@ def get_assessment(student_id: str):
     """获取学生的最新自评结果"""
     try:
         require_student_path(student_id, resolve_request_scope())
-        # Old cache entries may contain unsourced salary/demand values from
-        # historical recommended_roles; never serve those from Redis.
-        cache_key = _cache_key("assessment-v2", student_id=student_id)
-        cached = _cache_get(cache_key)
-        if cached:
-            return jsonify(cached)
+        # "Latest" is an authoritative read: an in-flight old reader can refill
+        # a Redis projection after a newer submission invalidates it. Do not let
+        # that projection replace the current owner-bound MySQL ordering.
 
         mysql = get_mysql_client()
 
         sql = """
-        SELECT assessment_id, assessed_skills, assessed_abilities, weak_skills, recommended_roles, created_at
+        SELECT assessment_id, assessed_skills, assessed_abilities, weak_skills, recommended_roles, created_at,
+               reflection_snapshot, submission_id
         FROM student_self_assessment
         WHERE student_id = :student_id
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, id DESC
         LIMIT 1
         """
         results = mysql.execute(sql, {"student_id": student_id})
@@ -1122,6 +1129,8 @@ def get_assessment(student_id: str):
             return jsonify({"success": False, "error": f"未找到自评记录: {student_id}"}), 404
 
         row = results[0]
+        if row.get('reflection_snapshot') is not None:
+            return jsonify(project_record(row))
         _parse_json_fields(row, ('assessed_skills', 'assessed_abilities', 'weak_skills', 'recommended_roles'))
 
         raw_roles = row.get('recommended_roles')
@@ -1162,10 +1171,24 @@ def get_assessment(student_id: str):
             "market_data_status": "legacy_unverified_removed" if legacy_market_claims else "not_used",
             "data": row,
         }
-        _cache_set(cache_key, resp, CACHE_TTL['assessment'])
         return jsonify(resp)
 
+    except ReflectionError as e:
+        return jsonify({'success': False, 'reason': e.reason, 'error': str(e)}), e.status
     except ScopeError as e:
         return scope_error_response(e)
     except Exception as e:
         return jsonify(safe_error("获取自评结果", e)), 500
+
+
+@career_bp.route('/assessment/questionnaire', methods=['GET'])
+def get_self_reflection_questionnaire():
+    try:
+        resolve_request_scope()
+        return jsonify({'success': True, 'data': questionnaire(request.args.get('direction_id'))})
+    except ReflectionError as e:
+        return jsonify({'success': False, 'reason': e.reason, 'error': str(e)}), e.status
+    except ScopeError as e:
+        return scope_error_response(e)
+    except Exception as e:
+        return jsonify(safe_error('读取自评题目', e)), 500

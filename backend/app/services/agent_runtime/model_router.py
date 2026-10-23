@@ -2,7 +2,7 @@
 Qwen 模型路由 — 按任务类型选择最经济的 Qwen 模型。
 
 路由原则：
-- lead_classify: qwen-turbo（结构化 JSON，不需要强推理）
+- lead_classify: qwen-plus（本机只读路由探针已返回可核验 usage；相对 turbo 成本更高）
 - ask_answer:    qwen-plus（需要理解力 + 自然对话）
 - portrait_gen:  qwen-plus（结构化抽取 + 判断）
 - report_gen:    qwen-max（长文本 + 章节组织）
@@ -17,7 +17,7 @@ from typing import Any, Dict, Optional
 
 ROUTING_TABLE: Dict[str, Dict[str, Any]] = {
     "lead_classify": {
-        "model": "qwen-turbo",
+        "model": "qwen-plus",
         "temperature": 0.1,
         "max_tokens": 700,
     },

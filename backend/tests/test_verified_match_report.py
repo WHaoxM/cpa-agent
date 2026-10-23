@@ -59,6 +59,20 @@ class DB(SourceDB):
         return super().execute(sql, params, commit)
 
 
+@pytest.mark.parametrize("level", ["L3_run_match", "L4_generate_report"])
+def test_missing_confirmation_is_business_block_not_execution_failure(monkeypatch, level):
+    db = DB()
+    original = db.fetch_all
+    db.fetch_all = lambda sql, params=None: [] if "FROM student_profile" in sql else original(sql, params)
+    monkeypatch.setattr(pipeline, "get_mysql_client", lambda: db)
+    outcome = pipeline.PipelineRunner().run(level, {"student_id": "owner", "job_id": "job_1"})
+    assert outcome["status"] == "partial"
+    assert outcome["reason"] == "confirmed_resume_unavailable"
+    assert outcome["next_action"] == "confirm_resume"
+    assert not outcome.get("match_id") and not outcome.get("report_id")
+    assert db.match is None and db.report is None
+
+
 @pytest.fixture
 def scored(monkeypatch):
     db = DB()

@@ -19,6 +19,7 @@ class ContextEpoch:
 
     prompt_versions: Dict[str, int]  # prompt_id → version
     created_at: float = field(default_factory=time.time)
+    prompt_hashes: Dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def current(cls) -> "ContextEpoch":
@@ -27,15 +28,26 @@ class ContextEpoch:
 
         registry = get_prompt_registry()
         versions: Dict[str, int] = {}
+        hashes: Dict[str, str] = {}
         for prompt_id in registry.list_prompt_ids():
             entry = registry.get_entry(prompt_id)
             versions[prompt_id] = entry.get("version", 1)
-        return ContextEpoch(prompt_versions=versions, created_at=time.time())
+            hashes[prompt_id] = registry.prompt_fingerprint(prompt_id)
+        return ContextEpoch(
+            prompt_versions=versions,
+            created_at=time.time(),
+            prompt_hashes=hashes,
+        )
 
     def needs_refresh(self, other: "ContextEpoch") -> bool:
-        """与另一个 epoch 对比，是否有 prompt 版本变化。"""
+        """Return true when this (current) epoch is newer than a saved epoch."""
         for pid, ver in self.prompt_versions.items():
             if other.prompt_versions.get(pid, 0) < ver:
+                return True
+        for pid, digest in self.prompt_hashes.items():
+            if other.prompt_hashes.get(pid) != digest:
+                return True
+            if pid not in other.prompt_versions:
                 return True
         return False
 
@@ -43,7 +55,10 @@ class ContextEpoch:
         """返回在 other 之后更新过的 prompt_id 列表。"""
         changed: List[str] = []
         for pid, ver in self.prompt_versions.items():
-            if other.prompt_versions.get(pid, 0) < ver:
+            is_changed = other.prompt_versions.get(pid, 0) < ver
+            old_hash = other.prompt_hashes.get(pid)
+            new_hash = self.prompt_hashes.get(pid)
+            if is_changed or (new_hash is not None and old_hash != new_hash):
                 changed.append(pid)
         return changed
 
@@ -51,6 +66,7 @@ class ContextEpoch:
         """序列化为可存储的字典。"""
         return {
             "prompt_versions": self.prompt_versions,
+            "prompt_hashes": self.prompt_hashes,
             "created_at": self.created_at,
         }
 
@@ -60,6 +76,7 @@ class ContextEpoch:
         return cls(
             prompt_versions=data.get("prompt_versions", {}),
             created_at=data.get("created_at", 0.0),
+            prompt_hashes=data.get("prompt_hashes", {}),
         )
 
 

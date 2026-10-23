@@ -20,7 +20,9 @@ def test_csrf_http_requires_strong_secret_and_ready_account_schema(monkeypatch):
         def get(self, key):
             return self.values.get(key)
 
-        def set(self, name, value, ex=None):
+        def set(self, name, value, ex=None, xx=False):
+            if xx and name not in self.values:
+                return None
             self.values[name] = value
             return True
 
@@ -46,10 +48,15 @@ def test_csrf_http_requires_strong_secret_and_ready_account_schema(monkeypatch):
     strong_app = create_app(strong_config)
     assert strong_app.extensions["cpa_account_auth_enabled"] is True
     assert strong_app.extensions["cpa_account_session_schema_ready"] is True
-    response = strong_app.test_client().get("/api/auth/csrf")
+    client = strong_app.test_client()
+    response = client.get("/api/auth/csrf")
     assert response.status_code == 200
     assert response.json["success"] is True
     assert isinstance(response.json["csrfToken"], str) and response.json["csrfToken"]
+    assert response.headers["Cache-Control"] == "no-store"
+    identity = client.get("/api/auth/me")
+    assert identity.status_code == 401
+    assert identity.headers["Cache-Control"] == "no-store"
 
     missing_secret_config = type("MissingSecretAuthConfig", (Config,), {
         "SECRET_KEY": _DEFAULT_SECRET,
@@ -60,3 +67,4 @@ def test_csrf_http_requires_strong_secret_and_ready_account_schema(monkeypatch):
     assert missing_secret_app.extensions["cpa_account_auth_enabled"] is False
     rejected = missing_secret_app.test_client().get("/api/auth/csrf")
     assert rejected.status_code == 503
+    assert rejected.headers["Cache-Control"] == "no-store"

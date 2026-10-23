@@ -11,6 +11,12 @@ from app.services.tools.career_data_read import CareerDataReadTool
 
 def test_catalog_composes_domain_adapters_without_losing_failure_visibility(monkeypatch):
     from app.services.agent_runtime import business_resources, match_report_resources, personal_resources, resume_report_resources
+    from app.services import career_exploration_resources
+
+    # The discovery adapter now includes exploration as a fifth domain. This
+    # composition-only fixture supplies no DB and must stub that reader too.
+    monkeypatch.setattr(career_exploration_resources, 'list_exploration_resources',
+                        lambda mysql, student_id: [])
 
     monkeypatch.setattr(business_resources, "list_current_resources", lambda mysql, student_id: {
         "resources": [{"uri": "career://me/resume", "title": "简历", "status": "completed"}],

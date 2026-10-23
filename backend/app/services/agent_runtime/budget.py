@@ -51,12 +51,40 @@ _active_usage_ledger: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
 
 @contextmanager
 def capture_usage_ledger(mode: str, *, turn_token_cap: Optional[int] = None,
+                         model_call_cap: Optional[int] = None,
+                         tool_call_cap: Optional[int] = None,
+                         model_calls_used: int = 0,
+                         tool_calls_used: int = 0,
                          session_id: Optional[str] = None, student_id: Optional[str] = None):
-    cap = turn_token_cap or _positive_env_int("CPA_AGENT_TURN_TOKEN_CAP") or 30000
+    cap = (
+        max(0, int(turn_token_cap)) if type(turn_token_cap) is int
+        else _positive_env_int("CPA_AGENT_TURN_TOKEN_CAP") or 30000
+    )
+    if type(model_calls_used) is not int or model_calls_used < 0:
+        raise ValueError("model_calls_used must be a non-negative integer")
+    if type(tool_calls_used) is not int or tool_calls_used < 0:
+        raise ValueError("tool_calls_used must be a non-negative integer")
+    resolved_model_call_cap = (
+        max(0, int(model_call_cap)) if type(model_call_cap) is int
+        else run_spend_budget().max_iterations
+    )
+    resolved_tool_call_cap = (
+        max(0, int(tool_call_cap)) if type(tool_call_cap) is int
+        else run_spend_budget().max_tool_calls
+    )
     ledger: Dict[str, Any] = {
         "mode": mode, "turn_token_cap": cap, "expected_call_ids": [], "calls": [],
         "usage_turn_id": str(uuid4()), "session_id": session_id,
         "student_id": student_id, "background_jobs": [],
+        "model_call_cap": resolved_model_call_cap,
+        "tool_call_cap": resolved_tool_call_cap,
+        # Durable workers pass committed counts from their task record. Per-call
+        # reservations are then checked against those counts before dispatch.
+        "model_calls_used_before": model_calls_used,
+        "model_calls_reserved": 0,
+        "model_token_reservations": [],
+        "tool_calls_used_before": tool_calls_used,
+        "tool_calls_reserved": tool_calls_used, "tool_call_events": [],
     }
     token = _active_usage_ledger.set(ledger)
     try:
@@ -70,12 +98,41 @@ def current_usage_ledger() -> Optional[Dict[str, Any]]:
 
 
 def require_turn_token_capacity(requested_output_tokens: int, *, estimated_input_tokens: int = 0) -> None:
+    """Check token capacity and reserve a model call before provider dispatch.
+
+    Existing model adapters call this with their requested output allowance
+    immediately before invoking the provider, and call it with zero after the
+    attempt settles. Positive output therefore means a pre-dispatch reservation;
+    zero is a post-settlement budget/usage check and never consumes another call.
+    """
+    if type(requested_output_tokens) is not int or requested_output_tokens < 0:
+        raise ValueError("requested_output_tokens must be a non-negative integer")
+    if type(estimated_input_tokens) is not int or estimated_input_tokens < 0:
+        raise ValueError("estimated_input_tokens must be a non-negative integer")
     ledger = current_usage_ledger()
     if ledger is None:
         return
     if ledger.get("stop_reason"):
         raise RuntimeError(ledger["stop_reason"])
     calls = ledger["calls"]
+    model_cap = max(0, int(ledger.get("model_call_cap", run_spend_budget().max_iterations)))
+    is_pre_dispatch = requested_output_tokens > 0
+    if is_pre_dispatch:
+        model_calls_used = (
+            max(0, int(ledger.get("model_calls_used_before", 0)))
+            + len(calls)
+            + max(0, int(ledger.get("model_calls_reserved", 0)))
+        )
+        if model_calls_used >= model_cap:
+            ledger["stop_reason"] = "model_call_cap_exceeded"
+            ledger["budget_stop"] = {
+                "reason": "model_call_cap_exceeded",
+                "model_calls_used": model_calls_used,
+                "requested_model_calls": 1,
+                "limit_model_calls": model_cap,
+            }
+            __import__('logging').getLogger(__name__).warning('model_budget_stop %s', ledger['budget_stop'])
+            raise RuntimeError("model_call_cap_exceeded")
     if any(
         not isinstance(call.get("usage"), dict)
         or not all(
@@ -87,11 +144,75 @@ def require_turn_token_capacity(requested_output_tokens: int, *, estimated_input
         ledger["stop_reason"] = "turn_token_usage_unverified"
         raise RuntimeError("turn_token_usage_unverified: previous provider omitted usage")
     used = sum(call["usage"]["total_tokens"] for call in calls)
+    reserved_tokens = sum(
+        max(0, int(reservation.get("estimated_input_tokens", 0)))
+        + max(0, int(reservation.get("requested_output_tokens", 0)))
+        for reservation in ledger.get("model_token_reservations", [])
+    )
     # Reserve the complete prospective call, not merely its output allowance.
     # Provider-reported usage replaces this reservation after the response.
-    if used + max(0, int(estimated_input_tokens)) + max(0, int(requested_output_tokens)) > ledger["turn_token_cap"]:
+    requested_tokens = (
+        max(0, int(estimated_input_tokens)) + max(0, int(requested_output_tokens))
+        if is_pre_dispatch else 0
+    )
+    if used + reserved_tokens + requested_tokens > ledger["turn_token_cap"]:
         ledger["stop_reason"] = "turn_token_cap_exceeded"
+        ledger["budget_stop"] = {"reason": "turn_token_cap_exceeded", "used_tokens": used,
+                                 "reserved_tokens": reserved_tokens,
+                                 "estimated_input_tokens": estimated_input_tokens,
+                                 "requested_output_tokens": requested_output_tokens,
+                                 "limit_tokens": ledger["turn_token_cap"]}
+        __import__('logging').getLogger(__name__).warning('model_budget_stop %s', ledger['budget_stop'])
         raise RuntimeError("turn_token_cap_exceeded")
+    if is_pre_dispatch:
+        ledger["model_calls_reserved"] = max(0, int(ledger.get("model_calls_reserved", 0))) + 1
+        ledger.setdefault("model_token_reservations", []).append({
+            "estimated_input_tokens": max(0, int(estimated_input_tokens)),
+            "requested_output_tokens": max(0, int(requested_output_tokens)),
+        })
+
+
+def reserve_tool_call_capacity(requested_calls: int, *, stage: str = "tool_node") -> None:
+    """Reserve an entire pending tool-call batch before any tool is executed.
+
+    Tool-node batches can run concurrently, so callers should reserve once at
+    the node boundary with the full number of requested calls. Durable task
+    workers can pass their task's `tool_call_cap` to `capture_usage_ledger`;
+    legacy callers outside a usage-ledger context remain compatible.
+    """
+    if type(requested_calls) is not int or requested_calls < 0:
+        raise ValueError("requested_calls must be a non-negative integer")
+    if requested_calls == 0:
+        return
+    ledger = current_usage_ledger()
+    if ledger is None:
+        return
+    if ledger.get("stop_reason"):
+        raise RuntimeError(str(ledger["stop_reason"]))
+
+    cap = max(0, int(ledger.get("tool_call_cap", run_spend_budget().max_tool_calls)))
+    used = max(0, int(ledger.get("tool_calls_reserved", 0)))
+    if used + requested_calls > cap:
+        ledger["stop_reason"] = "tool_call_cap_exceeded"
+        ledger["budget_stop"] = {
+            "reason": "tool_call_cap_exceeded",
+            "reserved_tool_calls": used,
+            "requested_tool_calls": requested_calls,
+            "limit_tool_calls": cap,
+            "stage": str(stage)[:48],
+        }
+        __import__('logging').getLogger(__name__).warning('tool_budget_stop %s', ledger['budget_stop'])
+        raise RuntimeError("tool_call_cap_exceeded")
+
+    ledger["tool_calls_reserved"] = used + requested_calls
+    events = ledger.setdefault("tool_call_events", [])
+    if len(events) < 64:
+        events.append({
+            "stage": str(stage)[:48],
+            "reserved_calls": requested_calls,
+            "reserved_total": used + requested_calls,
+            "limit_calls": cap,
+        })
 
 
 def record_model_call(
@@ -103,6 +224,14 @@ def record_model_call(
         return
     call_id = f"{stage}:{len(ledger['calls']) + 1}"
     ledger["expected_call_ids"].append(call_id)
+    # Provider usage settles one conservative pre-dispatch reservation. If an
+    # adapter records a call without a matching reservation (legacy fixture or
+    # non-provider path), retain its historical observation-only behavior.
+    if ledger.get("model_token_reservations"):
+        reservation = ledger["model_token_reservations"].pop(0)
+        ledger["model_calls_reserved"] = max(
+            0, int(ledger.get("model_calls_reserved", 0)) - 1,
+        )
     ledger["calls"].append({
         "call_id": call_id, "stage": stage, "provider": provider, "model": model,
         "usage": dict(usage) if usage else None,
@@ -204,7 +333,7 @@ def _estimate_chat_tokens(messages: Sequence[Mapping[str, Any]], capability: Mod
     return None, "tokenizer_unknown"
 
 
-def context_window_status(
+def _context_window_status(
     provider: str,
     model: str,
     messages: Sequence[Mapping[str, Any]],
@@ -237,12 +366,86 @@ def context_window_status(
         "fits_estimate" if remaining >= 0 else "estimated_input_over_window",
     )
 
+
+def context_window_status(provider, model, messages, max_output_tokens, *, safety_margin_tokens=256):
+    """Inspect final wire size without logging student text or tool arguments."""
+    status = _context_window_status(provider, model, messages, max_output_tokens,
+                                    safety_margin_tokens=safety_margin_tokens)
+    ledger = current_usage_ledger()
+    if ledger is not None:
+        rows = ledger.setdefault('preflights', [])
+        if len(rows) < 64:
+            import hashlib
+            rows.append({'model': model, 'estimated_input_tokens': status.estimated_input_tokens,
+                         'context_window_tokens': status.context_window_tokens,
+                         'input_limit_tokens': status.input_limit_tokens,
+                         'fits': status.fits,
+                         'estimate_method': status.estimate_method, 'reason': status.reason,
+                         'requested_output_tokens': max_output_tokens,
+                         'parts': [{'role': m.get('role'), 'chars': len(str(m.get('content', ''))),
+                                    'sha256': hashlib.sha256(str(m.get('content', '')).encode()).hexdigest()}
+                                   for m in messages]})
+    return status
+
+
+def ask_context_pressure(usage_ledger: Optional[Mapping[str, Any]], *, threshold: float = 0.75) -> bool:
+    """Decide whether Ask should compact from a real final-request preflight.
+
+    The budgeted model adapter records the serialized messages and registered
+    tool schemas immediately before dispatch. A pressure decision is made only
+    from a known estimate and usable input limit; unknown tokenization never
+    becomes a fabricated pressure ratio.
+    """
+    if not isinstance(usage_ledger, Mapping) or str(usage_ledger.get("mode") or "").lower() != "ask":
+        return False
+    try:
+        minimum_fraction = float(threshold)
+    except (TypeError, ValueError):
+        return False
+    if not 0 < minimum_fraction <= 1:
+        return False
+
+    checked = []
+    for call in usage_ledger.get("calls") or []:
+        preflight = call.get("preflight") if isinstance(call, Mapping) else None
+        if isinstance(preflight, Mapping) and preflight.get("final_messages_checked") is True:
+            checked.append(preflight)
+    # If no model was dispatched because every configured candidate was over
+    # its window, the sanitized preflight rows still prove the request cannot
+    # fit. Do not use these rows when an actual provider preflight exists.
+    if not checked:
+        rows = [row for row in usage_ledger.get("preflights") or [] if isinstance(row, Mapping)]
+        if rows and all(row.get("fits") is False for row in rows):
+            checked = rows
+    for row in checked:
+        estimate = row.get("estimated_input_tokens")
+        input_limit = row.get("input_limit_tokens")
+        if (type(estimate) is not int or estimate < 0
+                or type(input_limit) is not int or input_limit <= 0):
+            continue
+        if row.get("reason") == "estimated_input_over_window" or estimate >= input_limit * minimum_fraction:
+            return True
+    return False
+
+
+def budget_stop_reply(reason: str) -> str:
+    if reason.startswith('turn_token_usage_unverified'):
+        return '模型服务未返回可核对的用量，本轮已暂停，尚未形成完整结论。原材料已保留；这不表示窗口或额度已经用完，请稍后重试。'
+    if reason == 'turn_token_cap_exceeded':
+        return '本轮调用额度不足，尚未形成完整结论。原材料已保留；请缩小问题范围或从已保存的读取位置继续，不需要重新上传。'
+    if reason == 'model_call_cap_exceeded':
+        return '本轮模型调用额度已用完，尚未形成完整结论。已读取的材料仍保留；请缩小问题范围或稍后接续。'
+    if reason == 'tool_call_cap_exceeded':
+        return '本轮工具调用额度已用完，剩余操作尚未执行，不能视为已完成。已读取的材料仍保留；请缩小问题范围或稍后接续。'
+    return '本轮模型窗口无法容纳当前资料，全文尚未读取。原材料已保留，可按章节继续读取。'
+
 # Approximate chars ≈ tokens for CJK-heavy text (conservative: 1.5 chars/token → use chars)
 TOKENS_USER_MEMORY = 1500
 TOKENS_SUMMARY = 1000
 TOKENS_BLACKBOARD_CARD = 800
 K_TURNS = 8  # dialogue turns → ~16 messages
 MAX_HISTORY_MESSAGES = K_TURNS * 2
+AGENT_ROUTER_HISTORY_MESSAGES = 4  # four recent messages (usually two exchanges); not the full Lead history
 
 # char budgets (roughly tokens * 2 for mixed CN/EN)
 CHARS_USER_MEMORY = TOKENS_USER_MEMORY * 2
@@ -284,6 +487,8 @@ class ContextBudget:
     memory_digest: SlotBudget
     attachment_context: SlotBudget
     evidence_context: SlotBudget
+    component_context: SlotBudget
+    conversation_state: SlotBudget = SlotBudget(0)
     estimator: TextEstimator = CharEstimator()
 
     def fit(self, slot: str, text: str) -> str:
@@ -299,18 +504,22 @@ CONTEXT_BUDGETS: Dict[InteractionMode, ContextBudget] = {
         memory_digest=SlotBudget(800),
         attachment_context=SlotBudget(1800),
         evidence_context=SlotBudget(6000),
+        component_context=SlotBudget(4000),
+        conversation_state=SlotBudget(2400),
     ),
     InteractionMode.AGENT: ContextBudget(
         summary=SlotBudget(800),
-        history=SlotBudget(0),
+        history=SlotBudget(1500),
         blackboard_card=SlotBudget(CHARS_BLACKBOARD_CARD),
         memory_digest=SlotBudget(800),
         attachment_context=SlotBudget(600),
         evidence_context=SlotBudget(0),
+        component_context=SlotBudget(0),
+        conversation_state=SlotBudget(0),
     ),
     InteractionMode.EXPERTS: ContextBudget(
         summary=SlotBudget(800),
-        history=SlotBudget(0),
+        history=SlotBudget(1500),
         blackboard_card=SlotBudget(CHARS_BLACKBOARD_CARD),
         memory_digest=SlotBudget(800),
         attachment_context=SlotBudget(600),
@@ -318,6 +527,8 @@ CONTEXT_BUDGETS: Dict[InteractionMode, ContextBudget] = {
         # the Lead's bounded router context; it does not expand Experts tool or
         # blackboard-write permissions.
         evidence_context=SlotBudget(6000),
+        component_context=SlotBudget(0),
+        conversation_state=SlotBudget(0),
     ),
 }
 

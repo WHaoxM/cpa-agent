@@ -57,11 +57,13 @@ class DeterministicSupervisor:
         if command == "SERIAL" and len(fields) == 4:
             marker = _token(fields[1])
             turn = _token(fields[2])
-            delay_ms = max(0, min(int(fields[3]), 3000))
+            hold_for_release = fields[3] == "hold"
+            delay_ms = 0 if hold_for_release else max(0, min(int(fields[3]), 3000))
             return self._serial(
                 marker=marker,
                 turn=turn,
                 delay_ms=delay_ms,
+                hold_for_release=hold_for_release,
                 session_id=session_id,
                 history=history,
             )
@@ -134,6 +136,7 @@ class DeterministicSupervisor:
         }
 
     def _serial(self, *, marker: str, turn: str, delay_ms: int,
+                hold_for_release: bool = False,
                 session_id: str, history: list[dict[str, Any]]) -> dict[str, Any]:
         event_key = f"cpa:acceptance:serial:{marker}"
         prior_roles = [str(item.get("role") or "") for item in history]
@@ -144,7 +147,17 @@ class DeterministicSupervisor:
             "pid": os.getpid(),
             "prior_roles": prior_roles,
         }, ensure_ascii=False))
-        time.sleep(delay_ms / 1000.0)
+        if hold_for_release:
+            release_key = f"cpa:acceptance:serial:release:{marker}"
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if self._redis.get(release_key):
+                    break
+                time.sleep(0.02)
+            else:
+                raise TimeoutError("serial acceptance barrier was not released")
+        else:
+            time.sleep(delay_ms / 1000.0)
         self._redis.rpush(event_key, json.dumps({
             "phase": "end",
             "turn": turn,

@@ -19,8 +19,16 @@ class PersonalRepo:
             "plan_id": "plan_good1", "title": "学习计划（初稿）", "status": "draft",
             "body_text": "职业学习计划。" * 300, "body_sha256": "a" * 64,
             "artifact_id": "art_good1", "artifact_version": 1,
+            "student_id": "student_001", "session_id": "session_001",
+            "gap_summary": "报告指出缺少一个可复现的练习。",
             "created_at": "2026-10-10", "updated_at": "2026-10-10",
         }
+        self.steps = [{
+            "step_id": "step_good1", "position": 1, "title": "完成小型练习",
+            "detail": "使用合成数据完成一项小练习。", "completed": 1,
+            "completed_at": "2026-10-11", "evidence_summary": "我完成了一份合成练习。",
+            "attachment_file_id": "file_student_001", "evidence_updated_at": "2026-10-11",
+        }]
         self.saved = [
             {"id": i, "job_id": f"job_{i}", "job_title": f"岗位{i}",
              "company": "用户提交的公司", "saved_at": "2026-10-10", "salary": "面议"}
@@ -46,6 +54,10 @@ class PersonalRepo:
             return [{"n": 0, "changed": None}]
         if "JOIN agent_artifact a" in sql and "p.plan_id=:plan_id" in sql:
             return [self.plan] if params["plan_id"] == self.plan["plan_id"] else []
+        if "FROM agent_action_plan_step s" in sql:
+            return self.steps[params["offset"]:params["offset"] + params["limit"]]
+        if "COUNT(*) AS n FROM agent_action_plan_step" in sql:
+            return [{"n": len(self.steps)}]
         if "SELECT p.plan_id,p.title" in sql:
             return [self.plan] if params["offset"] == 0 else []
         if "FROM saved_job" in sql:
@@ -91,6 +103,59 @@ def test_plan_detail_is_draft_and_body_requires_explicit_chunk_continuation():
     with pytest.raises(LookupError):
         read_personal_resource(repo, student_id="student_001",
                                uri=f"{ACTION_PLANS_URI}/plan_unknown")
+
+
+def test_plan_evidence_read_marks_student_submission_and_uses_existing_attachment_reader(monkeypatch):
+    from app.services.agent_runtime.media import document_access, file_store, session_resources
+
+    repo = PersonalRepo()
+    mounted = []
+    monkeypatch.setattr(file_store, "get_agent_file_service", lambda: type("Files", (), {
+        "get": lambda _self, file_id: {
+            "file_id": file_id, "filename": "练习记录.txt", "student_id": "student_001",
+            "session_id": "session_001", "status": "ready",
+        },
+    })())
+    monkeypatch.setattr(session_resources, "mount_resources",
+                        lambda session_id, resources, *, student_id: mounted.append(
+                            (session_id, resources, student_id)))
+    monkeypatch.setattr(document_access, "materialize_for_ask", lambda file_ids, **kwargs: (
+        "【附件：练习记录.txt】完整读取：合成数据的清洗与验证结果。",
+        {"all_complete": True, "files": [{"total_chars": 24, "prompt_complete": True}]},
+    ))
+
+    result = read_personal_resource(
+        repo, student_id="student_001", uri=f"{ACTION_PLANS_URI}/plan_good1",
+        section="evidence", limit=1,
+    )
+    item = result["data"][0]
+    assert item["step"]["completed"] is True
+    record = item["step"]["practice_record"]
+    assert record["source"] == "student_submitted" and record["verified"] is False
+    assert record["attachment"]["read_status"] == "read"
+    assert "完整读取" in record["attachment"]["content"]
+    assert item["evidence_boundary"].startswith("练习说明和附件均由学生提交")
+    assert mounted == [("session_001", [{"type": "file", "file_id": "file_student_001"}],
+                        "student_001")]
+
+
+def test_plan_evidence_does_not_read_cross_owner_or_not_ready_attachments(monkeypatch):
+    from app.services.agent_runtime.media import file_store
+
+    repo = PersonalRepo()
+    monkeypatch.setattr(file_store, "get_agent_file_service", lambda: type("Files", (), {
+        "get": lambda _self, file_id: {
+            "file_id": file_id, "filename": "pending.txt", "student_id": "student_001",
+            "session_id": "session_001", "status": "ingesting",
+        },
+    })())
+    result = read_personal_resource(
+        repo, student_id="student_001", uri=f"{ACTION_PLANS_URI}/plan_good1",
+        section="evidence", limit=1,
+    )
+    attachment = result["data"][0]["step"]["practice_record"]["attachment"]
+    assert attachment["read_status"] == "processing"
+    assert attachment["content"] is None
 
 
 def test_saved_jobs_are_paged_user_submissions_never_verified_matches():

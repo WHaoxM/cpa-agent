@@ -36,6 +36,9 @@ def test_prompt_selector_matrix_routes(key, expected_ids):
         "router_context": "ctx",
         "message": "帮我做人岗匹配",
         "templates": "end_to_end",
+        "roles_json": '["profile","match","qa"]',
+        "skill_cards_json": "[]",
+        "selected_capability_json": "null",
         "slots": "resume",
         "known_slots_json": "[]",
         "template_hint": "none",
@@ -66,3 +69,30 @@ def test_prompt_selector_missing_route_fail_fast():
         get_prompt_selector().select(
             PromptSelectionKey("supervisor", InteractionMode.ASK, "not_a_kind")
         )
+
+
+def test_agent_dynamic_planner_and_finalizer_have_registered_content_fingerprints():
+    selector = get_prompt_selector()
+    lead = selector.select(
+        PromptSelectionKey("supervisor", InteractionMode.AGENT, "lead"),
+        variables={
+            "templates": "end_to_end",
+            "roles_json": '["qa","profile"]',
+            "skill_cards_json": "[]",
+            "selected_capability_json": "null",
+            "slots": "resume",
+            "known_slots_json": "[]",
+            "template_hint": "none",
+            "card": "",
+            "summary": "",
+            "memory_digest": "",
+            "message": "帮我解释院校背景",
+        },
+    )
+    final = selector.select(
+        PromptSelectionKey("supervisor", InteractionMode.AGENT, "final"),
+        variables={"user_message": "帮我解释院校背景", "steps_json": "[]"},
+    )
+    assert "school-context" in lead.system
+    assert lead.metadata["prompt_sha256"]
+    assert final.metadata["prompt_sha256"]

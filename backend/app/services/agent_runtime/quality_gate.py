@@ -61,7 +61,13 @@ def section_count_answer(pack: dict) -> str | None:
             "评价这些方面需要逐项核对相应经历和成果证据。无需重复上传当前已能读取的资料。")
 
 
-def ground_evidence_answer(llm, reply: str, question: str, evidence: dict, *, enabled=None):
+def ground_evidence_answer(
+    llm, reply: str, question: str, evidence: dict, *, enabled=None,
+    rubric: str | None = None, model_override: str | None = None,
+    max_checks: int = 2, temperature: float = 0.0, max_tokens: int = 1800,
+    response_format_kind: str = "json_schema",
+    include_diagnostics: bool = False,
+):
     """Bounded semantic review using the existing structured-output/usage boundary.
 
     A model check is not proof. One corrected draft may be checked once more;
@@ -77,36 +83,74 @@ def ground_evidence_answer(llm, reply: str, question: str, evidence: dict, *, en
                        "reason": "semantic_review_disabled"}
     draft = reply
     checks = 0
+    review_rubric = rubric if isinstance(rubric, str) and rubric.strip() else _GROUNDING_RUBRIC
+    bounded_checks = max(1, min(2, int(max_checks)))
+    bounded_temperature = max(0.0, min(0.3, float(temperature)))
+    bounded_max_tokens = max(128, min(1800, int(max_tokens)))
+    last_review = None
+
+    def status_with_diagnostics(value: dict) -> dict:
+        if not include_diagnostics:
+            return value
+        result = dict(value)
+        if last_review is not None:
+            reasons = last_review.reasons
+            result.update({
+                "review_verdict": last_review.verdict,
+                "review_reason_count": len(reasons),
+                "review_reason_chars": min(4096, sum(len(item) for item in reasons)),
+                "corrected_reply_chars": len(last_review.corrected_reply),
+            })
+        return result
+    if response_format_kind == "json_schema":
+        response_format = {"type": "json_schema", "json_schema": {
+            "name": "evidence_grounding_review", "strict": True,
+            "schema": GroundingReview.model_json_schema()}}
+    elif response_format_kind == "json_object":
+        # Some providers support JSON Object but not JSON Schema. The local
+        # strict Pydantic validation below remains authoritative in this mode.
+        response_format = {"type": "json_object"}
+    else:
+        return (
+            "已读取当前引用的资料，但本轮回答未通过证据范围校验，因此没有展示可能过度推断的结论。",
+            {"status": "blocked", "checks": 0, "reason": "unsupported_response_format"},
+        )
     try:
-        for _ in range(2):
+        for _ in range(bounded_checks):
             checks += 1
             response = llm.chat_with_metadata(
-                messages=[{"role": "system", "content": _GROUNDING_RUBRIC},
+                messages=[{"role": "system", "content": review_rubric},
                           {"role": "user", "content": json.dumps({
                               "question": question, "evidence": evidence, "draft": draft,
-                          }, ensure_ascii=False, default=str)}],
-                temperature=0.0, max_tokens=1800,
-                response_format={"type": "json_schema", "json_schema": {
-                    "name": "evidence_grounding_review", "strict": True,
-                    "schema": GroundingReview.model_json_schema()}},
+                }, ensure_ascii=False, default=str)}],
+                temperature=bounded_temperature, max_tokens=bounded_max_tokens,
+                model_override=model_override,
+                response_format=response_format,
             )
             if response.finish_reason not in {"stop", "end_turn"}:
                 raise ValueError("grounding_review_incomplete")
             review = GroundingReview.model_validate_json(response.text)
+            last_review = review
             if review.verdict == "supported" and not review.reasons and not review.corrected_reply:
-                return draft, {"status": "model_checked", "checks": checks,
-                               "revised": draft != reply}
+                return draft, status_with_diagnostics({
+                    "status": "model_checked", "checks": checks,
+                    "revised": draft != reply,
+                })
             if review.verdict != "unsupported" or not review.reasons or not review.corrected_reply.strip():
                 raise ValueError("grounding_review_inconsistent")
             draft = review.corrected_reply.strip()
-        reason = "unsupported_after_revision"
+        reason = (
+            "unsupported_initial_draft"
+            if include_diagnostics and bounded_checks == 1 and checks == 1
+            else "unsupported_after_revision"
+        )
     except Exception as exc:
         reason = "review_unavailable"
     return (
         "已读取当前引用的资料，但本轮回答未通过证据范围校验，因此没有展示可能过度推断的结论。"
         "资料读取范围不等于原文件完整性，也不能单凭条目数量证明能力或实际贡献。"
         "你无需重复上传同一资料；可以重试，或将问题缩小到具体记录。",
-        {"status": "blocked", "checks": checks, "reason": reason},
+        status_with_diagnostics({"status": "blocked", "checks": checks, "reason": reason}),
     )
 
 

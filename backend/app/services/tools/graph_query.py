@@ -271,9 +271,11 @@ class GraphQueryTool(BaseTool):
 
     def _personal_skills(self, entity_name, raw_offset):
         from flask import has_request_context
-        from ...api._helpers import ScopeError, resolve_request_scope
+        from ...api._helpers import (
+            ScopeError, has_trusted_agent_worker_scope, resolve_request_scope,
+        )
 
-        if not has_request_context():
+        if not has_request_context() and not has_trusted_agent_worker_scope():
             return self._failure("[graph_query] 权限拒绝：缺少可信服务端身份", "denied")
         try:
             scope = resolve_request_scope()
@@ -325,9 +327,11 @@ class GraphQueryTool(BaseTool):
 
     def _personal_entity_links(self, raw_offset):
         from flask import has_request_context
-        from ...api._helpers import ScopeError, resolve_request_scope
+        from ...api._helpers import (
+            ScopeError, has_trusted_agent_worker_scope, resolve_request_scope,
+        )
 
-        if not has_request_context():
+        if not has_request_context() and not has_trusted_agent_worker_scope():
             return self._failure("[graph_query] 权限拒绝：缺少可信服务端身份", "denied")
         try:
             scope = resolve_request_scope()

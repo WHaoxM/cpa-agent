@@ -57,6 +57,34 @@ runtime_routes:
     prompt_ids:
       - agent.experts.lead.system
 
+  - engine: supervisor
+    mode: experts
+    content_kind: task_lead
+    description: 同一学生任务的受限业务委派
+    prompt_ids:
+      - agent.task.lead.system
+
+  - engine: supervisor
+    mode: agent
+    content_kind: lead
+    description: Agent 主控意图理解与白名单计划
+    prompt_ids:
+      - agent.experts.lead.system
+
+  - engine: supervisor
+    mode: agent
+    content_kind: final
+    description: Agent 主控基于步骤结果生成面向用户的最终回复
+    prompt_ids:
+      - agent.plan.final.system
+
+  - engine: supervisor
+    mode: experts
+    content_kind: final
+    description: 兼容 Experts 入口的 Agent 最终回复
+    prompt_ids:
+      - agent.plan.final.system
+
   - engine: subagent
     mode: ask
     content_kind: attachment
@@ -301,7 +329,7 @@ prompts:
   # l4_report_generator — 报告 LLM 摘要
   # ------------------------------------------------------------------
   - id: report.resume_diagnostic.user
-    version: 1
+    version: 10
     description: 已确认简历事实的证据约束型语义诊断
     base: report.resume_diagnostic.user/base.md
     tone: report.resume_diagnostic.user/tone.md
@@ -383,7 +411,7 @@ prompts:
       - app.services.agent_runtime.supervisor
 
   - id: agent.ask.manual
-    version: 1
+    version: 2
     description: Ask 用户通道契约（产品语义，不含内部工具/黑板名）
     base: agent.ask.manual/base.md
     tone: agent.ask.manual/tone.md
@@ -490,13 +518,38 @@ prompts:
       - app.services.agent_runtime.experts_lead
     variables:
       - templates
+      - roles_json
+      - skill_cards_json
       - slots
       - known_slots_json
       - template_hint
       - card
       - summary
       - memory_digest
+      - selected_capability_json
       - message
+
+  - id: agent.task.lead.system
+    version: 3
+    description: 学生任务主控的唯一结构化委派协议
+    base: agent.task.lead.system/base.md
+    tone: agent.task.lead.system/tone.md
+    consumers:
+      - app.services.agent_runtime.experts_lead
+    variables:
+      - selected_capability_json
+      - message
+
+  - id: agent.plan.final.system
+    version: 2
+    description: 基于真实步骤结果生成自然、诚实的最终回复
+    base: agent.plan.final.system/base.md
+    tone: agent.plan.final.system/tone.md
+    consumers:
+      - app.services.agent_runtime.mode_runtime
+    variables:
+      - user_message
+      - steps_json
 
   - id: agent.ask.thinking.system
     version: 1

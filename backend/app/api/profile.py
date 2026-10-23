@@ -262,16 +262,24 @@ def get_student_portrait_snapshots():
     try:
         scope = resolve_request_scope()
         raw_limit = request.args.get("limit", "20")
+        raw_offset = request.args.get("offset", "0")
         if not raw_limit.isdecimal() or not 1 <= int(raw_limit) <= 50:
             return jsonify({"success": False, "error": "画像历史条数无效"}), 400
+        if not raw_offset.isdecimal() or len(raw_offset) > 9:
+            return jsonify({"success": False, "error": "画像历史偏移无效"}), 400
         mysql = get_mysql_client()
         from ..services.student_workbench import read_student_workbench
         from ..services.student_portrait_snapshot import list_portrait_snapshots
         current = read_student_workbench(mysql, student_id=scope.student_id)["portrait"].get("snapshot_id")
-        items = list_portrait_snapshots(mysql, student_id=scope.student_id, limit=int(raw_limit))
+        items = list_portrait_snapshots(mysql, student_id=scope.student_id,
+                                        limit=int(raw_limit), offset=int(raw_offset))
+        total = mysql.fetch_all(
+            "SELECT COUNT(*) AS total FROM student_portrait_snapshot "
+            "WHERE student_id=:sid AND target_job_id IS NULL", {"sid": scope.student_id})[0]["total"]
         return jsonify({"success": True, "data": {
             "current_snapshot_id": current,
-            "items": [_portrait_snapshot_summary(item, current) for item in items]}})
+            "items": [_portrait_snapshot_summary(item, current) for item in items],
+            "total": int(total), "limit": int(raw_limit), "offset": int(raw_offset)}})
     except ScopeError as error:
         return scope_error_response(error)
     except Exception as error:

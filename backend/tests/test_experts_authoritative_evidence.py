@@ -4,6 +4,28 @@ from app.services.agent_runtime.blackboard import Blackboard
 from app.services.agent_runtime.experts_lead import _infer_known_slots, _normalize, experts_lead_decide
 
 
+def test_user_visible_evidence_coverage_hides_internal_version_and_page_cursor():
+    from app.services.agent_runtime.mode_runtime import _evidence_coverage_note
+
+    note = _evidence_coverage_note({
+        "sources": [{
+            "uri": "career://me/reports/report_synthetic_1",
+            "version": "internal-sha256-0123456789abcdef",
+        }],
+        "coverage": {"complete": False, "returned": 1, "total": 2},
+        "has_more": True,
+        "next_offset": 1,
+        "items": [{"data": "synthetic"}],
+    })
+
+    assert "岗位报告" in note
+    assert "本轮参考 1/2 项资料" in note
+    assert "尚余 1 项" in note
+    assert "还有后续资料可继续查看" in note
+    assert "internal-sha256" not in note
+    assert "offset" not in note
+
+
 def test_experts_chat_loads_shared_evidence_into_lead_without_granting_tools(monkeypatch):
     from app.services.agent_runtime.mode_runtime import ModeRuntime
 
@@ -81,7 +103,7 @@ def test_experts_informational_evidence_turn_answers_instead_of_publishing_lead_
             prompt = messages[0]["content"]
             assert "Python" in prompt and "Flask" in prompt
             assert "resume-v9" in prompt and '"next_offset":2' in prompt
-            return "前两项技能体现出 Python Web 后端方向：Python 是语言基础，Flask 是服务端框架。当前仅读取 2/10 项，版本 resume-v9；下一页 offset=2。"
+            return "前两项技能体现出 Python Web 后端方向：Python 是语言基础，Flask 是服务端框架。当前只参考前两项资料，其他资料可继续查看。"
 
     monkeypatch.setattr("app.services.db.get_mysql_client", lambda: object())
     monkeypatch.setattr("app.services.agent_runtime.evidence_retrieval.build_evidence_pack", lambda *_a, **_k: pack)
@@ -102,8 +124,10 @@ def test_experts_informational_evidence_turn_answers_instead_of_publishing_lead_
     )
 
     assert "Python Web 后端方向" in result["reply"]
-    assert "版本 resume-v9" in result["reply"]
-    assert "下一页 offset=2" in result["reply"]
+    assert "当前只参考前两项资料" in result["reply"]
+    assert "还有后续资料可继续查看" in result["reply"]
+    assert "版本 resume-v9" not in result["reply"]
+    assert "offset=" not in result["reply"]
     assert "我将为你分析" not in result["reply"]
     assert result["tool_calls"] == []
     assert result["orchestration"]["supervisor_view"]["lead_action"] == "direct_answer"
@@ -236,6 +260,10 @@ def test_mode_runtime_and_turn_projection_stop_on_unverified_next_step(monkeypat
     monkeypatch.setattr(runtime, "experts_lead_decide", lambda *a, **k: {
         "action": "run_plan", "template": "profile_match", "source": "llm", "handoff_brief": "test"})
     monkeypatch.setattr(runtime, "_invoke_subagent", lambda *a, **k: tool_out())
+    monkeypatch.setattr(
+        runtime.ModeRuntime, "_finalize_plan_reply",
+        lambda _self, **_kwargs: "本轮有步骤未能完成，未把它当作已交付成果。",
+    )
     board = Blackboard()
     result = runtime.ModeRuntime()._run_experts(
         "test", board, "", "", time.time(), "session", True, "", "owner")

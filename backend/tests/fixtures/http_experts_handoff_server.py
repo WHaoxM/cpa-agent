@@ -35,6 +35,7 @@ def main():
     from app.services import langgraph_agent
     from app.services import pipeline
     from app.services.agent_runtime import evidence_retrieval
+    from app.utils import llm_client
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
     from langchain_core.tools import tool
     from test_session_turn_coordination import _SharedSessionRedis
@@ -129,6 +130,21 @@ def main():
                 "scenario": scenario, "missing_slots": [], "plan_sketch": []}
 
     mode_runtime.experts_lead_decide = lead
+
+    class FinalReplyModel:
+        def chat(self, *, messages, **_kwargs):
+            prompt = messages[0]["content"]
+            marker = "服务端结构化步骤结果（核验字段与未核验分析已分层）："
+            raw_steps = prompt.split(marker, 1)[1].lstrip()
+            steps, _end = json.JSONDecoder().raw_decode(raw_steps)
+            return "\n".join(
+                f"[{row['role']}] {'完成' if row['status'] == 'completed' else '未达成'}"
+                for row in steps
+            )
+
+    # The integration journey replaces every model boundary, including the
+    # final reply model, so it cannot call a configured external provider.
+    llm_client.get_llm_client = lambda: FinalReplyModel()
 
     def gated_tools(role, gate_ctx, ui_collector):
         @tool("pipeline_run")

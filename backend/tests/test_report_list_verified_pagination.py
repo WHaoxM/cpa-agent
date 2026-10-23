@@ -16,9 +16,9 @@ def test_report_list_filters_stale_before_paging_and_uses_verified_status(monkey
             assert params == {"student_id": "owner"}
             assert "LIMIT" not in sql
             return [
-                {"report_id": "stale", "status": "completed"},
-                {"report_id": "current", "status": "completed"},
-                {"report_id": "partial", "status": "completed"},
+                {"report_id": "stale", "status": "completed", "created_at": "2026-10-20"},
+                {"report_id": "current", "status": "completed", "created_at": "2026-10-20"},
+                {"report_id": "partial", "status": "completed", "created_at": "2026-10-21"},
             ]
 
     monkeypatch.setattr(report_api, "get_mysql_client", lambda: Reports())
@@ -30,6 +30,7 @@ def test_report_list_filters_stale_before_paging_and_uses_verified_status(monkey
         return {
             "business_artifact_verified": not uri.endswith("/stale"),
             "status": "partial" if uri.endswith("/partial") else "completed",
+            "data": {"position_name": "数据分析实习生"},
         }
 
     monkeypatch.setattr(match_report_resources, "read_match_report_resource", verify)
@@ -41,6 +42,8 @@ def test_report_list_filters_stale_before_paging_and_uses_verified_status(monkey
         assert body["total"] == body["count"] == 1
         assert [row["report_id"] for row in body["data"]] == ["partial"]
         assert body["data"][0]["status"] == "partial"
+        assert body["data"][0]["position_name"] == "数据分析实习生"
+        assert body["data"][0]["created_at"] == "2026-10-21"
 
     with app.test_request_context("/api/report/list?limit=1&offset=1"):
         g.cpa_principal = Principal("owner", "owner", "test")

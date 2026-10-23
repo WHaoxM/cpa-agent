@@ -19,7 +19,9 @@ from typing import Any, Dict, List, Optional, Sequence
 from ...utils.logger import get_logger
 from .blackboard import Blackboard
 from .budget import truncate_slot
-from .plan import PLAN_TEMPLATES
+from .plan import PLAN_TEMPLATES, validate_plan_steps
+from .skill_registry import skill_cards
+from .task_packet import SUBAGENTS
 
 logger = get_logger("cpa-agent.agent_runtime.experts_lead")
 
@@ -60,6 +62,8 @@ def experts_lead_decide(
     memory_digest: str = "",
     plan_mode: bool = False,
     blackboard: Optional[Blackboard] = None,
+    interaction_mode: str = "experts",
+    selected_capability: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Returns LeadIntentPacket:
@@ -79,6 +83,8 @@ def experts_lead_decide(
         memory_digest=memory_digest,
         template_hint=hint,
         known_slots=known,
+        interaction_mode=interaction_mode,
+        selected_capability=selected_capability,
     )
     if decision:
         return _normalize(
@@ -88,17 +94,39 @@ def experts_lead_decide(
             hint=hint,
             known_slots=known,
             blackboard=bb,
+            selected_capability=selected_capability,
         )
 
     # Failed structured planning is unavailable, not evidence of a meta intent.
-    return _finalize({
+    fallback = {
         "action": "clarify", "template": None, "user_job": "inform",
         "goal_summary": "", "vagueness": "partial", "known_slots": known,
         "missing_slots": [], "plan_sketch": [], "clarify_options": [],
         "reply": "本轮任务规划服务暂不可用，尚未启动任何专家步骤，请重试。",
         "confidence": 0.0, "source": "lead_unavailable",
         "risk_if_run": "没有有效的结构化执行计划",
-    })
+    }
+    if selected_capability is not None:
+        fallback["capability_fit"] = "needs_clarification"
+    return _finalize(fallback)
+
+
+def task_lead_decide(message, context):
+    """Use the existing structured Lead/client, with one bounded business enum."""
+    raw = _llm_lead(message, card='', summary='', memory_digest='', template_hint=None,
+                    known_slots=[], interaction_mode='experts', selected_capability={
+                        'execution_pipeline': 'student_task_v1', 'capability_id': 'student-task',
+                        'task_context': context})
+    if not isinstance(raw, dict) or raw.get('agent') not in {'resume_preparation', 'career_exploration', 'practice_review', 'clarify'}:
+        raise ValueError('主 Agent 未形成有效的业务委派，尚未启动分析')
+    roles = raw.get('compared_roles') or []
+    if not isinstance(roles, list) or len(roles) > 2 or any(r not in context['catalogue'] for r in roles):
+        raise ValueError('主 Agent 返回了目录之外的方向，未保存')
+    action = raw.get('document_action', 'discuss')
+    if action not in {'discuss', 'continue', 'restart'}:
+        raise ValueError('主 Agent 未形成有效的材料读取意图')
+    return {'agent': raw['agent'], 'goal_summary': str(raw.get('goal_summary') or '')[:300],
+            'reply': str(raw.get('reply') or '')[:1000], 'compared_roles': roles, 'document_action': action}
 
 
 def _llm_lead(
@@ -109,6 +137,8 @@ def _llm_lead(
     memory_digest: str,
     template_hint: Optional[str],
     known_slots: Sequence[str],
+    interaction_mode: str,
+    selected_capability: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     try:
         from ...utils.llm_client import get_llm_client
@@ -122,17 +152,31 @@ def _llm_lead(
         prompt = get_prompt_selector().select(
             PromptSelectionKey(
                 engine="supervisor",
-                interaction_mode=InteractionMode.EXPERTS,
-                content_kind="lead",
+                interaction_mode=interaction_mode,
+                content_kind=('task_lead' if selected_capability and selected_capability.get('execution_pipeline') == 'student_task_v1' else 'lead'),
             ),
             variables={
                 "templates": templates,
+                "roles_json": json.dumps(sorted(SUBAGENTS), ensure_ascii=False),
+                "skill_cards_json": json.dumps(
+                    skill_cards(
+                        capability_id=(
+                            str(selected_capability.get("capability_id") or "")
+                            if isinstance(selected_capability, dict) else None
+                        ),
+                    ),
+                    ensure_ascii=False,
+                ),
                 "slots": slots,
                 "known_slots_json": json.dumps(list(known_slots) or [], ensure_ascii=False),
                 "template_hint": template_hint or "none",
                 "card": truncate_slot(card or "", 500),
                 "summary": truncate_slot(summary or "", 400),
                 "memory_digest": truncate_slot(memory_digest or "", 800),
+                "selected_capability_json": json.dumps(
+                    selected_capability, ensure_ascii=False, sort_keys=True,
+                    separators=(",", ":"),
+                ) if selected_capability is not None else "null",
                 "message": message,
             },
         )
@@ -164,6 +208,7 @@ def _normalize(
     hint: Optional[str],
     known_slots: Sequence[str],
     blackboard: Blackboard,
+    selected_capability: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     del blackboard  # reserved for richer gates
     hint = None  # Compatibility parameter cannot revive keyword routing.
@@ -175,9 +220,17 @@ def _normalize(
     if action not in ("explain", "clarify", "run_plan"):
         action = "clarify"
 
-    # Meta always explains — deterministic override
-    if user_job == "meta":
+    # Meta always explains in the legacy/unspecified Experts flow. An explicit
+    # package remains the task contract; its Lead must emit a scoped QA plan or
+    # explicitly say that the selected package does not fit.
+    if user_job == "meta" and selected_capability is None:
         action = "explain"
+
+    capability_fit = None
+    if selected_capability is not None:
+        capability_fit = str(data.get("capability_fit") or "").strip().lower()
+        if capability_fit not in {"supported", "unsupported", "needs_clarification"}:
+            capability_fit = "needs_clarification"
 
     template = data.get("template")
     if template is not None:
@@ -185,19 +238,58 @@ def _normalize(
         if template not in PLAN_TEMPLATES:
             template = None
 
+    plan_error = ""
+    steps: List[Dict[str, Any]] = []
+    has_dynamic_steps = "steps" in data
+    if has_dynamic_steps:
+        try:
+            steps = validate_plan_steps(
+                data.get("steps"),
+                capability_id=(
+                    str(selected_capability.get("capability_id") or "")
+                    if isinstance(selected_capability, dict) else None
+                ),
+            )
+        except ValueError as exc:
+            plan_error = str(exc)
+    elif template:
+        # Backward compatibility with template-only planner outputs.
+        legacy_goal = str(
+            data.get("handoff_brief") or data.get("goal_summary") or message or ""
+        ).strip()
+        if not legacy_goal:
+            plan_error = "template-only plan requires a task goal"
+        else:
+            steps = [
+                {"role": role, "goal": legacy_goal[:400], "skill_ids": []}
+                for role in PLAN_TEMPLATES[template]
+            ]
+
     goal_summary = str(data.get("goal_summary") or "").strip()
     vagueness = str(data.get("vagueness") or "partial").strip().lower()
     if vagueness not in _VAGUENESS:
         vagueness = "partial"
 
-    missing = _clean_slots(data.get("missing_slots"))
-    # Merge deterministic soft gaps
-    if action == "run_plan" or template:
-        tid = template or hint
-        if tid:
-            for s in _missing_for_template(tid, known_slots):
-                if s not in missing:
-                    missing.append(s)
+    model_missing = _clean_slots(data.get("missing_slots"))
+    # A dynamic execution plan is gated by server-derived prerequisites for
+    # its validated roles. Model-authored missing slots are not authoritative:
+    # they can describe a broader workflow than a narrow read-only QA step.
+    # Explicit clarify decisions and legacy template-only plans keep their
+    # model-authored clarification context, with deterministic gaps added.
+    if has_dynamic_steps:
+        required = _missing_for_steps(steps, known_slots)
+    elif template:
+        required = _missing_for_template(template, known_slots)
+    else:
+        required = _missing_for_steps(steps, known_slots)
+    missing = (
+        required
+        if action == "run_plan" and has_dynamic_steps
+        else model_missing
+    )
+    for slot in required:
+        if slot not in missing:
+            missing.append(slot)
 
     options = _clean_str_list(data.get("clarify_options"), 4)
     sketch = _clean_str_list(data.get("plan_sketch"), 4)
@@ -210,23 +302,33 @@ def _normalize(
         confidence = 0.5
 
     if action == "run_plan":
-        # Missing model template cannot be rescued by text matching.
-        if not template:
+        if plan_error:
+            action = "clarify"
+            reply = "本轮计划未通过服务端角色、步骤或能力校验，尚未启动任务。请缩小目标后重试。"
+            risk = plan_error
+        elif not steps:
             action = "clarify"
             reply = reply or (
-                "还需要更明确的目标，我才能启动多专家计划。"
+                "还需要更明确的目标，我才能启动 Agent 计划。"
                 "例如：从简历生成职业报告。"
             )
         elif vagueness == "vague":
             action = "clarify"
         elif missing:
-            # Soft slots still block silent full-pipeline when resume missing on e2e
-            if "resume" in missing and template in ("end_to_end", "profile_match"):
-                action = "clarify"
+            action = "clarify"
+
+        if selected_capability is not None and capability_fit != "supported":
+            action = "clarify"
+            if capability_fit == "unsupported":
+                reply = reply or (
+                    "当前请求超出已选能力包范围，请切换到普通 Agent 或适用的能力包。"
+                )
+            else:
+                reply = reply or "请补充目标或背景，我再判断所选能力包能否安全承接。"
 
     if action == "run_plan":
         if not sketch:
-            sketch = _sketch_for(str(template))
+            sketch = [_role_label(step["role"]) for step in steps]
         if not handoff:
             handoff = goal_summary or message
         if not goal_summary:
@@ -251,8 +353,8 @@ def _normalize(
             goal_summary = "用户可能有任务意图，但执行条件未齐。"
         if not options:
             options = _options_for(template or hint, missing)
-        if not sketch and (template or hint):
-            sketch = _sketch_for(str(template or hint))
+        if not sketch and steps:
+            sketch = [_role_label(step["role"]) for step in steps]
         reply = reply or _clarify_reply(goal_summary, missing, options)
         handoff = ""
 
@@ -260,6 +362,7 @@ def _normalize(
         {
             "action": action,
             "template": template if action == "run_plan" else None,
+            "steps": steps if action == "run_plan" else [],
             "user_job": user_job,
             "goal_summary": goal_summary,
             "vagueness": vagueness,
@@ -272,14 +375,16 @@ def _normalize(
             "confidence": confidence,
             "risk_if_run": risk,
             "source": "llm",
+            **({"capability_fit": capability_fit} if capability_fit is not None else {}),
         }
     )
 
 
 def _finalize(packet: Dict[str, Any]) -> Dict[str, Any]:
-    return {
+    result = {
         "action": packet.get("action") or "clarify",
         "template": packet.get("template"),
+        "steps": list(packet.get("steps") or []),
         "user_job": packet.get("user_job") or "inform",
         "goal_summary": str(packet.get("goal_summary") or ""),
         "vagueness": packet.get("vagueness") or "partial",
@@ -293,6 +398,11 @@ def _finalize(packet: Dict[str, Any]) -> Dict[str, Any]:
         "risk_if_run": str(packet.get("risk_if_run") or ""),
         "source": str(packet.get("source") or "fallback"),
     }
+    if packet.get("capability_fit") in {
+        "supported", "unsupported", "needs_clarification",
+    }:
+        result["capability_fit"] = packet["capability_fit"]
+    return result
 
 
 def _infer_known_slots(message: str, bb: Blackboard) -> List[str]:
@@ -315,6 +425,29 @@ def _missing_for_template(template: str, known: Sequence[str]) -> List[str]:
     need = TEMPLATE_SOFT_SLOTS.get(template) or []
     kn = set(known)
     return [s for s in need if s not in kn]
+
+
+def _missing_for_steps(steps: Sequence[Dict[str, Any]], known: Sequence[str]) -> List[str]:
+    kn = set(known)
+    roles = {step.get("role") for step in steps}
+    missing: List[str] = []
+    if "profile" in roles and "resume" not in kn:
+        missing.append("resume")
+    if "match" in roles and not ({"portrait", "resume"} & kn):
+        missing.append("portrait")
+    if "report" in roles and "match" not in kn and "match" not in roles:
+        missing.append("match")
+    return missing
+
+
+def _role_label(role: str) -> str:
+    return {
+        "profile": "生成或核对职业画像",
+        "match": "执行岗位匹配",
+        "report": "整理职业报告",
+        "planner": "制定行动规划",
+        "qa": "只读问答与解释",
+    }.get(role, "处理任务")
 
 
 def _clean_slots(raw: Any) -> List[str]:

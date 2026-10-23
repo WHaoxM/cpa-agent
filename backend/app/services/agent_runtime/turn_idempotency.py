@@ -24,6 +24,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from ...config import Config
+from ..db.mysql_client import utc_transaction
 from ...utils.logger import get_logger
 from ..db import get_mysql_client
 
@@ -181,8 +182,7 @@ class TurnIdempotencyLedger:
         }
         post_commit_error: Optional[TurnIdempotencyError] = None
         try:
-            with self.mysql.engine.begin() as conn:
-                self._set_utc(conn)
+            with utc_transaction(self.mysql) as conn:
                 conn.execute(text(
                     "INSERT INTO agent_turn_idempotency "
                     "(student_id, session_id, key_sha256, request_sha256, state, "
@@ -209,8 +209,7 @@ class TurnIdempotencyLedger:
             raise TurnIdempotencyStorageUnavailable("幂等存储不可用") from exc
 
         try:
-            with self.mysql.engine.begin() as conn:
-                self._set_utc(conn)
+            with utc_transaction(self.mysql) as conn:
                 row = conn.execute(text(
                     "SELECT id, request_sha256, state, execution_token, response_status, "
                     "response_json, stale_after, response_expires_at, "
@@ -321,8 +320,7 @@ class TurnIdempotencyLedger:
         """Best-effort running/reserved -> unknown; never overwrite completed."""
         params = self._claim_params(claim)
         try:
-            with self.mysql.engine.begin() as conn:
-                self._set_utc(conn)
+            with utc_transaction(self.mysql) as conn:
                 conn.execute(text(
                     "UPDATE agent_turn_idempotency SET state='unknown' "
                     "WHERE student_id=:sid AND session_id=:session AND key_sha256=:key_hash "
@@ -342,8 +340,7 @@ class TurnIdempotencyLedger:
     def expire_completed_responses(self, *, limit: int = 500) -> int:
         """Drop old response bodies while retaining permanent no-replay tombstones."""
         try:
-            with self.mysql.engine.begin() as conn:
-                self._set_utc(conn)
+            with utc_transaction(self.mysql) as conn:
                 result = conn.execute(text(
                     "UPDATE agent_turn_idempotency SET state='expired', response_json=NULL, "
                     "response_status=NULL WHERE state='completed' "
@@ -358,8 +355,7 @@ class TurnIdempotencyLedger:
         params = self._claim_params(claim)
         params.update(extra or {})
         try:
-            with self.mysql.engine.begin() as conn:
-                self._set_utc(conn)
+            with utc_transaction(self.mysql) as conn:
                 result = conn.execute(text(statement), params)
                 if result.rowcount != 1:
                     raise TurnIdempotencySettlementLost(failure)
@@ -367,11 +363,6 @@ class TurnIdempotencyLedger:
             raise
         except Exception as exc:
             raise TurnIdempotencyStorageUnavailable(failure) from exc
-
-    @staticmethod
-    def _set_utc(conn) -> None:
-        """Keep MySQL DATETIME/default audit fields aligned with Python UTC."""
-        conn.execute(text("SET time_zone = '+00:00'"))
 
     @staticmethod
     def _claim_params(claim: TurnClaim) -> dict[str, Any]:

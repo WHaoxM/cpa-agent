@@ -4,6 +4,7 @@ MySQL 数据库客户端
 """
 
 from typing import Optional, Dict, Any, List
+from contextlib import contextmanager
 
 from sqlalchemy import create_engine, text, Engine
 from sqlalchemy.pool import QueuePool
@@ -14,6 +15,34 @@ from ...config import Config
 from ...utils.logger import get_logger
 
 logger = get_logger('cpa-agent.db.mysql')
+
+
+@contextmanager
+def utc_transaction(mysql):
+    """Scope UTC to this transaction, not the next pooled connection borrower.
+
+    SQLAlchemy pool rollback does not reset MySQL session variables. Preserve
+    the caller's setting on success and failure; discard uncertain connections.
+    """
+    with mysql.engine.connect() as conn:
+        is_mysql = conn.dialect.name in {"mysql", "mariadb"}
+        previous = None
+        if is_mysql:
+            previous = conn.execute(text("SELECT @@session.time_zone")).scalar_one()
+            conn.rollback()
+        try:
+            with conn.begin():
+                if is_mysql:
+                    conn.execute(text("SET time_zone = '+00:00'"))
+                yield conn
+        finally:
+            if is_mysql and not conn.invalidated:
+                try:
+                    conn.execute(text("SET time_zone = :zone"), {"zone": previous})
+                    conn.commit()
+                except Exception:
+                    conn.invalidate()
+                    raise
 
 
 class MySQLClient:

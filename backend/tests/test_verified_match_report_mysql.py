@@ -29,7 +29,7 @@ def test_live_publication_match_report_roundtrip(monkeypatch):
     from app.pipeline.entity_extractor.matcher import SkillMatcher
     monkeypatch.setattr(SkillMatcher, "normalizer", property(lambda self: None))
     try:
-        source_text = "我负责课程团队项目，和组员沟通协作，在紧急截止日前完成交付。"
+        source_text = "我负责课程团队项目，和组员沟通协作，在紧急截止日前完成交付。GPA：3.4。"
         source_sha256 = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
         semantic_facts = {
             key: {"value": "中", "evidence": evidence, "source_sha256": source_sha256}
@@ -39,7 +39,7 @@ def test_live_publication_match_report_roundtrip(monkeypatch):
             }.items()
         }
         candidate = {"skills": [{"name": "Python", "level": "掌握", "confidence": 1.0}],
-                     "degree": "专科", "source_sha256": source_sha256,
+                     "degree": "专科", "gpa": 3.4, "source_sha256": source_sha256,
                      "semantic_facts": semantic_facts}
         profile = {**candidate, "_resume_confirmation": {"student_id": sid, "task_id": l0}}
         db.execute("INSERT INTO student_profile (student_id,profile_json) VALUES (:sid,:p)",

@@ -161,14 +161,26 @@ def test_ask_task_request_never_autoruns_business_tools(monkeypatch):
     assert "report.current" not in bb or not bb.get("report.current")
 
 
-def test_agent_mode_semantic_match(monkeypatch):
+def test_agent_mode_without_portrait_clarifies_before_match(monkeypatch):
     from app.services.agent_runtime.mode_runtime import ModeRuntime
     from app.services.agent_runtime.task_packet import build_standard_packet
+    import json
 
-    # Semantic router selects match; deterministic portrait gate still blocks.
+    # The server-side Lead can select a match step, but the known-slot check
+    # must stop execution before any match artifact is written without a
+    # confirmed resume or portrait.
     class FakeLLM:
-        def chat_json(self, **_kwargs):
-            return {"action": "call", "subagent": "match", "goal": "匹配岗位", "document_view": "answer"}
+        def chat(self, **_kwargs):
+            return json.dumps({
+                "user_job": "execute",
+                "action": "run_plan",
+                "template": None,
+                "steps": [{"role": "match", "goal": "匹配岗位", "skill_ids": []}],
+                "goal_summary": "执行岗位匹配",
+                "vagueness": "clear",
+                "missing_slots": [],
+                "handoff_brief": "根据已确认背景匹配岗位",
+            }, ensure_ascii=False)
 
     monkeypatch.setattr("app.utils.llm_client.get_llm_client", lambda: FakeLLM())
     pkt = build_standard_packet("match", goal="匹配", user_utterance="帮我做人岗匹配")
@@ -180,10 +192,14 @@ def test_agent_mode_semantic_match(monkeypatch):
 
     assert parse_interaction_mode("agent") == InteractionMode.AGENT
     rt = ModeRuntime()
-    # Gate without portrait must not synthesize a completed match.
+    # A missing prerequisite must not synthesize a completed match.
     out = rt.chat(message="帮我做人岗匹配", interaction_mode="agent")
     assert out["interaction_mode"] == "agent"
-    assert out["orchestration"]["strategy"] == "gate_block"
+    assert out["orchestration"]["strategy"] == "agent_clarify"
+    view = out["orchestration"]["supervisor_view"]
+    assert view["lead_action"] == "clarify"
+    assert "portrait" in view["missing_slots"]
+    assert "match.current" not in (out.get("blackboard") or {})
 
 
 def test_experts_mode_plan_structure():
@@ -197,6 +213,12 @@ def test_experts_mode_plan_structure():
 
 def test_fork_rollup_not_sync_on_ask_greeting(monkeypatch):
     from app.services.agent_runtime import fork_jobs, get_supervisor_service
+
+    class FakeLLM:
+        def chat(self, **_kwargs):
+            return "你好，今天想聊什么职业方向？"
+
+    monkeypatch.setattr("app.utils.llm_client.get_llm_client", lambda: FakeLLM())
 
     fork_jobs.reset_fork_stats()
     calls = {"rollup": 0}
@@ -215,44 +237,40 @@ def test_fork_rollup_not_sync_on_ask_greeting(monkeypatch):
     assert fork_jobs.get_fork_stats()["sync_forbidden_calls"] == 0
 
 
-def test_ask_enqueues_rollup_at_k8_window(monkeypatch):
+def test_ask_rollup_is_not_triggered_by_recent_message_count(monkeypatch):
     from app.services.agent_runtime.mode_runtime import ModeRuntime
 
-    # This checks rollup scheduling, not provider availability. Keep Ask's
-    # response deterministic so a transient network failure cannot fail it.
-    class FakeLLM:
-        def chat(self, **_kwargs):
-            return "你好，今天想聊什么职业方向？"
-
-    monkeypatch.setattr("app.utils.llm_client.get_llm_client", lambda: FakeLLM())
     calls = []
+    manager = type("FakeManager", (), {
+        "maybe_rollup_summary": lambda _self, session_id, keep_messages, *, compact_summary:
+            calls.append((session_id, keep_messages, compact_summary)),
+    })()
     monkeypatch.setattr(
-        "app.services.agent_runtime.mode_runtime.fork_enqueue",
-        lambda session_id, kind, payload=None: calls.append((session_id, kind, payload)) or kind,
+        "app.services.session_manager.get_session_manager",
+        lambda: manager,
     )
 
     rt = ModeRuntime()
-    rt.chat(
-        message="你好啊",
-        session_id="sess_rollup",
-        interaction_mode="ask",
-        history=[
-            {"role": "user" if i % 2 == 0 else "assistant", "content": f"m{i}"}
-            for i in range(15)
-        ],
-    )
-    assert calls == []
+    monkeypatch.setattr(rt, "_chat_impl", lambda *_args, **_kwargs: {"reply": "离线固定答复"})
+    for history_size in (15, 16, 200):
+        rt.chat(
+            message="你好啊",
+            session_id="sess_rollup",
+            interaction_mode="ask",
+            history=[
+                {"role": "user" if i % 2 == 0 else "assistant", "content": f"m{i}"}
+                for i in range(history_size)
+            ],
+        )
 
-    rt.chat(
-        message="你好啊",
-        session_id="sess_rollup",
-        interaction_mode="ask",
-        history=[
-            {"role": "user" if i % 2 == 0 else "assistant", "content": f"m{i}"}
-            for i in range(16)
-        ],
-    )
-    assert calls[-1] == ("sess_rollup", "rollup_summary", {"keep_messages": 16})
+    # Recent-message count only defines the tail window. Without a completed
+    # final-request token preflight, none of these turns may trigger summary
+    # compaction. This test is fully isolated from Redis and model services.
+    assert calls == [
+        ("sess_rollup", 16, False),
+        ("sess_rollup", 16, False),
+        ("sess_rollup", 16, False),
+    ]
 
 
 def test_agent_enqueues_rollup(monkeypatch):
@@ -409,25 +427,54 @@ def test_db_query_format_redacts_sensitive_keys():
     assert "student_id=s1" in formatted
 
 
-def test_ask_visible_tools_empty_and_pipeline_deny():
+def test_ask_requires_explicit_read_allowlist_and_denies_business_writes():
     from app.services.agent_runtime.modes import InteractionMode
     from app.services.agent_runtime.permissions import visible_tools_for, evaluate, Decision
     from app.services.agent_runtime.pre_tool_use import GateContext, pre_tool_use
-    from app.services.agent_runtime.tool_policy import visible_tools_for_interaction
+    from app.services.agent_runtime.tool_policy import (
+        ASK_SEARCH_TOOLS, visible_tools_for_interaction,
+    )
 
     assert visible_tools_for(InteractionMode.ASK, "profile") == set()
     assert visible_tools_for_interaction("ask", "profile") == set()
+    assert visible_tools_for(InteractionMode.ASK, "qa") == set()
+    assert visible_tools_for_interaction("ask", "qa") == set(ASK_SEARCH_TOOLS)
+    assert visible_tools_for(
+        InteractionMode.ASK, "qa", plan_tool_allowlist=set(ASK_SEARCH_TOOLS),
+    ) == set(ASK_SEARCH_TOOLS)
+
+    read = evaluate(
+        "career_data_read",
+        {"operation": "list", "student_id": "s1"},
+        interaction=InteractionMode.ASK,
+        subagent="qa",
+        plan_tool_allowlist={"career_data_read"},
+    )
+    assert read.decision == Decision.ALLOW
+
     v = evaluate(
         "pipeline_run",
         {"student_id": "s1"},
         interaction=InteractionMode.ASK,
-        subagent="profile",
+        subagent="qa",
+        plan_tool_allowlist=set(ASK_SEARCH_TOOLS),
     )
     assert v.decision == Decision.DENY
 
+    unsafe_reads = ("db_query", "semantic_search", "normalize_entity")
+    for tool_name in unsafe_reads:
+        verdict = evaluate(
+            tool_name,
+            {"query": "career facts", "student_id": "s1"},
+            interaction=InteractionMode.ASK,
+            subagent="qa",
+            plan_tool_allowlist=set(ASK_SEARCH_TOOLS),
+        )
+        assert verdict.decision == Decision.DENY
+
     ctx = GateContext(
         interaction_mode=InteractionMode.ASK,
-        subagent="profile",
+        subagent="qa",
         student_id="s1",
     )
     gate = pre_tool_use("pipeline_run", {"student_id": "s1"}, ctx)

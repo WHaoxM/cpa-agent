@@ -47,6 +47,16 @@ def normalize_content_parts(
                 # URI is only a selector.  prepare_user_turn resolves it under
                 # the server Principal before the message is persisted.
                 parts.append({"type": "resource_ref", "uri": str(p["uri"])})
+            elif t == "action_plan_handoff":
+                handoff_id = p.get("handoff_id")
+                action = p.get("action")
+                if (isinstance(handoff_id, str) and handoff_id.startswith("aph_")
+                        and len(handoff_id) <= 40 and action in {"start", "answer"}):
+                    parts.append({
+                        "type": "action_plan_handoff",
+                        "handoff_id": handoff_id,
+                        "action": action,
+                    })
     for fid in attachment_ids or []:
         if fid and not any(p.get("file_id") == fid for p in parts):
             parts.append({"type": "document", "file_id": str(fid)})

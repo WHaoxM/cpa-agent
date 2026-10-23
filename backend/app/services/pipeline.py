@@ -294,6 +294,10 @@ class L0ParseResumePipeline(BasePipeline):
             raise
 
 
+class ConfirmedProfileUnavailable(ValueError):
+    """Expected missing/stale consent, distinct from a database or parser fault."""
+
+
 def require_confirmed_profile(mysql, student_id: str) -> dict:
     """Never accept a model-written `confirmed` parameter as user consent."""
     rows = mysql.fetch_all("SELECT profile_json FROM student_profile WHERE student_id=:sid LIMIT 1", {"sid": student_id})
@@ -301,7 +305,7 @@ def require_confirmed_profile(mysql, student_id: str) -> dict:
     profile = json.loads(profile) if isinstance(profile, str) else profile
     confirmation = profile.get("_resume_confirmation") if isinstance(profile, dict) else None
     if not isinstance(confirmation, dict) or not confirmation.get("task_id") or confirmation.get("student_id") != student_id:
-        raise ValueError("请先核对并确认简历候选，再生成画像、匹配或报告")
+        raise ConfirmedProfileUnavailable("请先核对并确认简历候选，再生成画像、匹配或报告")
     tasks = mysql.fetch_all("SELECT task_id, student_id, pipeline, status, result_json FROM pipeline_task WHERE task_id=:task_id LIMIT 1",
                             {"task_id": confirmation["task_id"]})
     task = tasks[0] if tasks else {}
@@ -312,7 +316,7 @@ def require_confirmed_profile(mysql, student_id: str) -> dict:
             or result.get("candidate_profile") != {k: v for k, v in profile.items()
                                                     if k not in {"_resume_confirmation", "_user_self_report",
                                                                  "_skill_exploration"}}):
-        raise ValueError("简历确认来源未通过校验，请重新核对确认")
+        raise ConfirmedProfileUnavailable("简历确认来源未通过校验，请重新核对确认")
     return profile
 
 
@@ -934,6 +938,9 @@ class L3RunMatchPipeline(BasePipeline):
                 result = persist_match(self, profile, sources)
                 self.update_status(PipelineStatus(result["status"]), result)
             return result
+        except ConfirmedProfileUnavailable as exc:
+            return source_blocked_result(self, PipelineSourceUnavailable(
+                "confirmed_resume_unavailable", "confirm_resume", str(exc)))
         except PipelineSourceUnavailable as exc:
             return source_blocked_result(self, exc)
         except Exception as exc:
@@ -964,6 +971,9 @@ class L4GenerateReportPipeline(BasePipeline):
                 result = persist_report(self, sources)
                 self.update_status(PipelineStatus.PARTIAL, result)
             return result
+        except ConfirmedProfileUnavailable as exc:
+            return source_blocked_result(self, PipelineSourceUnavailable(
+                "confirmed_resume_unavailable", "confirm_resume", str(exc)))
         except PipelineSourceUnavailable as exc:
             return source_blocked_result(self, exc)
         except Exception as exc:

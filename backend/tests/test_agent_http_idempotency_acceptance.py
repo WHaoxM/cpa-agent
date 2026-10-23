@@ -314,9 +314,10 @@ def test_concurrent_same_key_is_in_progress_then_replays_across_workers(tmp_path
     marker = f"serial_{uuid.uuid4().hex}"
     key = f"turn_{uuid.uuid4().hex}"
     event_key = f"cpa:acceptance:serial:{marker}"
-    payload = {"session_id": session_id, "message": f"SERIAL {marker} one 1200"}
+    release_key = f"cpa:acceptance:serial:release:{marker}"
+    payload = {"session_id": session_id, "message": f"SERIAL {marker} one hold"}
     _delete_ledger(mysql, student_id="acceptance_student", session_id=session_id)
-    redis_client.delete(event_key)
+    redis_client.delete(event_key, release_key)
     try:
         status, body, _ = _request(
             worker_a[0], "POST", "/api/agent/session/create",
@@ -346,6 +347,7 @@ def test_concurrent_same_key_is_in_progress_then_replays_across_workers(tmp_path
         assert duplicate_status == 409
         assert duplicate["code"] == "IDEMPOTENCY_IN_PROGRESS"
 
+        redis_client.set(release_key, "1", ex=30)
         thread.join(timeout=8)
         assert not thread.is_alive()
         assert first_result and first_result[0][0] == 200
@@ -357,7 +359,7 @@ def test_concurrent_same_key_is_in_progress_then_replays_across_workers(tmp_path
         assert replay == first_result[0][1]
         assert replay_headers.get("Idempotency-Replayed") == "true"
     finally:
-        redis_client.delete(event_key)
+        redis_client.delete(event_key, release_key)
         _cleanup_session(redis_client, session_id)
         _delete_ledger(mysql, student_id="acceptance_student", session_id=session_id)
         _stop_worker(worker_a)

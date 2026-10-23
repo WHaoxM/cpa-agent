@@ -108,10 +108,11 @@ def _insert_trace(conn, *, task_id, student_id, stage, state, progress, facts=No
         "facts": json.dumps(facts or {}, ensure_ascii=False)})
 
 
-def persist_resume_intent(mysql, *, student_id, file_path, task_id):
+def persist_resume_intent(mysql, *, student_id, file_path, task_id, connection=None):
     """Create owner-bound task, dispatch intent, and upload receipt together."""
     params = json.dumps({"student_id": student_id, "file_path": file_path})
-    with mysql.engine.begin() as conn:
+    from contextlib import nullcontext
+    with (mysql.engine.begin() if connection is None else nullcontext(connection)) as conn:
         conn.execute(text(
             "INSERT INTO pipeline_task(task_id,pipeline,status,progress,params_json,student_id,triggered_by) "
             "VALUES (:tid,'L0_parse_resume','pending',0,:params,:sid,'api')"

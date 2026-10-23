@@ -1,0 +1,6 @@
+{
+  "source_run": "output/career-exploration-replay/937263b28c58",
+  "summary": {"text": "SQL 分组查询统计各活动报名人数，意味着将原始报名记录按活动分组后计数，从而明确每个活动各自有多少人报名。", "evidence_ids": ["projects_0"], "anchors": [{"evidence_id": "projects_0", "fragment_id": "projects_0.desc/f0"}]},
+  "strengths": [],
+  "questions": [{"text": "Vue 展示这部分，你实际负责哪些工作？例如是编写前端页面、对接查询接口、渲染数据，还是协助调试？如果由他人完成，也可以直接说明。", "kind": "unclear_expression", "problem": "用 Vue 展示查询结果 的实际参与方式未说明", "why": "补清这一处，读者能区分 SQL 查询核对与前端展示之间的个人职责边界。", "evidence_ids": ["projects_0"], "anchors": [{"evidence_id": "projects_0", "fragment_id": "projects_0.desc/f2"}]}]
+}

@@ -13,6 +13,32 @@ from app.services.agent_runtime.mode_runtime import ModeRuntime
 from app.services.agent_runtime.modes import InteractionMode, budget_for
 
 
+def test_complete_inline_resume_does_not_mount_a_second_copy_through_tools(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(document_access, 'materialize_for_ask', lambda *_a, **_k: ('FULL_RESUME_BODY', {'all_complete': True, 'files': []}))
+    monkeypatch.setattr('app.services.agent_runtime.mode_runtime._llm_route', lambda *_a, **_k: {'document_view': 'answer'})
+    def invoke(*args, **kwargs):
+        seen.update(kwargs)
+        return {'reply': '有依据的简历分析'}
+    monkeypatch.setattr('app.services.agent_runtime.mode_runtime._invoke_subagent', invoke)
+    ModeRuntime()._run_agent('分析简历，不复述原文', Blackboard(), '', '', 0, 'session', '',
+                            budget_for(InteractionMode.AGENT), 'owner', turn_file_ids=['file_owned'], mount_errors=[])
+    assert seen['allow_tools'] is False
+
+
+def test_partial_document_only_receives_document_read_tools(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(document_access, 'materialize_for_ask', lambda *_a, **_k: ('PARTIAL', {'all_complete': False, 'files': []}))
+    def invoke(*args, **kwargs):
+        seen.update(kwargs)
+        return {'reply': '读取仍不完整', 'incomplete': True, 'stop_reason': 'turn_token_cap_exceeded'}
+    monkeypatch.setattr('app.services.agent_runtime.mode_runtime._invoke_subagent', invoke)
+    result = ModeRuntime()._run_agent('分析简历', Blackboard(), '', '', 0, 'session', '',
+                                     budget_for(InteractionMode.AGENT), 'owner', turn_file_ids=['file_owned'], mount_errors=[])
+    assert seen['plan_tool_allowlist'] == {'attachment_read'}
+    assert result['incomplete'] is True
+
+
 class _Files:
     def __init__(self, count: int, chars: int):
         self.bodies = {f"file_{i}": f"MARKER_{i}\n" + ("文档内容。" * chars) for i in range(count)}

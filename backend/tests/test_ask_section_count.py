@@ -70,3 +70,15 @@ def test_selector_missing_unknown_and_truncated_intent_defaults_to_analysis(monk
     payload["answer_kind"] = "section_count"
     assert retrieval._select_plan("q", resources)["answer_kind"] == "section_count"
     assert retrieval._select_plan("q" * 2001, resources)["answer_kind"] == "analysis"
+
+
+def test_readback_intent_requires_a_real_resume_report_candidate(monkeypatch):
+    class Client:
+        def chat(self, **kw):
+            return json.dumps({'needed':True,'answer_kind':'source_readback',
+                               'reads':[{'id':'r0','section':'analysis'}]})
+    monkeypatch.setattr('app.utils.llm_client.get_llm_client',lambda:Client())
+    invalid=[{'uri':'career://me/r','sections':['analysis']}]
+    valid=[{'uri':'career://me/resume-reports/resume_'+'a'*32,'sections':['analysis']}]
+    assert retrieval._select_plan('读回原报告',invalid)['answer_kind']=='analysis'
+    assert retrieval._select_plan('读回原报告',valid)['answer_kind']=='source_readback'

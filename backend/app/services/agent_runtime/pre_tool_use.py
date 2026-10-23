@@ -26,6 +26,7 @@ class GateContext:
     session_id: Optional[str] = None
     student_id: Optional[str] = None
     plan_tool_allowlist: Optional[Set[str]] = None
+    allow_artifact_commit: bool = True
     denials: List[Dict[str, str]] = field(default_factory=list)
 
 

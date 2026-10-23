@@ -40,7 +40,7 @@ BUDGETS: Dict[InteractionMode, ModeBudget] = {
     ),
     InteractionMode.AGENT: ModeBudget(
         allow_tools=True,
-        allow_plan=False,
+        allow_plan=True,
         allow_blackboard_business_write=True,
         allow_memory_read=True,
         allow_memory_write_sync=True,

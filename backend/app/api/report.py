@@ -364,6 +364,10 @@ def get_report(report_id: str):
                     "report_id": report_id, "reason": resource.get("reason"),
                     "next_action": resource.get("next_action"),
                 }}), 409
+            # The verified report snapshot carries the currently published
+            # title. A publication need not have a legacy job_portrait_4d row.
+            report["position_name"] = (report.get("position_name")
+                                       or (resource.get("data") or {}).get("position_name"))
 
         chapters = {}
         for i in range(1, 7):
@@ -512,7 +516,7 @@ def list_reports():
             cr.pdf_path
         FROM career_report cr
         {where_clause}
-        ORDER BY cr.created_at DESC
+        ORDER BY cr.created_at DESC, cr.report_id DESC
         """
         if Config.DEMO_MODE:
             results = mysql.execute(sql + " LIMIT :limit OFFSET :offset", params)
@@ -532,6 +536,7 @@ def list_reports():
                 if not resource.get("business_artifact_verified"):
                     continue
                 report["status"] = resource["status"]
+                report["position_name"] = (resource.get("data") or {}).get("position_name")
                 if not status or report["status"] == status:
                     current.append(report)
             total = len(current)

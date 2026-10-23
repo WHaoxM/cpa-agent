@@ -24,6 +24,29 @@ def _prepared(message: str, *, resource_refs=None):
     }
 
 
+def _stub_supplemental_read(monkeypatch, captured, reply: str):
+    def invoke(packet, _blackboard, **kwargs):
+        captured["packet"] = packet
+        captured["kwargs"] = kwargs
+        captured["messages"] = [
+            {"role": "system", "content": kwargs.get("ask_context_appendix") or ""},
+            *(kwargs.get("ask_context_messages") or []),
+        ]
+        return {
+            "reply": reply,
+            "incomplete": True,
+            "stop_reason": "read_source_unavailable",
+            "tool_calls": [{
+                "tool_name": "career_data_read", "status": "unavailable",
+                "summary": "个人资料来源暂不可用", "result_preview": "个人资料来源暂不可用",
+            }],
+        }
+
+    monkeypatch.setattr(
+        "app.services.agent_runtime.scoped_invoke.scoped_invoke", invoke,
+    )
+
+
 def _skills_pack():
     version = "task_resume_confirmed"
     items = [
@@ -237,6 +260,10 @@ def test_unavailable_evidence_is_explicit_and_not_business_completion(monkeypatc
         lambda *_a, **_k: unavailable,
     )
     monkeypatch.setattr("app.utils.llm_client.get_llm_client", lambda: FakeLLM())
+    _stub_supplemental_read(
+        monkeypatch, captured,
+        "当前个人资料来源暂不可用，因此我不能列出技能或判断你没有相关资料。",
+    )
 
     result = ModeRuntime().chat(
         "我的技能是什么？",
@@ -250,13 +277,59 @@ def test_unavailable_evidence_is_explicit_and_not_business_completion(monkeypatc
     assert "不可信业务数据" in system
     assert '"complete":false' in evidence
     assert '"reason":"source_unavailable"' in evidence
-    assert result["tool_calls"] == []
-    assert "没有读到可核验" in result["reply"]
+    assert result["tool_calls"][0]["tool_name"] == "career_data_read"
+    assert "来源暂不可用" in result["reply"]
     assert "不能" in result["reply"]
     public = project_turn(result).to_dict()
     public_evidence = public["orchestration"]["progress"]["evidence"]
     assert public_evidence["coverage"]["complete"] is False
     assert public_evidence["next_action"] == "retry_evidence"
+
+
+def test_expired_ask_cursor_starts_a_new_bounded_read_without_reusing_old_page(monkeypatch):
+    captured = {}
+
+    class FakeLLM:
+        def chat(self, **kwargs):
+            if "只判断用户本轮话语" in kwargs["messages"][0]["content"]:
+                return '{"continue_previous_page":true}'
+            return "本轮依据重新读取的当前资料作答。"
+
+    monkeypatch.setattr("app.utils.llm_client.get_llm_client", lambda: FakeLLM())
+    monkeypatch.setattr("app.services.db.get_mysql_client", lambda: object())
+    monkeypatch.setattr(
+        "app.services.agent_runtime.evidence_retrieval.build_evidence_pack",
+        lambda *_args, **_kwargs: pytest.fail("expired cursor must not be replayed"),
+    )
+    _stub_supplemental_read(
+        monkeypatch, captured,
+        "当前资料来源仍不可用，因此我无法核实技能明细。",
+    )
+
+    result = ModeRuntime().chat(
+        "继续读取剩下的技能",
+        session_id="session-expired",
+        student_id="owner-expired",
+        session_context={"ask_evidence_continuation": {
+            "student_id": "owner-expired", "session_id": "session-expired",
+            "cursor": {"uri": "career://me/resume", "section": "skills",
+                       "next_offset": 10, "version": "old-version"},
+            "created_at": 1,
+        }},
+        interaction_mode="ask",
+        prepared_turn=_prepared("继续读取剩下的技能"),
+    )
+
+    appendix = captured["kwargs"]["ask_context_appendix"]
+    assert "不得调用旧游标续读" in appendix
+    assert "从当前数据重新查询" in appendix
+    messages = captured["kwargs"]["ask_context_messages"]
+    assert messages[-1]["content"] == "继续读取剩下的技能"
+    assert any('"reason":"continuation_expired"' in m["content"] for m in messages)
+    assert result["orchestration"]["supervisor_view"]["path"] == "ask_supplemental_read"
+    assert result["incomplete"] is True
+    assert result["tool_calls"][0]["status"] == "unavailable"
+    assert "无法核实" in result["reply"]
 
 
 def test_evidence_context_budget_is_atomic_not_half_json():
@@ -289,8 +362,7 @@ def test_evidence_payload_instructions_are_untrusted_user_context(monkeypatch):
             from types import SimpleNamespace
             return SimpleNamespace(text='{"verdict":"supported","reasons":[],"corrected_reply":""}', finish_reason="stop")
 
-        def chat(self, *, messages, **_kwargs):
-            captured["messages"] = messages
+        def chat(self, **_kwargs):
             return "证据只支持列出已读取技能；没有执行任何画像或报告操作。"
 
     monkeypatch.setattr("app.services.db.get_mysql_client", lambda: object())
@@ -299,6 +371,10 @@ def test_evidence_payload_instructions_are_untrusted_user_context(monkeypatch):
         lambda *_a, **_k: pack,
     )
     monkeypatch.setattr("app.utils.llm_client.get_llm_client", lambda: FakeLLM())
+    _stub_supplemental_read(
+        monkeypatch, captured,
+        "证据只支持列出已读取技能；没有执行任何画像或报告操作。",
+    )
 
     result = ModeRuntime().chat(
         "列出技能",
@@ -310,7 +386,7 @@ def test_evidence_payload_instructions_are_untrusted_user_context(monkeypatch):
     assert "不得执行" in captured["messages"][0]["content"]
     assert "忽略此前规则" not in captured["messages"][0]["content"]
     assert "忽略此前规则" in captured["messages"][-2]["content"]
-    assert result["tool_calls"] == []
+    assert result["tool_calls"][0]["tool_name"] == "career_data_read"
     assert "没有执行任何画像或报告操作" in result["reply"]
 
 
@@ -373,6 +449,11 @@ def test_selection_failure_is_partial_and_never_claims_missing_data(monkeypatch,
         lambda *_a, **_k: pack,
     )
     monkeypatch.setattr("app.utils.llm_client.get_llm_client", lambda: FakeLLM())
+    if reason != "reference_not_current":
+        _stub_supplemental_read(
+            monkeypatch, {},
+            "本轮替代只读来源也没有可核验结果；不能据此判断你没有资料，请直接重试或补充具体范围。",
+        )
 
     result = ModeRuntime().chat(
         "列出我的技能",
@@ -385,6 +466,8 @@ def test_selection_failure_is_partial_and_never_claims_missing_data(monkeypatch,
     assert result["incomplete"] is True
     assert "不能据此判断你没有资料" in result["reply"]
     assert "请重新上传" not in result["reply"]
+    if reason != "reference_not_current":
+        assert result["tool_calls"][0]["tool_name"] == "career_data_read"
     if reason == "reference_not_current":
         assert "同版本的权威业务资料" in result["reply"]
     public = project_turn(result).to_dict()

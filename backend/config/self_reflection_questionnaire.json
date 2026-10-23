@@ -1,0 +1,1049 @@
+{
+  "schema_version": 1,
+  "directions": [
+    {
+      "id": "frontend",
+      "label": "前端开发",
+      "group": "前端开发",
+      "questions": [
+        {
+          "id": "vue3",
+          "label": "Vue 3"
+        },
+        {
+          "id": "react",
+          "label": "React"
+        },
+        {
+          "id": "ts",
+          "label": "TypeScript"
+        },
+        {
+          "id": "webpack",
+          "label": "Vite / Webpack"
+        },
+        {
+          "id": "css",
+          "label": "CSS / 动效 / 设计还原"
+        },
+        {
+          "id": "http",
+          "label": "HTTP/浏览器原理"
+        },
+        {
+          "id": "git",
+          "label": "Git / 协作开发"
+        },
+        {
+          "id": "node",
+          "label": "Node.js / 前端工程脚本"
+        }
+      ]
+    },
+    {
+      "id": "backend",
+      "label": "后端开发",
+      "group": "后端开发",
+      "questions": [
+        {
+          "id": "java",
+          "label": "Java / Go / C++ 基础"
+        },
+        {
+          "id": "mysql",
+          "label": "MySQL / SQL"
+        },
+        {
+          "id": "redis",
+          "label": "Redis / 缓存设计"
+        },
+        {
+          "id": "docker",
+          "label": "Docker"
+        },
+        {
+          "id": "microservice",
+          "label": "服务治理 / 微服务"
+        },
+        {
+          "id": "mq",
+          "label": "消息队列 / 异步通信"
+        },
+        {
+          "id": "ts",
+          "label": "并发 / RPC / 网络基础"
+        },
+        {
+          "id": "git",
+          "label": "Git / CI-CD"
+        }
+      ]
+    },
+    {
+      "id": "testing",
+      "label": "测试开发",
+      "group": "测试开发",
+      "questions": [
+        {
+          "id": "python",
+          "label": "Python 自动化"
+        },
+        {
+          "id": "selenium",
+          "label": "Selenium / Playwright"
+        },
+        {
+          "id": "testcase",
+          "label": "测试用例设计"
+        },
+        {
+          "id": "api-test",
+          "label": "API 接口测试"
+        },
+        {
+          "id": "perf",
+          "label": "性能测试 / 压测分析"
+        },
+        {
+          "id": "cicd",
+          "label": "CI/CD 流水线"
+        },
+        {
+          "id": "git",
+          "label": "Git"
+        },
+        {
+          "id": "sql",
+          "label": "SQL / 测试数据构造"
+        }
+      ]
+    },
+    {
+      "id": "data",
+      "label": "数据分析",
+      "group": "数据分析",
+      "questions": [
+        {
+          "id": "python",
+          "label": "Python / Pandas"
+        },
+        {
+          "id": "sql",
+          "label": "SQL"
+        },
+        {
+          "id": "visual",
+          "label": "数据可视化 / 报表表达"
+        },
+        {
+          "id": "stats",
+          "label": "统计学基础"
+        },
+        {
+          "id": "tableau",
+          "label": "Tableau / BI 工具"
+        },
+        {
+          "id": "etl",
+          "label": "ETL / 数据清洗"
+        },
+        {
+          "id": "excel",
+          "label": "Excel 高级应用"
+        },
+        {
+          "id": "spark",
+          "label": "Spark / 数仓基础"
+        }
+      ]
+    },
+    {
+      "id": "ml",
+      "label": "机器学习工程师",
+      "group": "机器学习工程师",
+      "questions": [
+        {
+          "id": "python",
+          "label": "Python"
+        },
+        {
+          "id": "pytorch",
+          "label": "PyTorch / TensorFlow"
+        },
+        {
+          "id": "ml-algo",
+          "label": "机器学习算法"
+        },
+        {
+          "id": "math",
+          "label": "数学基础（线代/概率）"
+        },
+        {
+          "id": "nlp",
+          "label": "NLP / CV 基础"
+        },
+        {
+          "id": "spark",
+          "label": "数据处理 / 大数据基础"
+        },
+        {
+          "id": "docker",
+          "label": "Docker / 部署"
+        },
+        {
+          "id": "git",
+          "label": "Git"
+        }
+      ]
+    },
+    {
+      "id": "track-0",
+      "label": "Vue 前端工程师",
+      "group": "前端开发",
+      "questions": [
+        {
+          "id": "vue-composition",
+          "label": "Composition API (ref / reactive / computed)"
+        },
+        {
+          "id": "vue-router",
+          "label": "Vue Router 路由守卫与动态路由"
+        },
+        {
+          "id": "vue-pinia",
+          "label": "Pinia 状态管理与持久化"
+        },
+        {
+          "id": "vue-ts",
+          "label": "TypeScript 在 Vue 中的类型标注"
+        },
+        {
+          "id": "vue-component",
+          "label": "组件设计 (props / emit / provide-inject / slots)"
+        },
+        {
+          "id": "vue-elementplus",
+          "label": "Element Plus / Ant Design Vue 组件库使用"
+        },
+        {
+          "id": "vue-vite",
+          "label": "Vite 构建配置与插件开发"
+        },
+        {
+          "id": "vue-css",
+          "label": "CSS 预处理器与响应式布局 (Sass / Tailwind)"
+        },
+        {
+          "id": "vue-test",
+          "label": "前端单元测试 (Vitest / Vue Test Utils)"
+        },
+        {
+          "id": "vue-axios",
+          "label": "HTTP 请求封装 (Axios 拦截器 / 错误处理)"
+        },
+        {
+          "id": "vue-perf",
+          "label": "前端性能优化 (懒加载 / 虚拟列表 / Tree-shaking)"
+        },
+        {
+          "id": "vue-git",
+          "label": "Git 工作流与代码审查"
+        }
+      ]
+    },
+    {
+      "id": "track-1",
+      "label": "React 前端工程师",
+      "group": "前端开发",
+      "questions": [
+        {
+          "id": "react-hooks",
+          "label": "React Hooks (useState / useEffect / useRef / useMemo)"
+        },
+        {
+          "id": "react-router",
+          "label": "React Router v6 路由与嵌套布局"
+        },
+        {
+          "id": "react-state",
+          "label": "Redux Toolkit / Zustand 状态管理"
+        },
+        {
+          "id": "react-ts",
+          "label": "TypeScript 与 React 组件类型"
+        },
+        {
+          "id": "react-ui",
+          "label": "Ant Design / MUI 组件库使用"
+        },
+        {
+          "id": "react-nextjs",
+          "label": "Next.js SSR / SSG / App Router"
+        },
+        {
+          "id": "react-css",
+          "label": "CSS-in-JS / Tailwind CSS / CSS Modules"
+        },
+        {
+          "id": "react-test",
+          "label": "Jest / React Testing Library 单元测试"
+        },
+        {
+          "id": "react-perf",
+          "label": "性能优化 (React.memo / useMemo / 代码分割)"
+        },
+        {
+          "id": "react-build",
+          "label": "Webpack / Vite 打包配置与优化"
+        },
+        {
+          "id": "react-error",
+          "label": "错误边界与 Suspense 异步渲染"
+        },
+        {
+          "id": "react-git",
+          "label": "Git 分支管理与 CI/CD"
+        }
+      ]
+    },
+    {
+      "id": "track-2",
+      "label": "可视化工程师",
+      "group": "前端开发",
+      "questions": [
+        {
+          "id": "viz-echarts",
+          "label": "ECharts 配置项与自定义主题"
+        },
+        {
+          "id": "viz-d3bindbindl",
+          "label": "D3.js 数据绑定与 SVG 布局"
+        },
+        {
+          "id": "viz-bindcanvas",
+          "label": "Canvas 2D 渲染与高性能绑图"
+        },
+        {
+          "id": "viz-bindgeo",
+          "label": "地图可视化 (GeoJSON / Mapbox / Leaflet)"
+        },
+        {
+          "id": "viz-bindscreen",
+          "label": "大屏适配方案 (rem / scale / vw)"
+        },
+        {
+          "id": "viz-bindanim",
+          "label": "数据动画与过渡 (GSAP / requestAnimationFrame)"
+        },
+        {
+          "id": "viz-bindthree",
+          "label": "Three.js 基础 3D 场景搭建"
+        },
+        {
+          "id": "viz-bindinteract",
+          "label": "交互设计 (Tooltip / 联动 / 下钻)"
+        },
+        {
+          "id": "viz-bindclean",
+          "label": "数据清洗与格式转换 (JSON / CSV / 聚合)"
+        },
+        {
+          "id": "viz-bindperf",
+          "label": "渲染性能优化 (虚拟滚动 / WebWorker / LOD)"
+        },
+        {
+          "id": "viz-bindcolor",
+          "label": "色彩理论与无障碍配色"
+        },
+        {
+          "id": "viz-bindts",
+          "label": "TypeScript 类型安全与图表组件封装"
+        }
+      ]
+    },
+    {
+      "id": "track-3",
+      "label": "Java 后端工程师",
+      "group": "后端开发",
+      "questions": [
+        {
+          "id": "java-spring",
+          "label": "Spring Boot 核心注解与自动配置"
+        },
+        {
+          "id": "java-mvc",
+          "label": "Spring MVC RESTful API 设计"
+        },
+        {
+          "id": "java-orm",
+          "label": "MyBatis / JPA ORM 映射与事务管理"
+        },
+        {
+          "id": "java-mysql",
+          "label": "MySQL 索引设计与 SQL 调优"
+        },
+        {
+          "id": "java-redis",
+          "label": "Redis 缓存策略 (穿透 / 雪崩 / 击穿)"
+        },
+        {
+          "id": "java-mq",
+          "label": "RabbitMQ / Kafka 消息队列"
+        },
+        {
+          "id": "java-docker",
+          "label": "Docker 容器化与镜像构建"
+        },
+        {
+          "id": "java-security",
+          "label": "Spring Security / JWT 认证授权"
+        },
+        {
+          "id": "java-test",
+          "label": "单元测试 (JUnit 5 / Mockito)"
+        },
+        {
+          "id": "java-git",
+          "label": "Git 分支管理与 CI/CD 流水线"
+        },
+        {
+          "id": "java-jvm",
+          "label": "JVM 调优与 GC 机制 (G1 / ZGC)"
+        },
+        {
+          "id": "java-micro",
+          "label": "微服务拆分与 Nacos / Spring Cloud 注册发现"
+        }
+      ]
+    },
+    {
+      "id": "track-4",
+      "label": "Go 后端工程师",
+      "group": "后端开发",
+      "questions": [
+        {
+          "id": "go-goroutine",
+          "label": "Goroutine 与 Channel 并发编程"
+        },
+        {
+          "id": "go-gin",
+          "label": "Gin / Echo HTTP 框架与中间件"
+        },
+        {
+          "id": "go-gorm",
+          "label": "GORM ORM 与数据库交互"
+        },
+        {
+          "id": "go-grpc",
+          "label": "gRPC 与 Protobuf 序列化"
+        },
+        {
+          "id": "go-mysql",
+          "label": "MySQL / PostgreSQL 查询优化与连接池"
+        },
+        {
+          "id": "go-redis",
+          "label": "Redis 分布式锁与缓存设计"
+        },
+        {
+          "id": "go-docker",
+          "label": "Docker / K8s 容器化部署"
+        },
+        {
+          "id": "go-test",
+          "label": "单元测试与 Benchmark 性能基准"
+        },
+        {
+          "id": "go-trace",
+          "label": "日志收集与链路追踪 (Jaeger / OpenTelemetry)"
+        },
+        {
+          "id": "go-micro",
+          "label": "微服务治理 (Consul / etcd / 服务网格)"
+        },
+        {
+          "id": "go-pprof",
+          "label": "性能分析 (pprof / trace / 内存逃逸)"
+        },
+        {
+          "id": "go-git",
+          "label": "Git 与 Makefile 工程化"
+        }
+      ]
+    },
+    {
+      "id": "track-5",
+      "label": "Python 后端工程师",
+      "group": "后端开发",
+      "questions": [
+        {
+          "id": "py-django",
+          "label": "Django ORM / Admin 与 MTV 架构"
+        },
+        {
+          "id": "py-fastapi",
+          "label": "Flask / FastAPI 路由与中间件"
+        },
+        {
+          "id": "py-sqlalchemy",
+          "label": "SQLAlchemy 数据建模与迁移 (Alembic)"
+        },
+        {
+          "id": "py-celery",
+          "label": "Celery 异步任务队列与定时调度"
+        },
+        {
+          "id": "py-redis",
+          "label": "Redis 缓存与会话管理"
+        },
+        {
+          "id": "py-docker",
+          "label": "Docker 部署与 Gunicorn / Uvicorn"
+        },
+        {
+          "id": "py-api",
+          "label": "RESTful API 设计 (DRF / Pydantic 校验)"
+        },
+        {
+          "id": "py-test",
+          "label": "单元测试 (pytest / mock / fixture)"
+        },
+        {
+          "id": "py-log",
+          "label": "日志与异常处理 (logging / Sentry)"
+        },
+        {
+          "id": "py-git",
+          "label": "Git 与 CI/CD (GitHub Actions / GitLab CI)"
+        },
+        {
+          "id": "py-async",
+          "label": "Python 异步编程 (asyncio / aiohttp)"
+        },
+        {
+          "id": "py-mysql",
+          "label": "MySQL / PostgreSQL 数据库设计"
+        }
+      ]
+    },
+    {
+      "id": "track-6",
+      "label": "测试开发工程师",
+      "group": "测试开发",
+      "questions": [
+        {
+          "id": "at-selenium",
+          "label": "Selenium WebDriver 元素定位与操作"
+        },
+        {
+          "id": "at-playwright",
+          "label": "Playwright 浏览器自动化与录制"
+        },
+        {
+          "id": "at-pytest",
+          "label": "Python unittest / pytest 框架"
+        },
+        {
+          "id": "at-api",
+          "label": "接口测试 (Requests / HTTPx / Postman)"
+        },
+        {
+          "id": "at-design",
+          "label": "测试用例设计 (等价类 / 边界值 / 正交)"
+        },
+        {
+          "id": "at-ddt",
+          "label": "数据驱动与参数化测试 (DDT / fixture)"
+        },
+        {
+          "id": "at-pom",
+          "label": "POM 页面对象模式与框架分层"
+        },
+        {
+          "id": "at-mock",
+          "label": "Mock 与桩服务 (WireMock / mitmproxy)"
+        },
+        {
+          "id": "at-ci",
+          "label": "Jenkins 持续集成与触发策略"
+        },
+        {
+          "id": "at-report",
+          "label": "Allure 测试报告与缺陷追踪"
+        },
+        {
+          "id": "at-sql",
+          "label": "SQL 测试数据构造与校验"
+        },
+        {
+          "id": "at-git",
+          "label": "Git 版本管理与分支策略"
+        }
+      ]
+    },
+    {
+      "id": "track-7",
+      "label": "质量平台工程师",
+      "group": "测试开发",
+      "questions": [
+        {
+          "id": "qp-cicd",
+          "label": "CI/CD 流水线搭建 (Jenkins / GitLab CI)"
+        },
+        {
+          "id": "qp-gate",
+          "label": "质量门禁规则设计与自动化执行"
+        },
+        {
+          "id": "qp-sonar",
+          "label": "代码静态分析 (SonarQube / ESLint)"
+        },
+        {
+          "id": "qp-jira",
+          "label": "缺陷管理与分析 (Jira / Tapd 流程)"
+        },
+        {
+          "id": "qp-coverage",
+          "label": "自动化覆盖率度量与趋势分析"
+        },
+        {
+          "id": "qp-env",
+          "label": "测试环境管理与隔离策略"
+        },
+        {
+          "id": "qp-docker",
+          "label": "Docker / K8s 测试环境编排"
+        },
+        {
+          "id": "qp-monitor",
+          "label": "监控告警接入 (Prometheus / Grafana)"
+        },
+        {
+          "id": "qp-factory",
+          "label": "测试数据工厂与造数平台"
+        },
+        {
+          "id": "qp-contract",
+          "label": "API 契约测试 (Pact / Swagger)"
+        },
+        {
+          "id": "qp-report",
+          "label": "质量报表与看板可视化"
+        }
+      ]
+    },
+    {
+      "id": "track-8",
+      "label": "性能测试工程师",
+      "group": "测试开发",
+      "questions": [
+        {
+          "id": "pt-jmeter",
+          "label": "JMeter 脚本编写与场景设计"
+        },
+        {
+          "id": "pt-locust",
+          "label": "Locust / Gatling 负载测试"
+        },
+        {
+          "id": "pt-metric",
+          "label": "性能指标定义 (TPS / RT / P99 / 错误率)"
+        },
+        {
+          "id": "pt-server",
+          "label": "服务端性能瓶颈定位 (CPU / 内存 / IO)"
+        },
+        {
+          "id": "pt-sql",
+          "label": "数据库慢查询分析与索引优化"
+        },
+        {
+          "id": "pt-jvm",
+          "label": "JVM / GC 调优与线程分析"
+        },
+        {
+          "id": "pt-network",
+          "label": "网络抓包与分析 (Wireshark / tcpdump)"
+        },
+        {
+          "id": "pt-frontend",
+          "label": "前端性能诊断 (Lighthouse / WebVitals)"
+        },
+        {
+          "id": "pt-report",
+          "label": "压测报告撰写与数据分析"
+        },
+        {
+          "id": "pt-capacity",
+          "label": "容量规划与基线管理"
+        },
+        {
+          "id": "pt-apm",
+          "label": "APM 工具 (SkyWalking / Pinpoint / Arthas)"
+        }
+      ]
+    },
+    {
+      "id": "track-9",
+      "label": "商业数据分析师",
+      "group": "数据分析",
+      "questions": [
+        {
+          "id": "ba-metric",
+          "label": "指标体系搭建 (北极星 / AARRR 模型)"
+        },
+        {
+          "id": "ba-sql",
+          "label": "SQL 多表查询与窗口函数"
+        },
+        {
+          "id": "ba-excel",
+          "label": "Excel 数据透视表与高级函数 (VLOOKUP / INDEX)"
+        },
+        {
+          "id": "ba-tableau",
+          "label": "Tableau / Power BI 仪表盘搭建"
+        },
+        {
+          "id": "ba-pandas",
+          "label": "Python Pandas 数据清洗与处理"
+        },
+        {
+          "id": "ba-stats",
+          "label": "统计学假设检验 (t 检验 / 卡方检验)"
+        },
+        {
+          "id": "ba-ab",
+          "label": "A/B 测试设计与效果评估"
+        },
+        {
+          "id": "ba-rfm",
+          "label": "用户分群与 RFM 模型"
+        },
+        {
+          "id": "ba-funnel",
+          "label": "漏斗分析与转化归因"
+        },
+        {
+          "id": "ba-story",
+          "label": "数据故事化汇报与 PPT 呈现"
+        },
+        {
+          "id": "ba-biz",
+          "label": "业务需求拆解与分析框架"
+        },
+        {
+          "id": "ba-cohort",
+          "label": "留存分析与 Cohort 分群"
+        }
+      ]
+    },
+    {
+      "id": "track-10",
+      "label": "数据开发工程师",
+      "group": "数据分析",
+      "questions": [
+        {
+          "id": "de-hive",
+          "label": "Hive / Spark SQL 离线计算"
+        },
+        {
+          "id": "de-etl",
+          "label": "ETL 流程设计与调度 (Airflow / DolphinScheduler)"
+        },
+        {
+          "id": "de-model",
+          "label": "数仓分层建模 (ODS / DWD / DWS / ADS)"
+        },
+        {
+          "id": "de-kafka",
+          "label": "Kafka 实时数据接入与 Flink 消费"
+        },
+        {
+          "id": "de-quality",
+          "label": "数据质量监控与校验规则"
+        },
+        {
+          "id": "de-mysql",
+          "label": "MySQL 索引优化与分库分表"
+        },
+        {
+          "id": "de-python",
+          "label": "Python 数据处理脚本"
+        },
+        {
+          "id": "de-shell",
+          "label": "Shell 脚本与 Crontab 定时任务"
+        },
+        {
+          "id": "de-lineage",
+          "label": "数据血缘与元数据管理 (Atlas / DataHub)"
+        },
+        {
+          "id": "de-olap",
+          "label": "OLAP 引擎 (ClickHouse / Doris / StarRocks)"
+        },
+        {
+          "id": "de-git",
+          "label": "Git 与 DataOps 工程规范"
+        },
+        {
+          "id": "de-dim",
+          "label": "维度建模与缓慢变化维"
+        }
+      ]
+    },
+    {
+      "id": "track-11",
+      "label": "增长分析师",
+      "group": "数据分析",
+      "questions": [
+        {
+          "id": "ga-ab",
+          "label": "A/B 测试平台与统计显著性判断"
+        },
+        {
+          "id": "ga-funnel",
+          "label": "转化漏斗深度分析与瓶颈诊断"
+        },
+        {
+          "id": "ga-cohort",
+          "label": "用户分层与 Cohort 留存分析"
+        },
+        {
+          "id": "ga-attr",
+          "label": "归因模型 (首次 / 末次 / 线性 / 时间衰减)"
+        },
+        {
+          "id": "ga-channel",
+          "label": "Push / 邮件 / 短信渠道效果分析"
+        },
+        {
+          "id": "ga-sql",
+          "label": "SQL 行为日志查询与特征提取"
+        },
+        {
+          "id": "ga-python",
+          "label": "Python 自动化分析脚本 (Pandas / Jupyter)"
+        },
+        {
+          "id": "ga-experiment",
+          "label": "增长实验设计与优先级排序 (ICE / RICE)"
+        },
+        {
+          "id": "ga-compete",
+          "label": "竞品数据监控与行业对标"
+        },
+        {
+          "id": "ga-track",
+          "label": "数据埋点方案设计与校验"
+        },
+        {
+          "id": "ga-viz",
+          "label": "汇报可视化 (Tableau / Superset / Metabase)"
+        },
+        {
+          "id": "ga-lifecycle",
+          "label": "用户生命周期管理与召回策略"
+        }
+      ]
+    },
+    {
+      "id": "track-12",
+      "label": "算法工程师",
+      "group": "机器学习工程师",
+      "questions": [
+        {
+          "id": "ml-supervised",
+          "label": "监督学习 (回归 / 分类 / 集成方法)"
+        },
+        {
+          "id": "ml-feature",
+          "label": "特征工程 (编码 / 选择 / 降维 / 交叉)"
+        },
+        {
+          "id": "ml-eval",
+          "label": "模型评估 (AUC / F1 / 交叉验证 / 过拟合)"
+        },
+        {
+          "id": "ml-xgb",
+          "label": "XGBoost / LightGBM 调参与实战"
+        },
+        {
+          "id": "ml-sklearn",
+          "label": "Python Scikit-learn 建模流程"
+        },
+        {
+          "id": "ml-math",
+          "label": "数学基础 (线性代数 / 概率论 / 最优化)"
+        },
+        {
+          "id": "ml-preprocess",
+          "label": "数据预处理与不平衡样本处理 (SMOTE)"
+        },
+        {
+          "id": "ml-online",
+          "label": "A/B 测试与线上模型评估"
+        },
+        {
+          "id": "ml-explain",
+          "label": "模型可解释性 (SHAP / LIME / 特征重要度)"
+        },
+        {
+          "id": "ml-sql",
+          "label": "SQL 特征提取与数据采样"
+        },
+        {
+          "id": "ml-spark",
+          "label": "Spark MLlib 分布式训练"
+        },
+        {
+          "id": "ml-unsupervised",
+          "label": "无监督学习 (聚类 / 降维 / 异常检测)"
+        }
+      ]
+    },
+    {
+      "id": "track-13",
+      "label": "深度学习工程师",
+      "group": "机器学习工程师",
+      "questions": [
+        {
+          "id": "dl-pytorch",
+          "label": "PyTorch 张量操作与自动求导"
+        },
+        {
+          "id": "dl-arch",
+          "label": "CNN / RNN / Transformer 架构原理"
+        },
+        {
+          "id": "dl-train",
+          "label": "模型训练 (损失函数 / 优化器 / 学习率调度)"
+        },
+        {
+          "id": "dl-augment",
+          "label": "数据增强与预处理 Pipeline"
+        },
+        {
+          "id": "dl-transfer",
+          "label": "迁移学习与预训练模型微调"
+        },
+        {
+          "id": "dl-nlp",
+          "label": "NLP (Tokenizer / BERT / GPT / Embedding)"
+        },
+        {
+          "id": "dl-cv",
+          "label": "CV (目标检测 / 语义分割 / YOLO / ResNet)"
+        },
+        {
+          "id": "dl-compress",
+          "label": "模型量化与剪枝 (INT8 / 蒸馏)"
+        },
+        {
+          "id": "dl-dist",
+          "label": "分布式训练 (DDP / DeepSpeed / FSDP)"
+        },
+        {
+          "id": "dl-board",
+          "label": "TensorBoard / Weights & Biases 实验可视化"
+        },
+        {
+          "id": "dl-paper",
+          "label": "论文复现与开源模型适配"
+        },
+        {
+          "id": "dl-gpu",
+          "label": "GPU 资源管理与 CUDA 基础"
+        }
+      ]
+    },
+    {
+      "id": "track-14",
+      "label": "AI 应用工程师",
+      "group": "机器学习工程师",
+      "questions": [
+        {
+          "id": "ai-deploy",
+          "label": "模型部署 (TorchServe / Triton / ONNX Runtime)"
+        },
+        {
+          "id": "ai-docker",
+          "label": "Docker / K8s 模型服务化"
+        },
+        {
+          "id": "ai-api",
+          "label": "API 设计与流量控制 (FastAPI / 限流 / 熔断)"
+        },
+        {
+          "id": "ai-monitor",
+          "label": "模型监控与数据漂移检测"
+        },
+        {
+          "id": "ai-mlops",
+          "label": "MLOps 流水线 (MLflow / Kubeflow / Airflow)"
+        },
+        {
+          "id": "ai-label",
+          "label": "数据标注平台搭建与质量管控"
+        },
+        {
+          "id": "ai-ab",
+          "label": "A/B 测试与灰度发布策略"
+        },
+        {
+          "id": "ai-feature",
+          "label": "特征存储 (Feature Store / Feast)"
+        },
+        {
+          "id": "ai-version",
+          "label": "模型版本管理与回滚"
+        },
+        {
+          "id": "ai-web",
+          "label": "Python Web 框架 (FastAPI / Flask)"
+        },
+        {
+          "id": "ai-cost",
+          "label": "推理加速与成本优化 (TensorRT / 量化)"
+        },
+        {
+          "id": "ai-git",
+          "label": "Git 与 ML 工程化规范"
+        }
+      ]
+    }
+  ],
+  "options": [
+    {
+      "id": "unfamiliar",
+      "label": "没听说过",
+      "group": "not_started"
+    },
+    {
+      "id": "concept",
+      "label": "了解概念",
+      "group": "concept"
+    },
+    {
+      "id": "basic",
+      "label": "能做简单任务",
+      "group": "practice"
+    },
+    {
+      "id": "independent",
+      "label": "独立完成项目",
+      "group": "practice"
+    },
+    {
+      "id": "guide",
+      "label": "精通 / 能指导他人",
+      "group": "practice"
+    },
+    {
+      "id": "unsure",
+      "label": "暂时无法判断",
+      "group": "unknown"
+    }
+  ]
+}

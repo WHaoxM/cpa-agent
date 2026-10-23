@@ -1,0 +1,31 @@
+{
+  "reviewed_on": "2026-10-22",
+  "resources": [
+    {
+      "course_id": "curated_python313_intro",
+      "title": "Python 入门：阅读官方教程并练习",
+      "category": "cat_002",
+      "source": "https://docs.python.org/zh-cn/3.13/tutorial/index.html",
+      "version": "Python 3.13",
+      "description": "官方文档整理 · Python 3.13。通过阅读与本地练习了解语言基础、数据结构及文件读写；这不是平台视频课程，未登记讲师和学习时长。",
+      "chapters": [
+        {"sequence": 1, "title": "基础语法与表达式", "summary": "阅读数字、字符串与列表示例，在自己的解释器中尝试修改输入。", "url": "https://docs.python.org/zh-cn/3.13/tutorial/introduction.html"},
+        {"sequence": 2, "title": "数据结构", "summary": "比较列表、集合与字典的用法，记录一个适合自己项目的数据结构。", "url": "https://docs.python.org/zh-cn/3.13/tutorial/datastructures.html"},
+        {"sequence": 3, "title": "输入、输出与文件", "summary": "阅读格式化和文件读写示例，尝试保存并重新读取一份练习数据。", "url": "https://docs.python.org/zh-cn/3.13/tutorial/inputoutput.html"}
+      ]
+    },
+    {
+      "course_id": "curated_postgresql17_sql",
+      "title": "SQL 入门：PostgreSQL 官方文档练习",
+      "category": "cat_004",
+      "source": "https://www.postgresql.org/docs/17/tutorial-sql.html",
+      "version": "PostgreSQL 17",
+      "description": "官方文档整理 · PostgreSQL 17。通过查询、连接与聚合示例学习 SQL；材料为英文文档，示例依赖 PostgreSQL 语法，不等于平台提供练习数据库或视频课程。",
+      "chapters": [
+        {"sequence": 1, "title": "查询与筛选", "summary": "阅读 SELECT 与 WHERE 示例，说明投影列和筛选条件对结果的影响。", "url": "https://www.postgresql.org/docs/17/tutorial-select.html"},
+        {"sequence": 2, "title": "表连接", "summary": "对照内连接与左连接示例，解释没有匹配行时结果如何变化。", "url": "https://www.postgresql.org/docs/17/tutorial-join.html"},
+        {"sequence": 3, "title": "聚合与分组", "summary": "阅读聚合函数与分组示例，区分行级筛选和分组后的筛选。", "url": "https://www.postgresql.org/docs/17/tutorial-agg.html"}
+      ]
+    }
+  ]
+}
