@@ -367,3 +367,25 @@ D:\Miniconda\miniconda3\envs\mkg\python.exe -B -m pytest backend/tests/test_unif
 结果：**65 passed, 12 skipped in 10.06s**。新增覆盖同 session 的 SQL/Redis 历史合并、稳定 ID 去重、相同正文不同轮、跨 owner 拒绝、无历史时澄清、当前 Agent 轮次和 task plan/read-receipt 分支。模型边界由 FakeLLM 及禁止工具调用的确定性测试替身验证；没有发起新 provider 请求、真实 QA 回放或数据库写入。模型预算仍是 25/25；此前两次 provider 连接失败是否计费未知。
 
 这是尚未提交、推送或部署的源码修复，不能据此声称线上记忆问题已修复。此处的“记忆”仅指同一 session 的有界近期 user/assistant 消息，不是跨会话长期记忆。真实模型的多轮回指/纠正与实际 worker 回放仍未验证；原 QA run 保持 failed。生产附件上传也仍未进行真实浏览器验收。
+
+## 四项 Agent 能力隔离集成验收（2026-10-24）
+
+后端隔离集成分支 `codex/agent-capability-integration-20261024`，HEAD `f366da5f059f277f491143054562de1b4d8f0f29`，基于已发布 backend main `9adbbc32c2f3f64ddbbefb0a24e497f7f36d7fb3`，纳入同 session 历史、工具审计派发、意图 fail-closed 和计划/步骤投影四项修复。`git diff --check 9adbbc32c2f3f64ddbbefb0a24e497f7f36d7fb3..HEAD` 通过，隔离 worktree clean。
+
+合并回归命令使用仓库规定的 `mkg` Python：
+
+```powershell
+D:\Miniconda\miniconda3\envs\mkg\python.exe -B -m pytest backend/tests/test_student_task_memory_context.py backend/tests/test_unified_task_context.py backend/tests/test_agent_run_executor.py backend/tests/test_agent_run_failure.py backend/tests/test_agent_run_store.py backend/tests/test_agent_run_task_contract_integration.py backend/tests/test_agent_task_control.py backend/tests/test_gated_tool_audit_failure.py backend/tests/test_scoped_tool_failure_contract.py backend/tests/test_agent_runtime_isolation.py -q
+```
+
+结果 **200 passed, 12 skipped**。`-rs` 核对的 12 个 skip 全部要求 `CPA_TEST_LIVE_MYSQL=1`，fixture 会创建随机 disposable database、迁移后最终删除；QA runtime 账号没有全局 `CREATE DATABASE` 权限。因此这些测试没有指向或破坏共享 QA schema，也没有借用 root 或扩权限。它们仍是未运行的独立库生命周期测试。
+
+隔离 QA 真实 MySQL（`cpa_agent_qa_20261024_01`）另外做了两个合成数据事务回滚探针。第一项从实际 `conversation_message` 表读同 owner/session 的 3 条消息，确认顺序、旧消息 600 字符截断标记、错误 owner 无结果；测试事务 rollback 后该合成 session 行数为 0。Redis session 刷新在这项探针中被显式 stub 为无缓存，因此证明的是 MySQL fallback 路径，不证明 Redis/HTTP 全链路。第二项在 InnoDB 事务中插入合成 run/plan/step：有效计划可读；被改写目标或缺少步骤行都以 `AgentRunStoreError` fail closed；rollback 后 run 行数为 0。
+
+真实 worker 状态门也在此 QA schema 验证：临时 Celery worker 从上述集成 worktree 启动，只订阅唯一队列 `cpa.agent.qa.capability.20261024`。测试先用 Repository 创建合成 run 并将其持久标记为 cancelled，再将单条 `cpa.agent.run` 消息投递到该队列。消息被该唯一订阅者消费后，MySQL 仍为 run/dispatch `cancelled`、`claim_attempts=0`、lease 为空，事件只有 submitted/cancel-requested/cancelled；临时 worker 随后定向 graceful shutdown。没有真实业务动作、工具执行或模型调用；QA API、原 QA worker 和生产服务未停止或重启。
+
+前端集成分支 `codex/integration-prep-20261024` HEAD `0e14e35ead14872a56231aa1b1b08b42a9040a6f`，包含已发布 main `6ef82faba428dd54b3511f56457f38c7c623eb96`（其历史含 profile/graph 和 Pages merge）及 `df36d3b7b9ab4ac251d6c2840c7a96ab6edf06a1` 的安全失败原因显示。验证结果：`node --test tools/test-*.mjs` **230 passed**；`npm run type-check` 退出码 0；生产构建转换 4,372 个模块并成功，只有已有的 Lottie `eval` 与 chunk-size 警告。构建输出已从隔离 worktree 清理。该 front 集成尚未推送或部署。
+
+本轮 provider 预算仍为 25/25；没有新模型请求。以上不是完整用户体验验收：意图语义质量、模型自主选择工具、真实附件浏览器上传/解析读取以及完整 Redis/HTTP 全链路仍未通过实时回放证明。生产 backend 当前运行源仍为 `source-5bfcf76`，没有因为这组集成而重启。
+
+经 `127.0.0.1:7897` 只读 `ls-remote` 的最后核对，backend 与 frontend 的候选/main 当时分别为 `9adbbc32c2f3f64ddbbefb0a24e497f7f36d7fb3` 与 `6ef82faba428dd54b3511f56457f38c7c623eb96`。本轮 backend candidate push 被审批拒绝，动作未执行；理由为“该外部 candidate 推送未被可信用户授权覆盖，需等待对精确 push 的明确批准”。未换通道或尝试 main push。
