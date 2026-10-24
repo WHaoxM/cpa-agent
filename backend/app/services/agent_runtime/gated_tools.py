@@ -64,6 +64,23 @@ def _error_code(exc: Exception) -> str:
     return "tool_execution_error"
 
 
+def _dispatch_tool_audit(**event: Any) -> bool:
+    """Keep best-effort telemetry dispatch from changing an executed result."""
+    try:
+        enqueue_audit(**event)
+        return True
+    except Exception as exc:
+        # Do not log arguments, result bodies, or exception text. The tool's
+        # execution status is independent from the asynchronous audit transport.
+        logger.warning(
+            "tool audit dispatch failed tool=%s decision=%s error_type=%s",
+            event.get("tool_name") or "unknown",
+            event.get("decision") or "unknown",
+            type(exc).__name__,
+        )
+        return False
+
+
 def _accepts_kwargs(fn) -> bool:
     try:
         import inspect
@@ -127,18 +144,22 @@ def _wrap_one(
         if not gate.allowed:
             raw = _failure("permission_denied", retryable=False, attempts=0)
             msg = json.dumps(raw, ensure_ascii=False)
-            ui_collector.append(
-                build_ui_view(name, raw, parameters=_egress_tool_args(name, gate.args), status="error")
+            audit_event = {
+                "session_id": gate_ctx.session_id,
+                "student_id": gate_ctx.student_id,
+                "tool_name": name,
+                "decision": "deny",
+                "args": _egress_tool_args(name, gate.args),
+                "result_text": msg,
+                "reason": gate.verdict.reason,
+            }
+            audit_dispatched = _dispatch_tool_audit(**audit_event)
+            card = build_ui_view(
+                name, raw, parameters=_egress_tool_args(name, gate.args), status="error",
             )
-            enqueue_audit(
-                session_id=gate_ctx.session_id,
-                student_id=gate_ctx.student_id,
-                tool_name=name,
-                decision="deny",
-                args=_egress_tool_args(name, gate.args),
-                result_text=msg,
-                reason=gate.verdict.reason,
-            )
+            if not audit_dispatched:
+                card["audit_dispatch"] = "enqueue_failed"
+            ui_collector.append(card)
             return build_model_view(name, msg)
 
         raw: Any
@@ -214,16 +235,18 @@ def _wrap_one(
             )
         if artifact_refs:
             ui_view["artifact_refs"] = artifact_refs
+        audit_event = {
+            "session_id": gate_ctx.session_id,
+            "student_id": gate_ctx.student_id,
+            "tool_name": name,
+            "decision": "allow",
+            "args": persisted_args,
+            "result_text": text[:2000],
+            "reason": "ok" if not gate.rewritten else "student_id_rewritten",
+        }
+        if not _dispatch_tool_audit(**audit_event):
+            ui_view["audit_dispatch"] = "enqueue_failed"
         ui_collector.append(ui_view)
-        enqueue_audit(
-            session_id=gate_ctx.session_id,
-            student_id=gate_ctx.student_id,
-            tool_name=name,
-            decision="allow",
-            args=persisted_args,
-            result_text=text[:2000],
-            reason="ok" if not gate.rewritten else "student_id_rewritten",
-        )
         return model_view
 
     # Sync LangGraph ToolNode may execute tools on a worker thread. Propagate

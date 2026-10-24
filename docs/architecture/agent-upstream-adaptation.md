@@ -92,6 +92,8 @@ OpenCode 核心为 TypeScript，Codex 核心为 Rust；本项目当前权威服�
 
 ## 当前尚未达到上游能力的部分
 
+2026-10-24 工具结果与异步审计派发的状态分离：核对 Codex 本地快照 `a06545b311fe01e51ce855c7aa5d8da21e9e7aaf` 的 `codex-rs/core/src/tools/tool_dispatch_trace.rs`（执行完成/失败事件显式配对）及 `executed_tool_calls.rs`（观察结果不负责执行工具）。CPA 保留 LangGraph `ToolNode` 与现有 `gated_tools._wrap_one`，只修正适配边界：业务工具已经返回后，异步 `tool_audit` 入队异常不能反向变成工具失败；卡片另标 `audit_dispatch=enqueue_failed`，且不把队列接受称为数据库审计持久化。未移植 Codex Rust dispatch/runtime，也未改变 owner/session 权限或业务工具结果合同。离线链路回归见 `test_gated_tool_audit_failure.py`。
+
 2026-10-23 持续上下文修正复查同一 OpenCode `388406238bd5ca15564a762840a2362c3a45bd9c` 的 `session/message-v2.ts`、`session/compaction.ts`，及同一 Codex `a06545b311fe01e51ce855c7aa5d8da21e9e7aaf` 的 `codex-rs/core/src/compact.rs`。本次只薄适配其来源分层和可恢复边界：既有不可变本人输入变成明确 user 消息，原附件不重复注入讨论；现有 conversation JSON 的文档位置与最近答复分离，成功事务才推进。TaskPacket 的 server-bound 简历讨论字段不能由公开 run 请求伪造；模型调用、预算、权限和 Celery 仍使用原实现。实际委派前后核对所选探索版本，未选择的定位代码不再使纯简历读取作废，根任务的共享协议版本仍受校验。没有移植 TypeScript/Rust 内核，没有接通未经验收的 `session_compaction.py`，没有把原话回放或更大的窗口称为压缩。自动保留纠正的长期摘要、历史超限后原任务恢复和累计跨窗综合仍是未完成边界；实验模型语义审核出现过度拦截，已从最终运行通路撤掉，只保留具体交付边界的一次有界整理。证据归[现有统一任务报告](../reports/2026-10-22-unified-task-orchestration-replay.md)。
 
 2026-10-22 职业方向探索沿用既有资源与计划能力。实现前复查本机 OpenCode `388406238bd5ca15564a762840a2362c3a45bd9c` 的 `packages/opencode/src/tool/read.ts`、`session/message-v2.ts`（有界读取、typed parts），以及工作区外 Codex `a06545b311fe01e51ce855c7aa5d8da21e9e7aaf` 的 MCP resource list/read handlers。适配只新增 owner-scoped exploration URI provider、历史轮次精确关联和现有 EvidencePack 输入；直接复用 `personal_resources` 的附件读取、`mode_runtime` 的依据部件、LLMClient 预算与行动计划事务。不复制或另造 Agent 引擎、模型客户端、分块、队列、权限或通用流程 DSL。真实模型中曾出现把计划要求误当执行记录的偏差，已将任务背景与学生提交分开，实际记录由服务端原文投影；这不是模型事实质量普遍保证。实际请求与读取证据见[业务回放](../reports/2026-10-22-career-exploration-practice-replay.md)。
