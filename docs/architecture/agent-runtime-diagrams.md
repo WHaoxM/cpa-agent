@@ -24,3 +24,9 @@
 本轮主代理在 `mkg` 环境实际运行了 5 组测试（55 passed）和 1 次 HTTP 多轮替身旅程（1 passed），用于核对现有回合链路。替身旅程不证明真实模型行为或 Redis 跨进程租约。本次制图另行完成 Mermaid 渲染与 Chrome 目视检查；这只验证文档产物，不等同后端验收或运行时验证。真实模型、真实 Redis 跨进程协调和部署环境中的 SSE 时序仍未验证。
 
 绘图基线见总览图及文档索引：主仓 HEAD `590f055b5307f3704afab32df754aa28e14326e1`（dirty），前端 HEAD `da7a3fa81cdf28f2ba1ab1d1396a37944e28ea0d`（dirty）。
+
+## 持久 Agent run 计划完整性（2026-10-24）
+
+worker-backed Agent run 将不可变计划写入 `agent_run_plan.plan_json`，并将有序步骤写入 `agent_run_step`。owner 读取时，`_plan_view` 校验计划摘要、规范化步骤，并逐项核对关系表中的目标、顺序、角色、步骤目标和 Skill ID。若内容不一致或缺少步骤，读取以 `AgentRunStoreError` fail closed；执行器不能运行与展示计划不同的步骤表。这与 `docs/guides/agent-plan-persistence.md` 中保存到学习中心的行动计划/artifact 是两条不同流程。
+
+离线回归 `backend/tests/test_agent_run_store.py::test_plan_projection_rejects_step_rows_that_diverge_from_immutable_plan` 使用内存 SQLite fixture，不代表已验证真实 MySQL 部署。

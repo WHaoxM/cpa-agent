@@ -10,6 +10,7 @@ from app.services.agent_runtime.agent_run_store import (
     AgentRunIdempotencyConflict,
     AgentRunNotFound,
     AgentRunRepository,
+    AgentRunStoreError,
 )
 
 
@@ -825,3 +826,26 @@ def test_failed_plan_insert_rolls_back_plan_step_status_and_event_sequence(store
     assert run["current_plan_version"] == 0
     assert run["last_event_seq"] == 1
     assert run["current_plan"] is None
+
+
+@pytest.mark.parametrize("mutation", ["goal_mismatch", "missing_step"])
+def test_plan_projection_rejects_step_rows_that_diverge_from_immutable_plan(store, mutation):
+    run_id = _submit(store)["run"]["run_id"]
+    _plan(store, run_id, steps=[
+        {"role": "qa", "goal": "核对第一项", "skill_ids": []},
+        {"role": "qa", "goal": "核对第二项", "skill_ids": []},
+    ])
+    with store.mysql.engine.begin() as conn:
+        if mutation == "goal_mismatch":
+            conn.execute(text("""
+                UPDATE agent_run_step SET goal='被改写的步骤'
+                WHERE run_id=:run_id AND plan_version=1 AND step_index=2
+            """), {"run_id": run_id})
+        else:
+            conn.execute(text("""
+                DELETE FROM agent_run_step
+                WHERE run_id=:run_id AND plan_version=1 AND step_index=2
+            """), {"run_id": run_id})
+
+    with pytest.raises(AgentRunStoreError, match="plan and step rows do not match"):
+        store.get_for_owner(run_id, student_id="owner_a")
