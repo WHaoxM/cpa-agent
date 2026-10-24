@@ -1,5 +1,7 @@
 """Add revisioned account profile writes and notification preferences."""
 
+import re
+
 from alembic import op
 from sqlalchemy import inspect, text
 
@@ -10,8 +12,27 @@ branch_labels = None
 depends_on = None
 
 
-_PREFERENCES_DDL = """CREATE TABLE IF NOT EXISTS user_account_notification_preference (
-    user_id VARCHAR(64) NOT NULL,
+def _preferences_ddl(connection) -> str:
+    account_id = connection.execute(text(
+        "SELECT COLUMN_TYPE, IS_NULLABLE, CHARACTER_SET_NAME, COLLATION_NAME "
+        "FROM INFORMATION_SCHEMA.COLUMNS "
+        "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='user_account' AND COLUMN_NAME='id'"
+    )).mappings().first()
+    if (not account_id or str(account_id["COLUMN_TYPE"]).lower() != "varchar(64)"
+            or account_id["IS_NULLABLE"] != "NO"):
+        raise RuntimeError("user_account.id must be a non-null VARCHAR(64) before profile migration")
+
+    charset = account_id.get("CHARACTER_SET_NAME")
+    collation = account_id.get("COLLATION_NAME")
+    # These identifiers come from MySQL metadata, not user input. Validate
+    # them before interpolating because SQL identifiers cannot be bound.
+    if (not charset or not collation
+            or not re.fullmatch(r"[A-Za-z0-9_]+", str(charset))
+            or not re.fullmatch(r"[A-Za-z0-9_]+", str(collation))):
+        raise RuntimeError("user_account.id must have a valid character set and collation")
+
+    return f"""CREATE TABLE IF NOT EXISTS user_account_notification_preference (
+    user_id VARCHAR(64) CHARACTER SET {charset} COLLATE {collation} NOT NULL,
     email_preference BOOLEAN DEFAULT NULL,
     system_preference BOOLEAN DEFAULT NULL,
     sms_preference BOOLEAN DEFAULT NULL,
@@ -27,6 +48,7 @@ _PREFERENCES_DDL = """CREATE TABLE IF NOT EXISTS user_account_notification_prefe
 
 def upgrade() -> None:
     connection = op.get_bind()
+    preferences_ddl = _preferences_ddl(connection)
     columns = {item["name"] for item in inspect(connection).get_columns("user_account")}
     if "profile_revision" not in columns:
         connection.execute(text(
@@ -35,7 +57,7 @@ def upgrade() -> None:
             "AFTER auth_epoch"
         ))
 
-    connection.execute(text(_PREFERENCES_DDL))
+    connection.execute(text(preferences_ddl))
 
     columns = {item["name"] for item in inspect(connection).get_columns("user_account")}
     if "profile_revision" not in columns:
