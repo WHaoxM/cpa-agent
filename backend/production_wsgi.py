@@ -1,8 +1,9 @@
 """Fail-closed WSGI entrypoint for the single-host production Compose layer.
 
 The development ``run.py`` performs a few Windows-specific conveniences and
-starts Flask's built-in server. Gunicorn imports this factory instead. Keep
-the production checks here so a misconfigured image cannot serve requests.
+starts Flask's built-in server. Gunicorn and the Windows Waitress entrypoint
+import this factory instead. Keep the production checks here so a
+misconfigured runtime cannot serve requests.
 """
 
 from __future__ import annotations

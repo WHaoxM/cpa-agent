@@ -3033,6 +3033,11 @@ vine==5.1.0 \
     #   amqp
     #   celery
     #   kombu
+waitress==3.0.2 \
+    --hash=sha256:c56d67fd6e87c2ee598b76abdd4e96cfad1f24cacdea5078d382b1f9d7b5ed2e
+    # via
+    #   -c backend/constraints-linux-amd64-py310.txt
+    #   -r backend/requirements.txt
 wcwidth==0.9.2 \
     --hash=sha256:0a47e03d8293590ecce66c45dc20ff7b4b885e3c78093722239585eca0d77ab2 \
     --hash=sha256:0cd4f7f2e53905dcb110d213a4c8529b6733fa3d232d8c717f946cc69a10349b \

@@ -63,8 +63,8 @@ python -B scripts/neo4j/init_neo4j.py
 以下命令都从 `backend/` 目录、同一个已配置的 Python 环境执行，使用三个终端：
 
 ```powershell
-# 终端 A：HTTP
-python -B run.py
+# 终端 A：HTTP（Windows/本机受保护运行环境）
+python -B serve_waitress.py
 # 终端 B：持久任务消费者；Windows 使用 solo，覆盖 Pipeline、Agent 附件和个人图队列
 python -B -m celery -A app.services.agent_runtime.media.jobs:celery_app worker --pool=solo --concurrency=1 --queues=cpa.pipeline,cpa.media,cpa.graph --loglevel=INFO
 # 终端 C：故障任务的周期恢复扫描
@@ -73,7 +73,9 @@ python -B -m celery -A app.services.agent_runtime.media.jobs:celery_app beat --l
 
 For deployments that keep code, runtime config, and data in separate directories, set `CPA_UPLOAD_FOLDER` and `CPA_LOG_DIR` in the private runtime environment file. These override the development defaults `backend/uploads` and `backend/logs`; keep uploads in the backed-up data directory and logs in a separate writable directory. Do not commit the runtime environment file.
 
-`run.py` 只提供 HTTP，不执行 `cpa.pipeline` 中的简历解析或 L3 匹配；若检出版本包含确认后的画像/诊断扩展，该任务同样由 worker 执行。Agent 附件和个人图任务分别走 `cpa.media`、`cpa.graph`。Beat 也不能代替 worker。缺 worker 时已持久保存的任务可能一直等待；不要重复上传来“催促”任务。当前真实岗位发布目录可能为空，L3 无可匹配岗位不等于队列已坏。
+`serve_waitress.py` is the Windows host-service entrypoint. It imports the same fail-closed checks from `production_wsgi.py`, then starts Waitress only on a numeric loopback address from `FLASK_HOST` (default `127.0.0.1`) and port `FLASK_PORT` (default `5001`). It rejects wildcard/public listeners. Use `run.py` only for local development; the Compose Linux deployment continues to use Gunicorn.
+
+HTTP 入口只提供 HTTP，不执行 `cpa.pipeline` 中的简历解析或 L3 匹配；若检出版本包含确认后的画像/诊断扩展，该任务同样由 worker 执行。Agent 附件和个人图任务分别走 `cpa.media`、`cpa.graph`。Beat 也不能代替 worker。缺 worker 时已持久保存的任务可能一直等待；不要重复上传来“催促”任务。当前真实岗位发布目录可能为空，L3 无可匹配岗位不等于队列已坏。
 
 ## 4. 核验与前端联调
 

@@ -112,9 +112,11 @@ cd backend
 python run.py      # http://localhost:5001
 ```
 
+`run.py` is the Flask development server. For the protected Windows host service, use `python -B serve_waitress.py` from `backend/`; it validates production configuration and schema head, then binds only to a numeric loopback address. See [DEPLOY.md](DEPLOY.md).
+
 严格模式的专用 `POST /api/pipeline/l3/run-match` 使用 MySQL 持久意图和 `cpa.pipeline` Celery 队列，不随 Flask 进程内执行。先按 [MySQL 统一迁移](docs/runbooks/mysql-migrations.md) 在 `backend/` 运行 `python -B -m alembic -c alembic.ini upgrade head`；再分别启动 `python -B -m celery -A app.services.agent_runtime.media.jobs:celery_app worker --pool=solo --concurrency=1 --queues=cpa.pipeline,cpa.media,cpa.graph --loglevel=INFO` 和 `python -B -m celery -A app.services.agent_runtime.media.jobs:celery_app beat --loglevel=INFO`。后两个队列分别消费 Agent 附件和个人图任务。Beat 默认每 60 秒触发有界 MySQL 恢复扫描；缺 Beat 时故障任务只能按 [Pipeline 派发与恢复边界](docs/guides/pipeline-dispatch-boundary.md) 手动重放。其他旧启动入口仍不可用。当前真实岗位发布目录为空，不能把接口可运行理解为已有可匹配岗位。
 
-职途导航的真实简历导入另有专用 `POST /api/profile/student/upload?async=1`：文件或粘贴文字经同一 L0 持久任务进入 `cpa.pipeline` worker，由文档、结构、实体、证据四个实际职责接力；`GET /api/pipeline/trace/<task_id>` 提供归属校验后的交接轨迹和四个已完成检查点百分比。**只启动 `run.py` 不会执行异步解析**，还须按上段启动 `cpa.pipeline` worker；未接单的已保存任务会保留编号，页面等待一段时间后提示检查解析服务，无需重复上传。Beat 负责异常后的定时重派，不能代替 worker。解析前沿用演示版页面布局，处理中在原预览/仪表盘位置动态呈现；候选仍须人工核对，轨迹/百分比不代表已评分。首次启用须完成 Alembic 迁移，详见 [L0 多 Agent 轨迹](docs/guides/resume-agent-team-trace.md)。
+职途导航的真实简历导入另有专用 `POST /api/profile/student/upload?async=1`：文件或粘贴文字经同一 L0 持久任务进入 `cpa.pipeline` worker，由文档、结构、实体、证据四个实际职责接力；`GET /api/pipeline/trace/<task_id>` 提供归属校验后的交接轨迹和四个已完成检查点百分比。**只启动 HTTP 服务不会执行异步解析**，还须按上段启动 `cpa.pipeline` worker；未接单的已保存任务会保留编号，页面等待一段时间后提示检查解析服务，无需重复上传。Beat 负责异常后的定时重派，不能代替 worker。解析前沿用演示版页面布局，处理中在原预览/仪表盘位置动态呈现；候选仍须人工核对，轨迹/百分比不代表已评分。首次启用须完成 Alembic 迁移，详见 [L0 多 Agent 轨迹](docs/guides/resume-agent-team-trace.md)。
 
 确认简历后的 L2 画像、简历范围诊断任务及画像只追加快照属于需单独核对版本的扩展；**新克隆不能仅凭本页假定已经包含**。只有检出的版本同时包含对应后端代码和 `0006`/`0007` Alembic 迁移，且已实际迁移数据库并运行 worker/Beat，才能按 `GET /api/profile/student/workbench`、`GET /api/profile/student/portrait-snapshots` 验收 owner 范围的两份成果、`analysis_run` 与新画像快照。未知维度继续留空，不伪造综合分；旧版快照只读对照，不参与当前评分。历史遗留画像的安全迁移与真实逐条工具过程仍在后续阶段，见 [状态契约](docs/specs/student-workbench-state-contract.md) 与 [迁移手册](docs/runbooks/mysql-migrations.md)。
 
