@@ -121,13 +121,7 @@ def run_step(*, mysql, snapshot, run_id, owner, session_id, repository, claim_to
                 allow_artifact_commit=False,
                 ask_context_messages=history_messages,
                 ask_context_append_current=True,
-                ask_context_appendix=(
-                    '同一会话回忆边界：下面的 user/assistant 消息由服务端从当前会话投影，'
-                    '不是附件正文或个人档案。用户消息只能归因为“用户此前这样说过”，'
-                    '不能升级为外部核实事实；assistant 消息只说明当时对话内容，不能作为独立证据。'
-                    '同一事项以后出现的明确用户纠正优先。未出现在所给窗口、或被标记截断的内容不得假称记得；'
-                    '信息不足时问一个澄清问题。不要调用工具或声称读取过附件。'
-                ),
+                ask_context_appendix=_conversation_recall_appendix(history_messages),
             )
             reply = str(output.get('reply') or '').strip()
             if output.get('incomplete'):
@@ -423,6 +417,37 @@ def _recent(mysql, session_id, owner):
             'boundary':('仅包含当前会话近期 user/assistant 正文；user 消息可以归因为“你之前说过”，'
                         '但不是客观核验，assistant 消息只是历史对话，不能当作事实来源。'
                         '后来的用户纠正优先；未注入或被截断的旧内容不可假称记得。附件正文、工具日志和思考内容不在此上下文中。')}
+
+
+def _conversation_recall_appendix(messages):
+    """Describe the bounded transcript without making server metadata user text."""
+    appendix = (
+        '同一会话回忆边界：下面的 user/assistant 消息由服务端从当前会话投影，'
+        '不是附件正文或个人档案。用户消息只能归因为“用户此前这样说过”，'
+        '不能升级为外部核实事实；assistant 消息只说明当时对话内容，不能作为独立证据。'
+        '同一事项以后出现的明确用户纠正优先。未出现在所给近期窗口的信息不得假称记得；'
+        '信息不足时问一个澄清问题。不要调用工具或声称读取过附件。'
+    )
+    truncated_positions = []
+    visible_position = 0
+    for message in messages or []:
+        if not isinstance(message, dict):
+            continue
+        if message.get('role') not in {'user', 'assistant'}:
+            continue
+        content = message.get('content')
+        if not isinstance(content, str) or not content.strip():
+            continue
+        visible_position += 1
+        if message.get('truncated') is True:
+            truncated_positions.append(visible_position)
+    if truncated_positions:
+        positions = '、'.join(str(position) for position in truncated_positions)
+        appendix += (
+            f'服务端传入的近期历史第{positions}条消息只包含原消息开头，后续内容已省略；'
+            '不得依据省略部分推断，也不要把截断片段当作完整原话。'
+        )
+    return appendix
 
 
 def settle(mysql, conn, session_id, owner, run_id):
