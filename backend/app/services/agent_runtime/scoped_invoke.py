@@ -39,6 +39,13 @@ from .modes import InteractionMode
 from .prompt_selector import PromptSelectionKey, get_prompt_selector
 from .task_packet import TaskPacket
 from .tool_egress import redact_text
+from .tool_event_contract import (
+    TOOL_SETTLED_EVENT,
+    TOOL_STARTED_EVENT,
+    ToolEventContext,
+    build_tool_event_payload,
+    stable_assistant_message_id,
+)
 
 logger = get_logger("cpa-agent.agent_runtime.scoped")
 
@@ -256,7 +263,13 @@ def scoped_invoke(
     ask_context_appendix: str = "",
     ask_context_append_current: bool = False,
     no_tool_output_token_cap: Optional[int] = None,
+    tool_event_context: Optional[ToolEventContext] = None,
+    tool_event_sink=None,
 ) -> Dict[str, Any]:
+    if (tool_event_context is None) != (tool_event_sink is None):
+        raise ValueError("tool event context and sink must be supplied together")
+    if tool_event_sink is not None and not callable(tool_event_sink):
+        raise ValueError("tool event sink must be callable")
     start = time.time()
     subagent = packet.subagent
     # Model gets projected pointers only (not full constraint/resume blobs)
@@ -516,8 +529,58 @@ def scoped_invoke(
         last_message = (state.get("messages") or [])[-1] if state.get("messages") else None
         pending_calls = getattr(last_message, "tool_calls", None) or []
         reserve_tool_call_capacity(len(pending_calls), stage="scoped_tool_node")
-        result = tool_node.invoke(state)
+        pending_by_id = {}
+        assistant_id = None
+        if tool_event_context is not None:
+            assistant_id = stable_assistant_message_id(
+                run_id=tool_event_context.run_id,
+                contract_revision=tool_event_context.contract_revision,
+                plan_version=tool_event_context.plan_version,
+                step_index=tool_event_context.step_index,
+                attempt=tool_event_context.attempt,
+                model_iteration=iteration_count["n"],
+            )
+            for call in pending_calls:
+                call_id = call.get("id") if isinstance(call, dict) else None
+                name = call.get("name") if isinstance(call, dict) else None
+                if not isinstance(call, dict) or not isinstance(call.get("args"), dict):
+                    raise RuntimeError("invalid_durable_tool_call_shape")
+                if call_id in pending_by_id:
+                    raise RuntimeError("duplicate_durable_tool_call_id")
+                # Payload construction validates the provider call id and the
+                # server-owned plan allowlist before any tool can execute.
+                payload = build_tool_event_payload(
+                    tool_event_context,
+                    event_type=TOOL_STARTED_EVENT,
+                    assistant_message_id=assistant_id,
+                    tool_call_id=call_id,
+                    tool_name=name,
+                    args=call["args"],
+                )
+                pending_by_id[call_id] = {"name": name, "args": call["args"]}
+                tool_event_sink(TOOL_STARTED_EVENT, payload)
+        try:
+            result = tool_node.invoke(state)
+        except Exception as exc:
+            if tool_event_context is not None:
+                from .tool_event_contract import safe_tool_error_code
+
+                safe_content = json.dumps({
+                    "status": "error",
+                    "error_code": safe_tool_error_code(exc),
+                })
+                for call_id, call in pending_by_id.items():
+                    tool_event_sink(TOOL_SETTLED_EVENT, build_tool_event_payload(
+                        tool_event_context,
+                        event_type=TOOL_SETTLED_EVENT,
+                        assistant_message_id=assistant_id,
+                        tool_call_id=call_id,
+                        tool_name=call["name"],
+                        tool_message_content=safe_content,
+                    ))
+            raise
         msgs = result.get("messages", [])
+        seen_tool_call_ids = set()
         for msg in msgs:
             if not isinstance(msg, ToolMessage):
                 continue
@@ -529,6 +592,12 @@ def scoped_invoke(
             except ValueError:
                 payload = {}
             tool_name = str(getattr(msg, "name", None) or "unknown")
+            tool_call_id = getattr(msg, "tool_call_id", None)
+            if tool_event_context is not None:
+                call = pending_by_id.get(tool_call_id)
+                if call is None or tool_call_id in seen_tool_call_ids or tool_name != call["name"]:
+                    raise RuntimeError("tool_result_call_id_unmatched")
+                seen_tool_call_ids.add(tool_call_id)
             result_status = str(payload.get("status") or "").lower()
             failed = (
                 getattr(msg, "status", None) == "error"
@@ -561,6 +630,35 @@ def scoped_invoke(
                 tool_failures[tool_name] = tool_failures.get(tool_name, 0) + 1
                 tool_error_codes.append(str(payload.get("error_code") or "tool_execution_error"))
                 logger.warning("tool settlement failed: %s (%s)", tool_name, tool_error_codes[-1])
+            if tool_event_context is not None:
+                tool_event_sink(TOOL_SETTLED_EVENT, build_tool_event_payload(
+                    tool_event_context,
+                    event_type=TOOL_SETTLED_EVENT,
+                    assistant_message_id=assistant_id,
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                    tool_message_content=content,
+                    tool_message_status=getattr(msg, "status", None),
+                ))
+        if tool_event_context is not None:
+            missing = set(pending_by_id) - seen_tool_call_ids
+            if missing:
+                from .tool_event_contract import safe_tool_error_code
+
+                safe_content = json.dumps({
+                    "status": "error", "error_code": safe_tool_error_code("missing"),
+                })
+                for call_id in sorted(missing):
+                    call = pending_by_id[call_id]
+                    tool_event_sink(TOOL_SETTLED_EVENT, build_tool_event_payload(
+                        tool_event_context,
+                        event_type=TOOL_SETTLED_EVENT,
+                        assistant_message_id=assistant_id,
+                        tool_call_id=call_id,
+                        tool_name=call["name"],
+                        tool_message_content=safe_content,
+                    ))
+                raise RuntimeError("tool_result_call_id_unmatched")
         return result
 
     def _check_continue(state: MiniState) -> str:

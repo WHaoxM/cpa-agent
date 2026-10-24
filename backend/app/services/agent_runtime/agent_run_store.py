@@ -37,6 +37,11 @@ from .agent_task_control import (
     task_contract_to_record,
     write_is_authorized,
 )
+from .tool_event_contract import (
+    TOOL_SETTLED_EVENT,
+    TOOL_STARTED_EVENT,
+    validate_tool_event_payload,
+)
 
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9_.:-]{8,128}$")
@@ -91,6 +96,7 @@ EVENT_TYPES = frozenset({
     "run.followup_classification_started", "run.followup_classified",
     "run.followup_needs_reconciliation", "run.followup_budget_blocked",
     "run.followup_applied", "run.followup_deterministic_reconciled",
+    TOOL_STARTED_EVENT, TOOL_SETTLED_EVENT,
 })
 
 
@@ -245,6 +251,7 @@ def _normalize_final_result(value: Mapping[str, Any]) -> Dict[str, Any]:
     allowed = {
         "reply", "result_ref", "format", "candidate_reply_unverified",
         "planner_model_usage", "finalizer_model_usage", "finalizer_error_code",
+        "assistant_message_id",
     }
     unknown = set(value) - allowed
     if unknown:
@@ -262,6 +269,12 @@ def _normalize_final_result(value: Mapping[str, Any]) -> Dict[str, Any]:
         if not isinstance(result_ref, str) or not _SAFE_RESULT_REFERENCE.fullmatch(result_ref):
             raise ValueError("final_result.result_ref must be a safe reference")
         normalized["result_ref"] = result_ref
+    assistant_message_id = value.get("assistant_message_id")
+    if assistant_message_id is not None:
+        if (not isinstance(assistant_message_id, str)
+                or not re.fullmatch(r"msg_[a-f0-9]{32}", assistant_message_id)):
+            raise ValueError("final_result.assistant_message_id is invalid")
+        normalized["assistant_message_id"] = assistant_message_id
     if "reply" not in normalized and "result_ref" not in normalized:
         raise ValueError("final_result must include reply or result_ref")
     result_format = value.get("format")
@@ -2608,6 +2621,8 @@ class AgentRunRepository:
                 payload={
                     "result_ref": f"agent-run://{run_id}/final",
                     "result_sha256": result_sha256,
+                    **({"assistant_message_id": normalized_result["assistant_message_id"]}
+                       if normalized_result.get("assistant_message_id") else {}),
                 },
             )
             conn.execute(text("""
@@ -2716,7 +2731,9 @@ class AgentRunRepository:
             self._append_event(
                 conn, run, event_type="run.completed", new_status="completed",
                 payload={"result_ref": f"agent-run://{run_id}/final",
-                         "result_sha256": digest, "direct_answer": True},
+                         "result_sha256": digest, "direct_answer": True,
+                         **({"assistant_message_id": normalized["assistant_message_id"]}
+                            if normalized.get("assistant_message_id") else {})},
             )
             conn.execute(text("""
                 UPDATE agent_run_dispatch SET dispatch_state='terminal',
@@ -3125,6 +3142,122 @@ class AgentRunRepository:
                     "latest_seq": latest,
                     "has_more": len(rows) > limit,
                 }
+
+    def append_tool_call_event(
+        self,
+        run_id: str,
+        *,
+        student_id: str,
+        session_id: str,
+        claim_token: Optional[str],
+        plan_version: int,
+        contract_revision: int,
+        step_index: int,
+        attempt: int,
+        allowed_tool_names,
+        event_type: str,
+        payload: Mapping[str, Any],
+    ) -> int:
+        """Append a scoped tool event only while its exact worker step is live.
+
+        Start events are committed before ToolNode executes. Settlement events
+        require the matching start event. Identical retries return the original
+        sequence; conflicting payloads fail rather than duplicating history.
+        """
+        run_id = _run_id_value(run_id)
+        student_id = _owner_value(student_id, field="student_id")
+        session_id = _owner_value(session_id, field="session_id")
+        self._validate_version_index(plan_version, step_index)
+        if (type(contract_revision) is not int or contract_revision < 0
+                or type(attempt) is not int or attempt < 1):
+            raise ValueError("tool event revision or attempt is invalid")
+        if event_type not in {TOOL_STARTED_EVENT, TOOL_SETTLED_EVENT}:
+            raise ValueError("event_type is not a tool event")
+        normalized = validate_tool_event_payload(event_type, payload)
+        if not isinstance(allowed_tool_names, (set, frozenset)) or not allowed_tool_names:
+            raise ValueError("tool event allowlist is required")
+        if normalized["tool_name"] not in allowed_tool_names:
+            raise AgentRunConflict("tool event is outside the current allowlist")
+        expected_coordinates = {
+            "plan_version": plan_version,
+            "contract_revision": contract_revision,
+            "step_index": step_index,
+        }
+        if any(normalized[field] != value for field, value in expected_coordinates.items()):
+            raise AgentRunConflict("tool event coordinates do not match the worker step")
+        if normalized["attempt"] != attempt:
+            raise AgentRunConflict("tool event attempt does not match the worker step")
+
+        identity = (
+            normalized["turn_id"], normalized["assistant_message_id"],
+            normalized["tool_call_id"],
+        )
+        with self._utc_transaction() as conn:
+            run = self._locked_run(conn, run_id=run_id, student_id=student_id)
+            if str(run.get("session_id") or "") != session_id:
+                raise AgentRunConflict("tool event session does not match its run")
+            if run["status"] != "running":
+                raise AgentRunConflict("tool event run is not running")
+            if int(run.get("current_plan_version") or 0) != plan_version:
+                raise AgentRunConflict("tool event plan version is stale")
+            contract = self._task_contract_for_row(conn, run)
+            current_revision = contract.revision if contract is not None else int(
+                run.get("current_contract_revision") or 0
+            )
+            if current_revision != contract_revision:
+                raise AgentRunConflict("tool event contract revision is stale")
+            self._assert_current_claim(conn, run_id, claim_token)
+            if claim_token is None and conn.dialect.name in {"mysql", "mariadb"}:
+                raise AgentRunConflict("durable tool events require a worker claim")
+            step = self._locked_step(conn, run_id, plan_version, step_index)
+            if step["status"] != "running" or int(step["attempts"] or 0) != attempt:
+                raise AgentRunConflict("tool event attempt is not the active step attempt")
+
+            existing_rows = conn.execute(text("""
+                SELECT event_seq, event_type, payload_json
+                FROM agent_run_event
+                WHERE run_id=:run_id AND student_id=:student_id
+                  AND event_type IN (:started_type, :settled_type)
+                ORDER BY event_seq
+            """), {
+                "run_id": run_id,
+                "student_id": student_id,
+                "started_type": TOOL_STARTED_EVENT,
+                "settled_type": TOOL_SETTLED_EVENT,
+            }).mappings()
+            matching_start = None
+            matching_settlement = None
+            for row in existing_rows:
+                old_payload = _decode_json(
+                    row["payload_json"], expected_type=dict, field="tool event payload",
+                )
+                old_identity = (
+                    old_payload.get("turn_id"), old_payload.get("assistant_message_id"),
+                    old_payload.get("tool_call_id"),
+                )
+                if old_identity != identity:
+                    continue
+                if row["event_type"] == TOOL_STARTED_EVENT:
+                    matching_start = row
+                elif row["event_type"] == TOOL_SETTLED_EVENT:
+                    matching_settlement = row
+
+            matching = matching_start if event_type == TOOL_STARTED_EVENT else matching_settlement
+            if matching is not None:
+                old_payload = _decode_json(
+                    matching["payload_json"], expected_type=dict, field="tool event payload",
+                )
+                if old_payload != normalized:
+                    raise AgentRunConflict("tool event identity was reused with different content")
+                return int(matching["event_seq"])
+            if event_type == TOOL_STARTED_EVENT:
+                if matching_settlement is not None:
+                    raise AgentRunConflict("tool settlement exists without a matching replayed start")
+            elif matching_start is None:
+                raise AgentRunConflict("tool settlement has no persisted start event")
+            return self._append_event(
+                conn, run, event_type=event_type, payload=normalized,
+            )
 
     def _find_idempotent_run(self, *, student_id: str, session_id: str, key_sha256: str):
         with self._read_connection() as conn:

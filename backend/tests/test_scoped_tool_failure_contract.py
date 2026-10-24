@@ -117,6 +117,182 @@ def test_transient_read_failure_retries_once_then_settles_as_success(monkeypatch
     assert result["tool_calls"][0]["attempts"] == 2
 
 
+@pytest.mark.parametrize(
+    "fail,expected_event_status,expected_incomplete",
+    [(False, "succeeded", False), (True, "failed", True)],
+)
+def test_durable_tool_events_follow_toolnode_and_toolmessage_reinjection(
+    monkeypatch, fail, expected_event_status, expected_incomplete,
+):
+    from app.services.agent_runtime.tool_event_contract import (
+        TOOL_SETTLED_EVENT,
+        TOOL_STARTED_EVENT,
+        ToolEventContext,
+    )
+
+    scoped = importlib.import_module("app.services.agent_runtime.scoped_invoke")
+    gated = importlib.import_module("app.services.agent_runtime.gated_tools")
+    tool_calls = []
+    model_messages = []
+    persisted_events = []
+
+    def lookup(query: str) -> str:
+        tool_calls.append(query)
+        if fail:
+            raise ValueError("PRIVATE_EXCEPTION_MUST_NOT_PERSIST")
+        return json.dumps({
+            "status": "done", "success": True,
+            "summary": "PRIVATE_RESULT_MUST_NOT_PERSIST",
+        })
+
+    base = StructuredTool.from_function(func=lookup, name="career_data_read", description="read")
+    monkeypatch.setattr(gated, "pre_tool_use", lambda _name, args, _ctx: SimpleNamespace(
+        allowed=True, args=args, rewritten=False, verdict=SimpleNamespace(reason="ok"),
+    ))
+    monkeypatch.setattr(gated, "enqueue_audit", lambda **_kwargs: None)
+    monkeypatch.setattr(gated, "get_artifact_committer", lambda: SimpleNamespace(
+        commit_candidates=lambda *_a, **_k: [],
+    ))
+    monkeypatch.setattr(
+        scoped, "build_gated_tools",
+        lambda _subagent, ctx, collector: [gated._wrap_one(base, ctx, collector)],
+    )
+
+    class Model:
+        def invoke(self, messages):
+            model_messages.append(list(messages))
+            if len(model_messages) == 1:
+                return AIMessage(content="", tool_calls=[{
+                    "name": "career_data_read",
+                    "args": {"query": "PRIVATE_QUERY_MUST_NOT_PERSIST"},
+                    "id": "call_protocol_01",
+                }])
+            return AIMessage(content="已依据工具返回继续处理。")
+
+    monkeypatch.setattr("app.services.langgraph_agent._build_llm_with_tools", lambda *_a: Model())
+    context = ToolEventContext(
+        run_id="run_" + "a" * 32, student_id="synthetic_owner",
+        session_id="synthetic_session", claim_token="b" * 32,
+        plan_version=2, contract_revision=3, step_index=1, attempt=1,
+        allowed_tool_names=frozenset({"career_data_read"}),
+    )
+    result = scoped.scoped_invoke(
+        TaskPacket(goal="只读检索合成信息", subagent="qa", read_keys=[], write_keys=[]),
+        Blackboard(), interaction_mode=InteractionMode.AGENT,
+        plan_tool_allowlist={"career_data_read"}, allow_artifact_commit=False,
+        tool_event_context=context,
+        tool_event_sink=lambda event_type, payload: persisted_events.append((event_type, payload)),
+    )
+
+    assert tool_calls == ["PRIVATE_QUERY_MUST_NOT_PERSIST"]
+    assert len(model_messages) == 2
+    reinjected = [message for message in model_messages[1] if isinstance(message, ToolMessage)]
+    assert len(reinjected) == 1
+    assert reinjected[0].tool_call_id == "call_protocol_01"
+    assert [event_type for event_type, _payload in persisted_events] == [
+        TOOL_STARTED_EVENT, TOOL_SETTLED_EVENT,
+    ]
+    started, settled = [payload for _event_type, payload in persisted_events]
+    assert started["tool_call_id"] == settled["tool_call_id"] == "call_protocol_01"
+    assert started["assistant_message_id"] == settled["assistant_message_id"]
+    assert started["input_summary"] == {
+        "argument_count": 1, "argument_names": ["query"],
+    }
+    assert settled["status"] == expected_event_status
+    serialized = str(persisted_events)
+    assert "PRIVATE_QUERY_MUST_NOT_PERSIST" not in serialized
+    assert "PRIVATE_RESULT_MUST_NOT_PERSIST" not in serialized
+    assert "PRIVATE_EXCEPTION_MUST_NOT_PERSIST" not in serialized
+    assert result["incomplete"] is expected_incomplete
+
+
+def test_durable_graph_failure_never_retries_through_scoped_fallback(monkeypatch):
+    from app.services.agent_runtime import mode_runtime
+
+    packet = TaskPacket(goal="synthetic", subagent="profile", read_keys=[], write_keys=[])
+    graph_calls = []
+    fallback_calls = []
+
+    def fail_graph(*_args, **_kwargs):
+        graph_calls.append(True)
+        raise RuntimeError("synthetic graph failure")
+
+    monkeypatch.setattr(mode_runtime, "invoke_subagent_graph", fail_graph)
+    monkeypatch.setattr(mode_runtime, "scoped_invoke", lambda *_args, **_kwargs: (
+        fallback_calls.append(True) or {"reply": "fallback"}
+    ))
+    with pytest.raises(RuntimeError, match="synthetic graph failure"):
+        mode_runtime._invoke_subagent(
+            packet, Blackboard(), "synthetic-session",
+            allow_tools=True, interaction_mode=InteractionMode.AGENT,
+            student_id="synthetic-owner", plan_tool_allowlist={"career_data_read"},
+            tool_event_context=object(), tool_event_sink=lambda *_args: None,
+        )
+    assert graph_calls == [True]
+    assert fallback_calls == []
+
+    # Non-durable legacy callers retain the existing fallback behavior.
+    legacy = mode_runtime._invoke_subagent(
+        packet, Blackboard(), "synthetic-session",
+        allow_tools=True, interaction_mode=InteractionMode.AGENT,
+        student_id="synthetic-owner", plan_tool_allowlist={"career_data_read"},
+    )
+    assert legacy["reply"] == "fallback"
+    assert fallback_calls == [True]
+
+
+def test_tool_start_persistence_failure_prevents_tool_execution(monkeypatch):
+    from app.services.agent_runtime.tool_event_contract import ToolEventContext
+
+    scoped = importlib.import_module("app.services.agent_runtime.scoped_invoke")
+    gated = importlib.import_module("app.services.agent_runtime.gated_tools")
+    executed = []
+
+    def lookup(query: str) -> str:
+        executed.append(query)
+        return '{"status":"done","success":true}'
+
+    base = StructuredTool.from_function(func=lookup, name="career_data_read", description="read")
+    monkeypatch.setattr(gated, "pre_tool_use", lambda _name, args, _ctx: SimpleNamespace(
+        allowed=True, args=args, rewritten=False, verdict=SimpleNamespace(reason="ok"),
+    ))
+    monkeypatch.setattr(gated, "enqueue_audit", lambda **_kwargs: None)
+    monkeypatch.setattr(gated, "get_artifact_committer", lambda: SimpleNamespace(
+        commit_candidates=lambda *_args, **_kwargs: [],
+    ))
+    monkeypatch.setattr(
+        scoped, "build_gated_tools",
+        lambda _subagent, context, collector: [gated._wrap_one(base, context, collector)],
+    )
+
+    class FakeLLM:
+        def invoke(self, _messages):
+            return AIMessage(content="", tool_calls=[{
+                "name": "career_data_read", "args": {"query": "synthetic"}, "id": "fail-start-01",
+            }])
+
+    monkeypatch.setattr("app.services.langgraph_agent._build_llm_with_tools", lambda *_args: FakeLLM())
+    context = ToolEventContext(
+        run_id="run_" + "d" * 32, student_id="synthetic-owner",
+        session_id="synthetic-session", claim_token="e" * 32,
+        plan_version=1, contract_revision=0, step_index=1, attempt=1,
+        allowed_tool_names=frozenset({"career_data_read"}),
+    )
+
+    def reject_start(event_type, _payload):
+        assert event_type == "run.tool_call_started"
+        raise RuntimeError("durable start write failed")
+
+    with pytest.raises(RuntimeError, match="durable start write failed"):
+        scoped.scoped_invoke(
+            TaskPacket(goal="synthetic", subagent="qa", read_keys=[], write_keys=[]),
+            Blackboard(), interaction_mode=InteractionMode.AGENT,
+            plan_tool_allowlist={"career_data_read"}, allow_artifact_commit=False,
+            tool_event_context=context, tool_event_sink=reject_start,
+        )
+    assert executed == []
+
+
 def test_unavailable_optional_read_remains_unavailable_without_executor_failure(monkeypatch):
     scoped = importlib.import_module("app.services.agent_runtime.scoped_invoke")
     gated = importlib.import_module("app.services.agent_runtime.gated_tools")

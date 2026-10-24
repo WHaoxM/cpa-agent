@@ -238,6 +238,76 @@ def test_resource_read_receipt_is_bound_to_owner_plan_and_started_step(store):
         )
 
 
+def test_tool_call_events_are_session_step_bound_ordered_and_replayable(store):
+    from app.services.agent_runtime.tool_event_contract import (
+        TOOL_SETTLED_EVENT,
+        TOOL_STARTED_EVENT,
+        ToolEventContext,
+        build_tool_event_payload,
+        stable_assistant_message_id,
+    )
+
+    run_id = _submit(store, key="tool-event-roundtrip-01")["run"]["run_id"]
+    plan = _plan(store, run_id)
+    store.start_step(run_id, student_id="owner_a", plan_version=1, step_index=1)
+    context = ToolEventContext(
+        run_id=run_id, student_id="owner_a", session_id="session_a",
+        claim_token=None, plan_version=1, contract_revision=0, step_index=1,
+        attempt=1, allowed_tool_names=frozenset({"career_data_read"}),
+    )
+    assistant_message_id = stable_assistant_message_id(
+        run_id=run_id, contract_revision=0, plan_version=1,
+        step_index=1, attempt=1, model_iteration=1,
+    )
+    start_payload = build_tool_event_payload(
+        context, event_type=TOOL_STARTED_EVENT,
+        assistant_message_id=assistant_message_id, tool_call_id="call_store_01",
+        tool_name="career_data_read", args={"query": "PRIVATE_QUERY_MUST_NOT_PERSIST"},
+    )
+    append = lambda event_type, payload, owner="owner_a", session="session_a", attempt=1: store.append_tool_call_event(
+        run_id, student_id=owner, session_id=session, claim_token=None,
+        plan_version=plan["plan_version"], contract_revision=0, step_index=1,
+        attempt=attempt, allowed_tool_names={"career_data_read"},
+        event_type=event_type, payload=payload,
+    )
+    start_seq = append(TOOL_STARTED_EVENT, start_payload)
+    assert append(TOOL_STARTED_EVENT, start_payload) == start_seq
+
+    settled_payload = build_tool_event_payload(
+        context, event_type=TOOL_SETTLED_EVENT,
+        assistant_message_id=assistant_message_id, tool_call_id="call_store_01",
+        tool_name="career_data_read",
+        tool_message_content='{"status":"done","success":true,"summary":"PRIVATE_RESULT_MUST_NOT_PERSIST"}',
+    )
+    settled_seq = append(TOOL_SETTLED_EVENT, settled_payload)
+    assert settled_seq == start_seq + 1
+    assert append(TOOL_SETTLED_EVENT, settled_payload) == settled_seq
+
+    first = store.read_events(
+        run_id, student_id="owner_a", after_seq=start_seq - 1, limit=1,
+    )
+    replay = store.read_events(
+        run_id, student_id="owner_a", after_seq=first["cursor"], limit=1,
+    )
+    assert [event["event_type"] for event in first["events"]] == [TOOL_STARTED_EVENT]
+    assert [event["event_type"] for event in replay["events"]] == [TOOL_SETTLED_EVENT]
+    assert replay["events"][0]["payload"]["assistant_message_id"] == assistant_message_id
+    serialized = str(first["events"] + replay["events"])
+    assert "PRIVATE_QUERY_MUST_NOT_PERSIST" not in serialized
+    assert "PRIVATE_RESULT_MUST_NOT_PERSIST" not in serialized
+    assert start_payload["input_summary"] == {
+        "argument_count": 1, "argument_names": ["query"],
+    }
+    assert settled_payload["output_summary"]["result_kind"] == "json_object"
+
+    with pytest.raises(AgentRunConflict, match="session"):
+        append(TOOL_SETTLED_EVENT, settled_payload, session="another_session")
+    with pytest.raises(AgentRunNotFound):
+        append(TOOL_SETTLED_EVENT, settled_payload, owner="owner_b")
+    with pytest.raises(AgentRunConflict, match="attempt"):
+        append(TOOL_SETTLED_EVENT, settled_payload, attempt=2)
+
+
 def test_submission_and_dispatch_outbox_are_atomic_and_publish_failure_replays(store):
     run_id = _submit(store)["run"]["run_id"]
     dispatch = AgentRunDispatchStore(store)
@@ -754,10 +824,14 @@ def test_run_is_not_completed_until_final_reply_or_reference_is_persisted(store)
 
     finalizing = store.begin_finalizing(run_id, student_id="owner_a")
     assert finalizing["status"] == "finalizing"
+    assistant_message_id = "msg_" + "f" * 32
     completed = store.complete_run(
         run_id,
         student_id="owner_a",
-        final_result={"reply": "根据现有信息，建议先补充一段可量化的项目成果。", "format": "text"},
+        final_result={
+            "reply": "根据现有信息，建议先补充一段可量化的项目成果。",
+            "format": "text", "assistant_message_id": assistant_message_id,
+        },
     )
     assert completed["status"] == "completed"
     assert completed["final_result"]["reply"].startswith("根据现有信息")
@@ -767,10 +841,14 @@ def test_run_is_not_completed_until_final_reply_or_reference_is_persisted(store)
     assert event["run_status"] == "completed"
     assert event["payload"]["result_sha256"] == completed["final_result_sha256"]
     assert event["payload"]["result_ref"] == f"agent-run://{run_id}/final"
+    assert event["payload"]["assistant_message_id"] == assistant_message_id
     replay = store.complete_run(
         run_id,
         student_id="owner_a",
-        final_result={"reply": "根据现有信息，建议先补充一段可量化的项目成果。", "format": "text"},
+        final_result={
+            "reply": "根据现有信息，建议先补充一段可量化的项目成果。",
+            "format": "text", "assistant_message_id": assistant_message_id,
+        },
     )
     assert replay["status"] == "completed"
     assert replay["last_event_seq"] == completed["last_event_seq"]

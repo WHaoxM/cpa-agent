@@ -25,6 +25,8 @@ def invoke_subagent_graph(
     student_id: Optional[str] = None,
     plan_tool_allowlist: Optional[Set[str]] = None,
     allow_artifact_commit: bool = True,
+    tool_event_context=None,
+    tool_event_sink=None,
 ) -> Dict[str, Any]:
     from .scoped_invoke import scoped_invoke
 
@@ -37,6 +39,8 @@ def invoke_subagent_graph(
         student_id=student_id,
         plan_tool_allowlist=plan_tool_allowlist,
         allow_artifact_commit=allow_artifact_commit,
+        tool_event_context=tool_event_context,
+        tool_event_sink=tool_event_sink,
     )
     out["engine"] = f"graph:{packet.subagent}"
     return out

@@ -110,6 +110,16 @@ D:\Miniconda\miniconda3\envs\mkg\python.exe -B -m pytest backend/tests/test_ask_
 
 ## 尚未覆盖
 
+### Agent 工具调用事件协议（2026-10-24）
+
+持久 Agent 执行现在复用 `agent_run_event` 的 run 级递增序号和 `read_events(after_seq)` 回放，不增加数据库表。工具开始事件为 `run.tool_call_started`，结算事件为 `run.tool_call_settled`；二者关联稳定的 `turn_id`、`assistant_message_id`、`tool_call_id`，并绑定 session、plan version、contract revision、step attempt 和当前 worker claim。事件写入使用既有 owner/run 事务；settled 必须对应相同坐标的 started。重试同一事件返回原序号，冲突内容拒绝。旧版 progress/event 类型仍可读取，新消费者应忽略未知事件类型并从 `event_seq` 继续分页。
+
+持久层只保存 allowlist 内的工具名、状态、稳定关联 ID、参数名/数量、结果形态/大小等结构摘要及受限错误码；不保存参数值、工具返回正文、完整提示词或模型思维内容。事件写入在 ToolNode 前后包裹真实工具执行：开始事件失败则不执行工具；ToolMessage 必须按 `tool_call_id` 与请求一一匹配，settled 事件成功后结果才会进入下一轮模型消息。开启 durable 事件追踪后，graph 路径出错会直接失败，不再静默通过 scoped fallback 重跑可能已执行过的工具。失败和超时保留安全状态，不伪造成功回执。最终答复携带稳定的 assistant message ID；现有无此字段的历史完成事件保持兼容。
+
+维护定位：工具调用入口在 `scoped_invoke.py::_retry_tool_node`，关联和脱敏规则在 `tool_event_contract.py`，owner/session/claim 与顺序写入在 `agent_run_store.py::append_tool_call_event`，durable worker 绑定在 `agent_run_executor.py::_execute_step`。验证使用 FakeLLM、真实 LangGraph ToolNode 和 SQLite 存储夹具；它证明消息结构、真实 ToolMessage 回注、事件分页/重放与越权拒绝，不证明生产 worker 或真实 provider 的运行效果。定向离线命令、92 项结果与未覆盖范围见[工具事件协议验证报告](../reports/2026-10-24-agent-tool-event-protocol.md)。
+
+适配参考本机 DeepSeek Harness `d347e703908d0406b7a7ef80e3a0e594d86b2215`（`0.1.3-alpha.1`，MIT；`agent-loop/src/agent.ts`、`tool-calls.ts`、DeepSeek `translate.ts`）的结构化工具参数与工具结果回注边界；另核对 OpenCode `388406238bd5ca15564a762840a2362c3a45bd9c`（MIT）的有序类型化会话事件。这里只适配工具调用/结果关联和可回放事件，不复制其 runtime。CPA 保留自己的 owner 隔离、工具 allowlist、worker claim、业务确认和预算规则。
+
 ### 2026-10-24 同 session 学生任务上下文
 
 Student task lead 的近期上下文由 `backend/app/services/agent_runtime/student_task.py::_history` 组装：只加载当前 owner/session 的普通 user/assistant 消息，并与 Redis session 历史按 `message_id` 合并。它不是跨 session 搜索，也不授予附件或个人档案读取权限。学生任务使用 `conversation_recall` 时只消费有界对话文本；缺少依据应澄清。默认计划不应强制读取探索资料；只有实际资料准备路径返回可验证读取证据时，执行器才要求相应持久 receipt。读取权限本身仍由工具 allowlist、owner/session 检查及执行器 receipt 校验控制。

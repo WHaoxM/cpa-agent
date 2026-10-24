@@ -793,6 +793,8 @@ def _invoke_subagent(
     ask_context_messages=None,
     ask_context_appendix: str = "",
     ask_context_append_current: bool = False,
+    tool_event_context=None,
+    tool_event_sink=None,
 ):
     kwargs = dict(
         allow_tools=allow_tools,
@@ -804,6 +806,8 @@ def _invoke_subagent(
         ask_context_messages=ask_context_messages,
         ask_context_appendix=ask_context_appendix,
         ask_context_append_current=ask_context_append_current,
+        tool_event_context=tool_event_context,
+        tool_event_sink=tool_event_sink,
     )
     if not allow_tools or interaction_mode == InteractionMode.ASK:
         out = scoped_invoke(
@@ -820,8 +824,17 @@ def _invoke_subagent(
                 student_id=student_id,
                 plan_tool_allowlist=plan_tool_allowlist,
                 allow_artifact_commit=allow_artifact_commit,
+                tool_event_context=tool_event_context,
+                tool_event_sink=tool_event_sink,
             )
         except Exception as e:
+            if tool_event_context is not None:
+                # The graph path may have already executed a tool before an
+                # event sink or later graph stage failed. Re-running the same
+                # turn through the fallback can repeat that tool effect and
+                # split its durable event history across two invocations.
+                logger.warning("durable graph invoke failed; refusing scoped fallback")
+                raise
             logger.warning("graph invoke failed, scoped fallback: %s", e)
             out = scoped_invoke(packet, blackboard, **kwargs)
     else:

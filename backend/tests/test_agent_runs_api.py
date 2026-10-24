@@ -400,6 +400,221 @@ def test_status_events_and_cancel_are_owner_bound_and_cancel_is_only_a_request(r
     ]
 
 
+def test_tool_call_event_contract_replays_through_owner_bound_http_cursor(run_api):
+    from app.services.agent_runtime.agent_run_dispatch import AgentRunDispatchStore
+    from app.services.agent_runtime.tool_event_contract import (
+        TOOL_SETTLED_EVENT,
+        TOOL_STARTED_EVENT,
+        ToolEventContext,
+        build_tool_event_payload,
+        stable_assistant_message_id,
+    )
+
+    client, repository = run_api
+    created = _submit(client, key="run-http-tool-events-01")
+    assert created.status_code == 201
+    run_id = created.get_json()["data"]["run"]["run_id"]
+    claim = AgentRunDispatchStore(repository).claim_worker(run_id)
+    assert claim is not None
+    claim_token = claim["claim_token"]
+    plan = repository.persist_plan(
+        run_id, student_id="alice", expected_plan_version=0,
+        goal_summary="Read a synthetic public record",
+        steps=[{"role": "qa", "goal": "Read only the synthetic record", "skill_ids": []}],
+        claim_token=claim_token,
+    )
+    repository.start_step(
+        run_id, student_id="alice", plan_version=plan["plan_version"],
+        step_index=1, claim_token=claim_token,
+    )
+    context = ToolEventContext(
+        run_id=run_id, student_id="alice", session_id="session-alice",
+        claim_token=claim_token, plan_version=plan["plan_version"],
+        contract_revision=0, step_index=1, attempt=1,
+        allowed_tool_names=frozenset({"career_data_read"}),
+    )
+    message_id = stable_assistant_message_id(
+        run_id=run_id, contract_revision=0, plan_version=1,
+        step_index=1, attempt=1, model_iteration=1,
+    )
+    start = build_tool_event_payload(
+        context, event_type=TOOL_STARTED_EVENT,
+        assistant_message_id=message_id, tool_call_id="http_call_01",
+        tool_name="career_data_read", args={"query": "PRIVATE_QUERY_SENTINEL"},
+    )
+    start_seq = repository.append_tool_call_event(
+        run_id, student_id="alice", session_id="session-alice",
+        claim_token=claim_token, plan_version=1, contract_revision=0,
+        step_index=1, attempt=1, allowed_tool_names={"career_data_read"},
+        event_type=TOOL_STARTED_EVENT, payload=start,
+    )
+    settled = build_tool_event_payload(
+        context, event_type=TOOL_SETTLED_EVENT,
+        assistant_message_id=message_id, tool_call_id="http_call_01",
+        tool_name="career_data_read",
+        tool_message_content='{"status":"done","success":true,"summary":"PRIVATE_RESULT_SENTINEL"}',
+    )
+    settled_seq = repository.append_tool_call_event(
+        run_id, student_id="alice", session_id="session-alice",
+        claim_token=claim_token, plan_version=1, contract_revision=0,
+        step_index=1, attempt=1, allowed_tool_names={"career_data_read"},
+        event_type=TOOL_SETTLED_EVENT, payload=settled,
+    )
+
+    page = client.get(
+        f"/api/agent/runs/{run_id}/events?after_seq={start_seq - 1}&limit=1",
+        headers={"X-Test-Owner": "alice"},
+    )
+    assert page.status_code == 200
+    page_data = page.get_json()["data"]
+    assert page_data["events"][0]["event_type"] == TOOL_STARTED_EVENT
+    assert page_data["cursor"] == start_seq
+    assert page_data["has_more"] is True
+
+    replay = client.get(
+        f"/api/agent/runs/{run_id}/events?after_seq={start_seq}&limit=1",
+        headers={"X-Test-Owner": "alice"},
+    )
+    assert replay.status_code == 200
+    replay_data = replay.get_json()["data"]
+    assert replay_data["events"][0]["event_type"] == TOOL_SETTLED_EVENT
+    assert replay_data["events"][0]["event_seq"] == settled_seq
+    assert replay_data["events"][0]["payload"]["assistant_message_id"] == message_id
+    assert replay_data["has_more"] is False
+    serialized = page.get_data(as_text=True) + replay.get_data(as_text=True)
+    assert "PRIVATE_QUERY_SENTINEL" not in serialized
+    assert "PRIVATE_RESULT_SENTINEL" not in serialized
+
+    wrong_owner = client.get(
+        f"/api/agent/runs/{run_id}/events?after_seq=0&limit=20",
+        headers={"X-Test-Owner": "mallory"},
+    )
+    assert wrong_owner.status_code == 404
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_toolnode_execution_persists_typed_events_for_http_replay(run_api, monkeypatch, fail):
+    import importlib
+    import json
+    from types import SimpleNamespace
+
+    from langchain_core.messages import AIMessage, ToolMessage
+    from langchain_core.tools import StructuredTool
+
+    from app.services.agent_runtime.agent_run_dispatch import AgentRunDispatchStore
+    from app.services.agent_runtime.blackboard import Blackboard
+    from app.services.agent_runtime.modes import InteractionMode
+    from app.services.agent_runtime.task_packet import TaskPacket
+    from app.services.agent_runtime.tool_event_contract import ToolEventContext
+
+    client, repository = run_api
+    created = _submit(client, key=f"run-http-toolnode-{fail}-01")
+    assert created.status_code == 201
+    run_id = created.get_json()["data"]["run"]["run_id"]
+    claim = AgentRunDispatchStore(repository).claim_worker(run_id)
+    assert claim is not None
+    claim_token = claim["claim_token"]
+    plan = repository.persist_plan(
+        run_id, student_id="alice", expected_plan_version=0,
+        goal_summary="Read a synthetic public record",
+        steps=[{"role": "qa", "goal": "Read only the synthetic record", "skill_ids": []}],
+        claim_token=claim_token,
+    )
+    repository.start_step(
+        run_id, student_id="alice", plan_version=plan["plan_version"],
+        step_index=1, claim_token=claim_token,
+    )
+
+    scoped = importlib.import_module("app.services.agent_runtime.scoped_invoke")
+    gated = importlib.import_module("app.services.agent_runtime.gated_tools")
+    executed = []
+    model_inputs = []
+
+    def read_synthetic(query: str) -> str:
+        executed.append(query)
+        if fail:
+            raise ValueError("PRIVATE_TOOL_EXCEPTION_SENTINEL")
+        return json.dumps({
+            "status": "done", "success": True,
+            "summary": "PRIVATE_TOOL_RESULT_SENTINEL",
+        })
+
+    base_tool = StructuredTool.from_function(
+        func=read_synthetic, name="career_data_read", description="read a synthetic record",
+    )
+    monkeypatch.setattr(gated, "pre_tool_use", lambda _name, args, _ctx: SimpleNamespace(
+        allowed=True, args=args, rewritten=False, verdict=SimpleNamespace(reason="ok"),
+    ))
+    monkeypatch.setattr(gated, "enqueue_audit", lambda **_kwargs: None)
+    monkeypatch.setattr(gated, "get_artifact_committer", lambda: SimpleNamespace(
+        commit_candidates=lambda *_args, **_kwargs: [],
+    ))
+    monkeypatch.setattr(
+        scoped, "build_gated_tools",
+        lambda _subagent, context, collector: [gated._wrap_one(base_tool, context, collector)],
+    )
+
+    class FakeLLM:
+        def invoke(self, messages):
+            model_inputs.append(list(messages))
+            if len(model_inputs) == 1:
+                return AIMessage(content="", tool_calls=[{
+                    "name": "career_data_read",
+                    "args": {"query": "PRIVATE_TOOL_QUERY_SENTINEL"},
+                    "id": "http_tool_call_01",
+                }])
+            return AIMessage(content="Synthetic read completed.")
+
+    monkeypatch.setattr("app.services.langgraph_agent._build_llm_with_tools", lambda *_args: FakeLLM())
+    context = ToolEventContext(
+        run_id=run_id, student_id="alice", session_id="session-alice",
+        claim_token=claim_token, plan_version=plan["plan_version"],
+        contract_revision=0, step_index=1, attempt=1,
+        allowed_tool_names=frozenset({"career_data_read"}),
+    )
+
+    def persist_event(event_type, payload):
+        return repository.append_tool_call_event(
+            run_id, student_id="alice", session_id="session-alice",
+            claim_token=claim_token, plan_version=plan["plan_version"],
+            contract_revision=0, step_index=1, attempt=1,
+            allowed_tool_names={"career_data_read"},
+            event_type=event_type, payload=payload,
+        )
+
+    result = scoped.scoped_invoke(
+        TaskPacket(goal="Read a synthetic record", subagent="qa", read_keys=[], write_keys=[]),
+        Blackboard(), interaction_mode=InteractionMode.AGENT, student_id="alice",
+        plan_tool_allowlist={"career_data_read"}, allow_artifact_commit=False,
+        tool_event_context=context, tool_event_sink=persist_event,
+    )
+    assert executed == ["PRIVATE_TOOL_QUERY_SENTINEL"]
+    assert len(model_inputs) == 2
+    reinjected = [message for message in model_inputs[1] if isinstance(message, ToolMessage)]
+    assert len(reinjected) == 1
+    assert reinjected[0].tool_call_id == "http_tool_call_01"
+
+    response = client.get(
+        f"/api/agent/runs/{run_id}/events?after_seq=0&limit=200",
+        headers={"X-Test-Owner": "alice"},
+    )
+    assert response.status_code == 200
+    events = response.get_json()["data"]["events"]
+    tool_events = [event for event in events if event["event_type"].startswith("run.tool_call_")]
+    assert [event["event_type"] for event in tool_events] == [
+        "run.tool_call_started", "run.tool_call_settled",
+    ]
+    assert tool_events[0]["payload"]["tool_call_id"] == tool_events[1]["payload"]["tool_call_id"]
+    assert tool_events[0]["payload"]["assistant_message_id"] == tool_events[1]["payload"]["assistant_message_id"]
+    assert tool_events[1]["payload"]["status"] == ("failed" if fail else "succeeded")
+    serialized = response.get_data(as_text=True)
+    assert "PRIVATE_TOOL_QUERY_SENTINEL" not in serialized
+    assert "PRIVATE_TOOL_RESULT_SENTINEL" not in serialized
+    assert "PRIVATE_TOOL_EXCEPTION_SENTINEL" not in serialized
+    assert "Synthetic read completed." not in serialized
+    assert result["incomplete"] is fail
+
+
 def test_submit_rejects_unknown_or_other_owners_authoritative_session(run_api):
     client, _repository = run_api
     unknown = client.post(

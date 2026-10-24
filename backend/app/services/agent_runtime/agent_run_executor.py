@@ -316,8 +316,17 @@ class AgentRunExecutor:
                 and run.get("final_result_checkpoint")):
             if not self._claim_and_account_current(run_id, claim_token):
                 raise AgentRunConflict("worker claim or account auth epoch changed before direct answer settlement")
+            from .tool_event_contract import stable_assistant_message_id
+
+            direct_result = dict(run["final_result"])
+            direct_result.setdefault("assistant_message_id", stable_assistant_message_id(
+                run_id=run_id,
+                contract_revision=contract.revision if contract else 0,
+                plan_version=0,
+                final=True,
+            ))
             self.repository.complete_direct_run(
-                run_id, student_id=student_id, final_result=run["final_result"],
+                run_id, student_id=student_id, final_result=direct_result,
                 expected_contract_revision=(contract.revision if contract else None),
                 claim_token=claim_token,
             )
@@ -542,10 +551,19 @@ class AgentRunExecutor:
                   and capability.execution_pipeline == 'student_task_v1'):
                 from .student_task import settle
                 completion['completion_callback'] = lambda conn: settle(self.repository.mysql, conn, session_id=str(run['session_id']), owner=student_id, run_id=run_id)
+            from .tool_event_contract import stable_assistant_message_id
+
+            assistant_message_id = stable_assistant_message_id(
+                run_id=run_id,
+                contract_revision=contract.revision if contract else 0,
+                plan_version=int(run.get("current_plan_version") or 0),
+                final=True,
+            )
             final_result = (
                 dict(checkpoint_result) if finalizer_checkpoint
                 else {"reply": reply, "format": "text"}
             )
+            final_result.setdefault("assistant_message_id", assistant_message_id)
             if finalizer_usage is not None and not finalizer_checkpoint:
                 final_result["finalizer_model_usage"] = finalizer_usage
             if finalizer_error or (finalizer_usage is not None
@@ -558,6 +576,7 @@ class AgentRunExecutor:
                     "candidate_reply_unverified": str(locals().get("reply") or "")[:4000],
                     "finalizer_model_usage": finalizer_usage,
                     "finalizer_error_code": finalizer_error,
+                    "assistant_message_id": assistant_message_id,
                 }
                 self.repository.mark_partial(
                     run_id, student_id=student_id, final_result=final_result,
@@ -960,6 +979,41 @@ class AgentRunExecutor:
             step_index=int(step["step_index"]),
             claim_token=claim_token,
         )
+        from .tool_event_contract import ToolEventContext
+
+        event_context = ToolEventContext(
+            run_id=str(run_id),
+            student_id=str(student_id),
+            session_id=str(session_id),
+            claim_token=claim_token,
+            plan_version=int(plan["plan_version"]),
+            contract_revision=(task_contract.revision if task_contract else 0),
+            step_index=int(step["step_index"]),
+            attempt=int(step.get("attempts") or 0) + 1,
+            allowed_tool_names=frozenset(_RUN_QA_TOOL_ALLOWLIST),
+        )
+
+        def append_tool_event(event_type, payload):
+            return self.repository.append_tool_call_event(
+                run_id,
+                student_id=student_id,
+                session_id=session_id,
+                claim_token=claim_token,
+                plan_version=int(plan["plan_version"]),
+                contract_revision=(task_contract.revision if task_contract else 0),
+                step_index=int(step["step_index"]),
+                attempt=event_context.attempt,
+                allowed_tool_names=event_context.allowed_tool_names,
+                event_type=event_type,
+                payload=payload,
+            )
+
+        def invoke_with_tool_events(*args, **kwargs):
+            if kwargs.get("allow_tools", True):
+                kwargs["tool_event_context"] = event_context
+                kwargs["tool_event_sink"] = append_tool_event
+            return _invoke_subagent(*args, **kwargs)
+
         self._renew_or_stop(run_id, claim_token)
         usage_ledger = None
         education_conditions_record = None
@@ -1212,17 +1266,17 @@ class AgentRunExecutor:
                     from .student_task import run_step
                     output = run_step(mysql=self.repository.mysql, snapshot=snapshot, run_id=run_id,
                         owner=student_id, session_id=session_id, repository=self.repository,
-                        claim_token=claim_token, invoke=_invoke_subagent, packet=packet, board=board)
+                        claim_token=claim_token, invoke=invoke_with_tool_events, packet=packet, board=board)
                     student_task_result = output['student_task']
                 elif capability is not None and capability.execution_pipeline == 'career_exploration_companion_v1':
                     from ..career_exploration_analysis import run_analysis_step
                     output = run_analysis_step(mysql=self.repository.mysql, run_id=run_id,
                         sid=student_id, repository=self.repository, claim_token=claim_token,
-                        invoke=_invoke_subagent, packet=packet, board=board,
+                        invoke=invoke_with_tool_events, packet=packet, board=board,
                         session_id=session_id, mode=interaction_mode)
                     exploration_analysis = output['exploration_analysis']
                 else:
-                    output = _invoke_subagent(
+                    output = invoke_with_tool_events(
                         packet,
                         board,
                         session_id or None,
