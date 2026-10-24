@@ -30,6 +30,8 @@ class UserAccount(Base):
     role = Column(String(20), nullable=False, default='student', comment='student/teacher/admin')
     status = Column(String(20), nullable=False, default='active', comment='active/disabled')
     auth_epoch = Column(BigInteger, nullable=False, default=0, comment='登录会话失效代数')
+    profile_revision = Column(BigInteger, nullable=False, default=0, server_default='0',
+                              comment='个人资料并发版本')
     class_id = Column(String(64), comment='→ class_info.id (学生所属班级)')
     signature = Column(String(255), comment='个性签名')
     last_login_at = Column(DateTime, comment='最近登录时间')
