@@ -759,6 +759,7 @@ CREATE TABLE IF NOT EXISTS user_account (
     role            VARCHAR(20)  NOT NULL DEFAULT 'student' COMMENT 'student/teacher/admin',
     status          VARCHAR(20)  NOT NULL DEFAULT 'active' COMMENT 'active/disabled',
     auth_epoch      BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '登录会话失效代数',
+    profile_revision BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '个人资料并发版本',
     class_id        VARCHAR(64)  DEFAULT NULL COMMENT '→ class_info.id (学生所属班级)',
     signature       VARCHAR(255) DEFAULT NULL COMMENT '个性签名',
     last_login_at   DATETIME     DEFAULT NULL COMMENT '最近登录时间',
@@ -770,6 +771,20 @@ CREATE TABLE IF NOT EXISTS user_account (
     INDEX idx_class (class_id),
     INDEX idx_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='统一账号表 (学生/教师/管理员)';
+
+-- User notification preferences record intent only; no sender is wired to these flags.
+CREATE TABLE IF NOT EXISTS user_account_notification_preference (
+    user_id         VARCHAR(64) NOT NULL PRIMARY KEY,
+    email_preference BOOLEAN DEFAULT NULL,
+    system_preference BOOLEAN DEFAULT NULL,
+    sms_preference  BOOLEAN DEFAULT NULL,
+    revision        BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    created_at      DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at      DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+                    ON UPDATE CURRENT_TIMESTAMP(6),
+    CONSTRAINT fk_user_account_notification_preference_user
+        FOREIGN KEY (user_id) REFERENCES user_account(id) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户通知接收偏好（不触发投递）';
 
 
 -- 6.2 class_info (班级信息)

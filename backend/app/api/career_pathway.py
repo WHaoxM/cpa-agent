@@ -3,6 +3,7 @@ from flask import jsonify, request
 from . import career_bp
 from ..services.db import get_mysql_client, get_neo4j_client, get_milvus_client
 from ..services.career_pathway import read_pathway
+from ..services.career_relations import read_current_graph
 from ..utils.logger import get_logger
 
 logger = get_logger('cpa-agent.api.career_pathway')
@@ -11,6 +12,18 @@ logger = get_logger('cpa-agent.api.career_pathway')
 def _still_current(payload):
     latest = read_pathway(get_mysql_client(), payload['role_id'])
     return latest is not None and all(latest[k] == payload[k] for k in ('revision', 'content_sha256'))
+
+
+@career_bp.route('/relationship-graph', methods=['GET'])
+def get_career_relationship_graph():
+    """Read the current stored graph of shared, evidence-backed pathway skills."""
+    try:
+        result = read_current_graph(get_mysql_client())
+        return jsonify(success=True, data=result)
+    except Exception:
+        logger.exception('Career relation graph unavailable')
+        return jsonify(success=False, reason='relationship_graph_unavailable',
+                       message='职业关联资料暂不可用，请稍后重试。'), 503
 
 
 @career_bp.route('/role-pathways/<role_id>', methods=['GET'])
