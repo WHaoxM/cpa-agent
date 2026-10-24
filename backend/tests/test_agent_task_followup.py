@@ -106,6 +106,7 @@ def test_quick_pause_and_cancel_commands_are_narrow_and_ambiguous_text_uses_mode
 
 def test_classifier_uses_strict_schema_and_current_contract_and_run_state(monkeypatch):
     captured = {}
+    message = "请在当前任务基础上，把时间安排改得更具体些。"
 
     class FakeClient:
         def chat(self, **kwargs):
@@ -118,7 +119,7 @@ def test_classifier_uses_strict_schema_and_current_contract_and_run_state(monkey
         lambda name: {"model": "test-classifier", "temperature": 0, "max_tokens": 700},
     )
     result = classify_task_followup(
-        "每周只有六小时",
+        message,
         contract=CONTRACT,
         run={"run_id": TASK_ID, "status": "paused", "current_plan": {
             "plan_version": 2, "goal_summary": "Eight-week plan",
@@ -130,7 +131,67 @@ def test_classifier_uses_strict_schema_and_current_contract_and_run_state(monkey
     schema = captured["response_format"]["json_schema"]
     assert schema["strict"] is True
     assert schema["schema"]["additionalProperties"] is False
+    assert "增加一题、一个示例" in captured["messages"][0]["content"]
+    assert "不要仅因用户要求先核对、不保存或保留结构而追问" in captured["messages"][0]["content"]
     user_payload = json.loads(captured["messages"][1]["content"])
     assert user_payload["current_task_contract"]["latest_constraints"] == []
     assert user_payload["current_task_state"]["plan_version"] == 2
-    assert user_payload["user_followup_message"] == "每周只有六小时"
+    assert user_payload["user_followup_message"] == message
+
+
+def test_explicit_current_plan_supplement_binds_verbatim_without_classifier(monkeypatch):
+    message = (
+        "请按当前任务修订计划：继续为虚构学生制定数据库事务隔离级别学习计划，保持恰好三步，"
+        "每步都有目标、行动、可验证完成标准。只用一般知识，不联网、不读取个人资料、绑定材料或历史记录；"
+        "仅修订计划，不执行资料读取，不保存 artifact，等待我确认。补充一道自测题，分别解释脏读与不可重复读，"
+        "各给一组两事务、各两步的时序示例、答案要点和可核验标准。"
+    )
+
+    monkeypatch.setattr(
+        "app.utils.llm_client.get_llm_client",
+        lambda: pytest.fail("clear current-plan supplement must not spend a classifier call"),
+    )
+    result = classify_task_followup(
+        message,
+        contract=CONTRACT,
+        run={"run_id": TASK_ID, "status": "completed", "current_plan": {
+            "plan_version": 1, "goal_summary": "Database isolation plan",
+            "steps": [{"goal": "Learn isolation phenomena", "status": "completed"}],
+        }},
+    )
+
+    assert result.intent is FollowupIntent.SUPPLEMENT
+    assert result.patch == {"acceptance_criteria": [message]}
+    assert "不联网" in result.patch["acceptance_criteria"][0]
+    assert "不读取个人资料" in result.patch["acceptance_criteria"][0]
+    assert "脏读与不可重复读" in result.patch["acceptance_criteria"][0]
+
+
+def test_mixed_task_intent_or_permission_relaxation_stays_on_classifier_path(monkeypatch):
+    captured = {}
+    calls = {"count": 0}
+
+    class FakeClient:
+        def chat(self, **kwargs):
+            calls["count"] += 1
+            captured.update(kwargs)
+            return json.dumps(_raw(intent="clarify", confidence=0.99,
+                                   ambiguous=True, patch={
+                "goal": "", "deliverables": [], "acceptance_criteria": [],
+                "constraint_updates": [], "add_constraints": [], "remove_constraints": [],
+            }, clarification_question="请确认要修改当前任务还是另开任务。"), ensure_ascii=False)
+
+    monkeypatch.setattr("app.utils.llm_client.get_llm_client", lambda: FakeClient())
+    monkeypatch.setattr(
+        "app.services.agent_runtime.model_router.route_model",
+        lambda name: {"model": "test-classifier", "temperature": 0, "max_tokens": 700},
+    )
+    for message in (
+        "请在当前计划补充一道题，也可能另开一个新任务。",
+        "请在当前计划补充一道题，并允许读取我的个人资料。",
+    ):
+        result = classify_task_followup(message, contract=CONTRACT,
+                                        run={"run_id": TASK_ID, "status": "completed"})
+        assert result.intent is FollowupIntent.CLARIFY
+    assert calls["count"] == 2
+    assert len(captured["messages"]) == 2

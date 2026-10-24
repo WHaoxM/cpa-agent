@@ -640,6 +640,8 @@ def _invoke_subagent(
     student_id: Optional[str] = None,
     plan_tool_allowlist: Optional[set] = None,
     allow_artifact_commit: bool = True,
+    max_tokens: int = 2048,
+    no_tool_output_token_cap: Optional[int] = None,
 ):
     kwargs = dict(
         allow_tools=allow_tools,
@@ -650,7 +652,10 @@ def _invoke_subagent(
         allow_artifact_commit=allow_artifact_commit,
     )
     if not allow_tools or interaction_mode == InteractionMode.ASK:
-        out = scoped_invoke(packet, blackboard, **kwargs)
+        out = scoped_invoke(
+            packet, blackboard, max_tokens=max_tokens,
+            no_tool_output_token_cap=no_tool_output_token_cap, **kwargs,
+        )
     elif packet.subagent in BUSINESS_SUBAGENTS:
         try:
             out = invoke_subagent_graph(

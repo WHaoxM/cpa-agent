@@ -6,6 +6,8 @@
 
 资源入口提供**只读、按 Principal 归属、按资源版本、按 section 分页**的合同。它不复制业务状态、不把整份业务资料写进会话黑板、不把 `partial` 或草稿说成已发布成果。`resource_catalog.py` 组合简历画像、简历诊断报告、岗位匹配报告、个人成果四个领域适配器；某领域不可用时目录显式 `partial/unavailable_sources`，不误称该领域没有数据。会话每轮从权威 DB 刷新目录摘要；Agent/Experts 的相关子 Agent 按需调用 `career_data_read`。Ask 现经同一目录的有界 EvidencePack 读取所需 section 后回答，不开放这些通用业务工具；完整度仍由 coverage/分页表达，不能把首批证据说成全文。
 
+当 coverage 提供整数 `returned/total` 且 `has_more=true` 时，用户可见依据摘要同时给出已读比例和尚余数量，不能只笼统说明“还有后续资料”。续读游标仍由服务端绑定当前 owner/session；答复不公开内部 offset 或版本。
+
 ## 开源复用记录
 
 本地参考仓库：
@@ -64,10 +66,43 @@ D:\Miniconda\miniconda3\envs\mkg\python.exe -B -m pytest backend/tests/test_agen
 
 宿主机后端 `127.0.0.1:5001` 重启后，以 `X-Dev-Student-Id: student_001` 的真实 HTTP Ask 请求“列出已确认资料前 10 项技能、来源和下一页”：`tool_calls=[]`，回复列出的 10 项与 `career://me/resume` 的权威 `skills` 前 10 项逐项一致；证据状态 `returned=10,total=35,has_more=true,next_offset=10`，来源版本 `task_56edb2e94056`，回合 `completed` 只表示这一问答结束。改变唯一变量为 `student_other`，没有返回前述技能，回合 `partial`/`retry_evidence`。临时会话已删除。首次重启探针曾因模型产生无效资源选择而错误声称用户无资料；已改为短 ID 映射及失败关闭，并在本次重启 HTTP 回放通过。仍需多问句/多轮稳定性、模型建议事实性和前端展示验收，不能从单次成功推断全面可靠。
 
+## 2026-10-23 Ask 历史卡片的后续引用
+
+会话历史投影保留助手消息的 `message_id` 与 `parts_v1`；Ask 只从当前登记的 `data_card` schema v1 恢复最近的有界快照，为后续提问提供卡片 ID/schema 版本、条目序号、实体 ID/版本、来源和卡片展示值。长值会带 `value_truncated`，不支持或不合 schema 的旧卡片标记为 unavailable；快照是历史展示状态，不代表当前业务事实或访问权限。超过有界预算时显式标记被省略的卡片或条目。服务端接入由以下后端测试验证：
+
+开源对照沿用本机 OpenCode commit `388406238bd5ca15564a762840a2362c3a45bd9c`（MIT）的 `packages/opencode/src/session/message-v2.ts` typed message parts 与 `session/compaction.ts` 的有界工具输出处理，以及 Codex 快照 `a06545b311fe01e51ce855c7aa5d8da21e9e7aaf`（Apache-2.0）`codex-rs/core/src/compact.rs` 中 compaction checkpoint 与历史项 ID 保持一致的原则。这里仅适配现有 `conversation_message.thinking_json.parts_v1` 和模型调用前置预算；不另建消息存储或压缩引擎。组件/实体 ID 只用于会话内引用，不能当作读取授权。
+
+```powershell
+D:\Miniconda\miniconda3\envs\mkg\python.exe -B -m pytest backend/tests/test_ask_readonly_loop.py backend/tests/test_ask_evidence_surface.py backend/tests/test_agent_runtime_isolation.py backend/tests/test_agent_turn_contract.py backend/tests/test_context_assembler.py backend/tests/test_public_skill_partition.py -q --tb=short
+```
+
+2026-10-23 结果：`98 passed, 1 skipped, 2 warnings`。其中 100 轮连续性用合成会话验证了最近 16 条普通历史加早期已持久化卡片引用的组装；模型与读取工具使用替身，消息存储测试使用 MySQL stub。它不是 100 次真实 HTTP、真库、真实模型或真实前端回放。
+
+本轮新增 `component_snapshot_read` 与 `component_snapshot_discover`：服务端即使因上下文预算省略了组件 ID，只要当前 owner/session 下仍有已保存卡片，就可先发现稳定 ID/schema 版本，再按组件 ID读历史快照或按实体 ID/version读条目。工具闭包绑定当前 `student_id/session_id`，只从该会话助手消息的 `parts_v1` 读取，并重新过 schema v1 校验；跨 owner 返回不可用，旧版本不匹配不会静默返回新值。普通聊天历史也新增 owner/session 绑定的搜索与 message ID 精确回读，用于摘要/近期窗口之外的历史查找；历史原文是可引用的对话记录，不是独立事实证据。测试走 `scoped_invoke`→PreToolUse→工具→模型工具消息链，会话与模型均为合成替身，没有验证真实 Redis/MySQL 重进恢复或真实 UI。
+
+最近 16 条仍是普通消息窗口，较早消息不从会话存储删除。连续性摘要与结构化 `conversation_state_v1` 按最多 20 条连续批次独立推进游标；结构状态包括当前目标、有效约束、确认决定、未决问题和被取代状态。每条状态事实必须给出原 user 消息 ID 和逐字引用，服务端校验 schema、用户角色、引用确实存在、消息范围及纠正先后顺序，不合格状态不推进游标。消费端把摘要和结构状态均标作未验证历史线索，当前用户的新纠正仍优先。旧消息可按需搜索/精确回读，但该检索不是自由事实来源。此改进以假模型与合成会话验证，不等于真实模型 100 轮连续性。
+
+本次组件、摘要与 provider 边界测试：
+
+```powershell
+D:\Miniconda\miniconda3\envs\mkg\python.exe -B -m pytest backend/tests/test_ask_readonly_loop.py backend/tests/test_ask_evidence_surface.py backend/tests/test_agent_runtime_isolation.py backend/tests/test_agent_turn_contract.py backend/tests/test_context_assembler.py backend/tests/test_public_skill_partition.py backend/tests/test_ask_component_snapshot_read.py backend/tests/test_ask_summary_state.py backend/tests/test_ask_history_lookup.py backend/tests/test_ask_structured_conversation_state.py backend/tests/test_ask_public_web_search_adapter.py -q --tb=short
+```
+
+最新结果：`122 passed, 1 skipped, 2 warnings`。测试使用合成会话、MySQL stub、假模型和假 provider；没有真实联网/真实模型/真实前端回放。OpenCode commit `388406238bd5ca15564a762840a2362c3a45bd9c`（MIT）的 `packages/opencode/src/tool/websearch.ts` 与 `mcp-websearch.ts` 采用 schema 约束、服务端 provider 选择和有界超时；CPA-Agent 只复用“server-selected provider + typed 参数 + 明确预算”的边界思路，不复用其登录/确认流。
+
+联网实现现有明确 provider：`TavilySearchProvider` 使用官方 `POST https://api.tavily.com/search`，只从服务器 `TAVILY_API_KEY` 读取 Bearer 凭据，固定 `basic`、最多 5 条、关闭自动参数/模型答案/原始网页内容并请求发布日期；每个 Ask 工具循环最多 3 次请求，每次基本搜索官方标价为 1 credit，超时/限流/配额/API 错误在本轮熔断，不继续花费额度。工具日志不保存原始查询，明显个人标识/简历语句/常见密钥格式在发出前拒绝；模型只有在服务端有凭据时才获得该只读工具，是否需要搜索由主模型判断。官方契约和额度见 [Tavily Search API](https://docs.tavily.com/documentation/api-reference/endpoint/search) 与 [API credits](https://docs.tavily.com/documentation/api-credits)；查询会传给 provider，参见 [Tavily Privacy Policy](https://tavily.com/privacy)，因此仍不得把简历、联系方式、个人经历或秘密放入查询。当前执行环境未配置 `TAVILY_API_KEY`，没有真实 API 调用；测试均为注入的假 provider。
+
+## 2026-10-24 Ask 回答事实边界
+
+一次真实 QA Ask 回放发现模型把没有来源的“≤45分钟”作为适用规则。基座提示现要求区分事实、一般知识和建议；没有依据时不虚构数字、时长、统计或来源，适用范围不明时将建议表达为有条件的判断。一次真实 Qwen 纠正回答已改为明确标注一般尝试方法、说明适用性取决于课程内容与可用时间，并在同一会话重新打开后恢复。该结果只证明这条合成场景的修订与历史恢复，不证明普遍事实正确性；联网搜索未配置，未读取个人资料。实际页面回放与限制见[当日 QA 报告](../reports/2026-10-24-qa-ask-agent-ui-replay.md)。
+
 ## 尚未覆盖
 
 - Ask 已能按 section 读取有界证据，但不是无上限全文读取；多页续读、其它业务资源和 Agent/Experts 对同一 EvidencePack 的复用尚未逐一完成真实验收。Ask 的长附件路径仍保留历史 `attachment_read` 只读例外，尚未全部收束到 EvidencePack。
+- Tavily 适配器、工具注册、按 provider 可用性授予 Ask 和查询隐私检查已实现，但此环境没有 `TAVILY_API_KEY`，仍未做真实联网联调；免费额度/账户状态也未由 provider 确认。要启用需由受信部署管理员在服务器环境安全配置 `TAVILY_API_KEY`，不得写入模型参数或日志；免费 key 额度用完后由 provider 拒绝，本轮熔断并如实报告，不自动升级或支付。`graph_query` 仍只读受限本地图谱，不能代称网络检索。Skill registry 有审核版本与角色边界；`qa` 当前仅有不需 capability 的 `school-context`，教育筛选 Skill 需要受限 capability，因此没有安全扩展到其它技能。本轮保持学校术语的按需选择，不把窄选择器宣称为一般 Skill 选择。
 - 当前可信真实岗位目录仍为空，因此真实学生的**岗位匹配与岗位专项报告**仍无可发布成果；这不阻断独立的已确认简历诊断报告。合成 MySQL 正链只验证岗位适配器和来源撤回门禁。
 - 学习进度记录能标出缺少课程/章节源，尚不能证明课程内容质量；收藏岗位为用户保存数据，不可进入可信匹配目录。公共图谱继续由 `graph_query` 的 PublicSkill/CareerNode 门禁读取，个人图谱已有独立 owner-scoped 快照与查询；Ask 当前技能正链读取的是已确认简历结构资料，不是假称读取个人图谱。
 - 前端已将职途导航、画像视图与真实已保存学习计划接入引用交接；其它功能页仍需逐页验收。Ask 的用户可见证据覆盖信息与续读交互尚需 UI 验证；模型逐句事实性与真实推荐来源另行验收。
 - 会话黑板缓存不是业务真相；跨页更新后的当前版本以每次 DB 回读为准。后台 DB 不可用时应呈现不可用，而不能沿用旧会话摘要假装成功。
+
+2026-10-23 Ask 历史快照/长会话离线回归验证旧卡片发现、owner/session 绑定、精确实体版本读取及序列化恢复。该测试使用合成内存会话，不证明 Redis/MySQL 持久恢复或真实页面回放；逐项结果见[Ask 离线验收清单](../reports/2026-10-23-ask-offline-acceptance.md)。

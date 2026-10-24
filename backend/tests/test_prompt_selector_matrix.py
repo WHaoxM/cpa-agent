@@ -52,6 +52,16 @@ def test_prompt_selector_matrix_routes(key, expected_ids):
     assert bundle.cache_key
 
 
+def test_ask_prompt_distinguishes_verified_facts_from_general_knowledge():
+    bundle = get_prompt_selector().select(
+        PromptSelectionKey("supervisor", InteractionMode.ASK, "text"),
+    )
+    assert "只有当前用户明确提供的信息，或本轮实际读取并能指出来源的内容，才标为已核实事实" in bundle.system
+    assert "不得捏造具体数字、时间阈值、统计频率、研究结论、来源或个人偏好" in bundle.system
+    assert "没有依据时避免“任何/所有/必然/一定”等绝对适用性表述" in bundle.system
+    assert "可选示例或假设" in bundle.system
+
+
 def test_ask_attachment_route_never_loads_internal_qa_prompt():
     bundle = get_prompt_selector().select(
         PromptSelectionKey("subagent", InteractionMode.ASK, "attachment", "qa")

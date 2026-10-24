@@ -137,6 +137,29 @@ def test_persistent_qa_tool_allowlist_excludes_writes_and_unbound_resources():
     assert "pipeline_run" not in _RUN_QA_TOOL_ALLOWLIST
 
 
+def test_checkpoint_thread_id_is_stable_per_contract_revision_and_legacy_compatible():
+    from app.services.agent_runtime.agent_run_executor import _checkpoint_thread_id
+
+    run_id = "run_" + "a" * 32
+    student_id = "student-a"
+    legacy = _checkpoint_thread_id(run_id, student_id)
+
+    # Revision one keeps the old durable key so in-flight legacy runs resume.
+    assert _checkpoint_thread_id(run_id, student_id, contract_revision=1) == legacy
+    # A completed revision's end-of-graph checkpoint must not short-circuit a
+    # new user-approved revision; retries within that revision remain stable.
+    revision_two = _checkpoint_thread_id(run_id, student_id, contract_revision=2)
+    assert revision_two != legacy
+    assert revision_two == _checkpoint_thread_id(
+        run_id, student_id, contract_revision=2,
+    )
+    assert _checkpoint_thread_id(
+        run_id, student_id, contract_revision=3,
+    ) != revision_two
+    with pytest.raises(ValueError):
+        _checkpoint_thread_id(run_id, student_id, contract_revision=0)
+
+
 def test_incomplete_step_persists_only_redacted_tool_cards(monkeypatch):
     from app.services.agent_runtime import mode_runtime
     from app.services.agent_runtime.agent_run_executor import _safe_tool_call_cards
@@ -703,3 +726,451 @@ def test_task_budget_totals_seed_every_phase_and_survive_worker_resume():
     })
     assert provider_overrun["status"] == "unverified"
     assert provider_overrun["reason"] == "turn_token_cap_exceeded"
+
+
+def test_planner_never_claims_bound_material_reads_when_user_forbids_them(monkeypatch):
+    from app.services.agent_runtime import agent_run_executor, experts_lead
+    from app.services.agent_runtime.expert_capabilities import resolve_explicit_capability
+
+    class PlanningRepository(_Repository):
+        def __init__(self):
+            super().__init__()
+            self.plan = None
+
+        def begin_planning(self, *_args, **_kwargs):
+            return {"status": "planning"}
+
+        def persist_plan(self, _run_id, **kwargs):
+            self.plan = kwargs
+
+    repository = PlanningRepository()
+    executor = AgentRunExecutor(repository, _Dispatch())
+    message = "为虚构学生解释数据库隔离级别；不联网，不读取资料，不执行操作。"
+    snapshot = {
+        "message": message,
+        "interaction_mode": "experts",
+        "expert_id": "task-coordinator",
+        "capability_id": "student-task",
+    }
+    capability = resolve_explicit_capability(snapshot)
+    stable_base = {"version": "fixture"}
+    monkeypatch.setattr(agent_run_executor, "_base_runtime_release", lambda: stable_base)
+    monkeypatch.setattr(agent_run_executor, "_runtime_release", lambda *_args, **_kwargs: {
+        "base": stable_base, "release_sha256": "fixture", "skills": [],
+    })
+    monkeypatch.setattr(
+        experts_lead, "experts_lead_decide",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("planner must not run")),
+    )
+
+    done = executor._plan(
+        "run_" + "a" * 32, "owner_a", "b" * 32, snapshot,
+        {"current_plan_version": 0}, capability=capability,
+    )
+
+    assert done is False
+    assert repository.plan["goal_summary"] == message
+    step = repository.plan["steps"][0]
+    assert step["role"] == "qa"
+    from app.services.agent_runtime.resource_access_policy import no_read_safe_goal
+    assert step["goal"] == no_read_safe_goal()
+    assert not any(word in step["goal"] for word in ("读取绑定的探索资料", "真实资料"))
+
+
+@pytest.mark.parametrize(
+    ("selection", "interaction_mode", "expected_skills"),
+    [
+        ({}, "agent", []),
+        ({"expert_id": "career-coach", "capability_id": "career-exploration"}, "experts", []),
+        ({"expert_id": "career-coach", "capability_id": "career-planning"}, "experts", []),
+        ({"expert_id": "career-coach", "capability_id": "education-screening"},
+         "experts", ["education-screening-context"]),
+        ({"expert_id": "career-coach", "capability_id": "education-screening-structured"},
+         "experts", ["education-screening-context"]),
+        ({"expert_id": "career-coach", "capability_id": "education-screening-structured-v3"},
+         "experts", ["education-screening-context"]),
+        ({"expert_id": "career-coach", "capability_id": "education-screening-structured-v4"},
+         "experts", ["education-screening-context"]),
+        ({"expert_id": "career-coach", "capability_id": "education-screening-structured-v5"},
+         "experts", ["education-screening-context"]),
+    ],
+)
+def test_no_read_plan_is_server_owned_for_generic_and_specialized_capabilities(
+    monkeypatch, selection, interaction_mode, expected_skills,
+):
+    from app.services.agent_runtime import agent_run_executor, experts_lead
+    from app.services.agent_runtime.expert_capabilities import resolve_explicit_capability
+    from app.services.agent_runtime.resource_access_policy import (
+        no_read_safe_goal, validate_no_read_plan,
+    )
+
+    class PlanningRepository(_Repository):
+        def __init__(self):
+            super().__init__()
+            self.plan = None
+
+        def begin_planning(self, *_args, **_kwargs):
+            return {"status": "planning"}
+
+        def persist_plan(self, _run_id, **kwargs):
+            self.plan = kwargs
+
+    message = "为虚构学生解释数据校验的三种方法；不联网，不读取资料，不执行操作。"
+    snapshot = {"message": message, "interaction_mode": interaction_mode, **selection}
+    capability = resolve_explicit_capability(snapshot)
+    repository = PlanningRepository()
+    executor = AgentRunExecutor(repository, _Dispatch())
+    base = {"version": "fixture"}
+    monkeypatch.setattr(agent_run_executor, "_base_runtime_release", lambda: base)
+    monkeypatch.setattr(agent_run_executor, "_runtime_release", lambda *_args, **_kwargs: {
+        "base": base, "release_sha256": "fixture", "skills": [],
+    })
+    monkeypatch.setattr(
+        experts_lead, "experts_lead_decide",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("planner must not run")),
+    )
+
+    assert executor._plan(
+        "run_" + "7" * 32, "owner_a", "8" * 32, snapshot,
+        {"current_plan_version": 0}, capability=capability,
+    ) is False
+    steps = repository.plan["steps"]
+    assert validate_no_read_plan(capability, steps)
+    assert steps[0]["goal"] == no_read_safe_goal()
+    assert steps[0]["skill_ids"] == expected_skills
+
+
+def test_allowed_career_exploration_read_remains_available_without_no_read_constraint(monkeypatch):
+    from app.services.agent_runtime import agent_run_executor
+    from app.services.agent_runtime.expert_capabilities import resolve_explicit_capability
+
+    class PlanningRepository(_Repository):
+        def __init__(self):
+            super().__init__()
+            self.plan = None
+
+        def begin_planning(self, *_args, **_kwargs):
+            return {"status": "planning"}
+
+        def persist_plan(self, _run_id, **kwargs):
+            self.plan = kwargs
+
+    snapshot = {
+        "message": "读取我绑定的探索资料，帮我比较当前选择。",
+        "interaction_mode": "experts",
+        "expert_id": "career-coach",
+        "capability_id": "career-exploration",
+    }
+    capability = resolve_explicit_capability(snapshot)
+    repository = PlanningRepository()
+    executor = AgentRunExecutor(repository, _Dispatch())
+    base = {"version": "fixture"}
+    monkeypatch.setattr(agent_run_executor, "_base_runtime_release", lambda: base)
+    monkeypatch.setattr(agent_run_executor, "_runtime_release", lambda *_args, **_kwargs: {
+        "base": base, "release_sha256": "fixture", "skills": [],
+    })
+
+    assert executor._plan(
+        "run_" + "9" * 32, "owner_a", "a" * 32, snapshot,
+        {"current_plan_version": 0}, capability=capability,
+    ) is False
+    assert "读取绑定的探索资料" in repository.plan["steps"][0]["goal"]
+
+
+def test_no_read_personalized_request_waits_for_user_supplied_context(monkeypatch):
+    from app.services.agent_runtime import agent_run_executor, experts_lead
+    from app.services.agent_runtime.expert_capabilities import resolve_explicit_capability
+
+    class PlanningRepository(_Repository):
+        def __init__(self):
+            super().__init__()
+            self.waiting = []
+            self.persisted = False
+
+        def begin_planning(self, *_args, **_kwargs):
+            return {"status": "planning"}
+
+        def set_waiting_status(self, run_id, **kwargs):
+            self.waiting.append((run_id, kwargs))
+
+        def persist_plan(self, *_args, **_kwargs):
+            self.persisted = True
+
+    repository = PlanningRepository()
+    executor = AgentRunExecutor(repository, _Dispatch())
+    snapshot = {
+        "message": "不要读取我的简历；请结合我的经历推荐适合我的职业方向。",
+        "interaction_mode": "experts",
+        "expert_id": "task-coordinator",
+        "capability_id": "student-task",
+    }
+    capability = resolve_explicit_capability(snapshot)
+    monkeypatch.setattr(
+        experts_lead, "experts_lead_decide",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("planner must not run")),
+    )
+
+    done = executor._plan(
+        "run_" + "9" * 32, "owner_a", "8" * 32, snapshot,
+        {"current_plan_version": 0}, capability=capability,
+    )
+
+    assert done is True
+    assert not repository.persisted
+    assert repository.waiting[0][1]["status"] == "waiting_input"
+    assert "不会访问绑定资料" in repository.waiting[0][1]["reason"]
+
+
+def test_no_read_student_task_bypasses_personal_pipeline_and_tools(monkeypatch):
+    from app.services.agent_runtime import mode_runtime, student_task, task_context
+    from app.services.agent_runtime.budget import (
+        record_model_call, require_turn_token_capacity,
+    )
+    from app.services.agent_runtime.agent_task_control import TaskBudget, TaskContract
+
+    class Repository(_Repository):
+        def __init__(self):
+            super().__init__()
+            self.mysql = object()
+            self.receipt_checks = 0
+
+        def has_completed_resource_read_for_step(self, *_args, **_kwargs):
+            self.receipt_checks += 1
+            return False
+
+    staged = []
+
+    class TaskContextStore:
+        def __init__(self, _mysql):
+            pass
+
+        def stage(self, session_id, owner, run_id, result):
+            staged.append((session_id, owner, run_id, result))
+
+    repository = Repository()
+    executor = AgentRunExecutor(repository, _Dispatch())
+    seen = {}
+
+    def invoke(packet, board, session_id, **kwargs):
+        seen.update({
+            "packet": packet.to_dict(),
+            "board": board.to_dict(),
+            "session_id": session_id,
+            "kwargs": kwargs,
+        })
+        require_turn_token_capacity(10, estimated_input_tokens=10)
+        record_model_call(
+            provider="openai", model="gpt-4o-mini", stage="no-read-fixture",
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            preflight=_fixture_preflight(), finish_reason="stop",
+        )
+        return {"reply": "数据库隔离级别用于控制并发事务可见性。", "tool_calls": [],
+                "skill_versions": []}
+
+    monkeypatch.setattr(mode_runtime, "_invoke_subagent", invoke)
+    monkeypatch.setattr(task_context, "TaskContextStore", TaskContextStore)
+    monkeypatch.setattr(student_task, "run_step", lambda **_kwargs: (_ for _ in ()).throw(
+        AssertionError("personal task pipeline must not run"),
+    ))
+    monkeypatch.setattr(executor, "_release_matches", lambda *_args: True)
+    monkeypatch.setattr(executor, "_claim_and_account_current", lambda *_args: True)
+    snapshot = {
+        "message": "为虚构学生解释数据库隔离级别；不联网，不读取资料，不执行操作。",
+        "interaction_mode": "experts",
+        "expert_id": "task-coordinator",
+        "capability_id": "student-task",
+    }
+    plan = _plan()
+    from app.services.agent_runtime.resource_access_policy import no_read_safe_goal
+    plan["steps"][0]["goal"] = no_read_safe_goal()
+    contract = TaskContract(
+        task_id="run_" + "c" * 32,
+        revision=2,
+        goal="解释数据库隔离级别并保持三步结构",
+        deliverables=("三步计划",),
+        constraints=("补充一道判断脏读与不可重复读的自测题", "不读取任何资料"),
+        acceptance_criteria=("给出自测题及答案",),
+        reads=(),
+        writes=(),
+        budget=TaskBudget(
+            max_model_calls=4, max_tool_calls=0,
+            max_input_tokens=80_000, max_output_tokens=12_000,
+            max_call_input_tokens=24_000, max_call_output_tokens=4_000,
+            max_retries=1,
+        ),
+    )
+
+    done = executor._execute_step(
+        "run_" + "c" * 32, "owner_a", "d" * 32, snapshot, plan,
+        plan["steps"][0], board=__import__(
+            "app.services.agent_runtime.blackboard", fromlist=["Blackboard"],
+        ).Blackboard(), session_id="session_qa",
+        task_contract=contract,
+        task_token_cap=28_000,
+        task_usage={
+            "verified": True, "model_calls": 0, "tool_calls": 0,
+            "input_tokens": 0, "output_tokens": 0, "total_tokens": 0,
+        },
+    )
+
+    assert done is False, repository.failed
+    assert seen["session_id"] is None
+    assert seen["kwargs"]["student_id"] is None
+    assert seen["kwargs"]["allow_tools"] is False
+    assert seen["kwargs"]["max_tokens"] == 2048
+    assert seen["kwargs"]["no_tool_output_token_cap"] == 2048
+    assert seen["kwargs"]["plan_tool_allowlist"] == set()
+    assert seen["kwargs"]["allow_artifact_commit"] is False
+    assert seen["packet"]["read_keys"] == []
+    assert seen["packet"]["write_keys"] == []
+    assert seen["packet"]["skill_ids"] == []
+    assert "补充一道判断脏读与不可重复读的自测题" in seen["packet"]["goal"]
+    assert "给出自测题及答案" in seen["packet"]["goal"]
+    assert "不赋予资料读取或业务写入权限" in seen["packet"]["goal"]
+    assert repository.receipt_checks == 0
+    assert staged[0][1:3] == ("owner_a", "run_" + "c" * 32)
+    assert staged[0][3]["resource_access"] == "none"
+    assert repository.finished[0][1]["outcome"] == "completed"
+
+
+@pytest.mark.parametrize(
+    ("capability_id", "safe_skills", "release_key"),
+    [
+        ("career-planning", [], None),
+        ("education-screening", ["education-screening-context"], "education_pipeline"),
+        ("education-screening-structured", ["education-screening-context"],
+         "education_screening_structured_v2"),
+        ("education-screening-structured-v3", ["education-screening-context"],
+         "education_screening_structured_v3"),
+        ("education-screening-structured-v4", ["education-screening-context"],
+         "education_screening_structured_v4"),
+        ("education-screening-structured-v5", ["education-screening-context"],
+         "education_screening_structured_v5"),
+    ],
+)
+def test_no_read_specialized_education_capability_skips_owner_profile_pipeline(
+    monkeypatch, capability_id, safe_skills, release_key,
+):
+    from app.services.agent_runtime import (
+        agent_run_executor, education_screening, education_screening_structured_v2,
+        education_screening_structured_v3, education_screening_structured_v4,
+        education_screening_structured_v5, mode_runtime, school_facts,
+    )
+    from app.services.agent_runtime.budget import (
+        record_model_call, require_turn_token_capacity,
+    )
+    from app.services.agent_runtime.expert_capabilities import resolve_explicit_capability
+    from app.services.agent_runtime.resource_access_policy import no_read_safe_goal
+
+    repository = _Repository()
+    executor = AgentRunExecutor(repository, _Dispatch())
+    snapshot = {
+        "message": "解释学历门槛中的‘必须’和‘优先’有什么区别；不联网，不读取资料。",
+        "interaction_mode": "experts",
+        "expert_id": "career-coach",
+        "capability_id": capability_id,
+    }
+    capability = resolve_explicit_capability(snapshot)
+    assert capability is not None
+    plan = _plan()
+    if release_key:
+        plan["metadata"]["runtime_release"][release_key] = {"fixture": True}
+    plan["metadata"]["runtime_release"]["skills"] = [
+        {"skill_id": skill_id, "version": "0.3.0"} for skill_id in safe_skills
+    ]
+    plan["steps"][0].update({
+        "goal": no_read_safe_goal(),
+        "skill_ids": safe_skills,
+    })
+    seen = {}
+
+    def forbidden_read(*_args, **_kwargs):
+        raise AssertionError("no-read turn must not load owner school profile")
+
+    monkeypatch.setattr(school_facts, "read_owner_school_context", forbidden_read)
+    for module, function_name in (
+        (education_screening, "extract_education_conditions"),
+        (education_screening_structured_v2, "run_structured_education_step"),
+        (education_screening_structured_v3, "run_structured_education_step"),
+        (education_screening_structured_v4, "run_structured_education_step"),
+        (education_screening_structured_v5, "run_structured_education_step_v5"),
+    ):
+        monkeypatch.setattr(module, function_name, forbidden_read)
+
+    def invoke(packet, _board, session_id, **kwargs):
+        seen.update({
+            "packet": packet.to_dict(), "session_id": session_id,
+            "student_id": kwargs["student_id"], "allow_tools": kwargs["allow_tools"],
+            "allowlist": kwargs["plan_tool_allowlist"],
+        })
+        require_turn_token_capacity(10, estimated_input_tokens=10)
+        record_model_call(
+            provider="openai", model="gpt-4o-mini", stage="no-read-specialized-fixture",
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            preflight=_fixture_preflight(), finish_reason="stop",
+        )
+        return {"reply": "‘必须’描述门槛，‘优先’描述偏好；仍需核对完整原文。",
+                "tool_calls": [], "skill_versions": []}
+
+    monkeypatch.setattr(mode_runtime, "_invoke_subagent", invoke)
+    monkeypatch.setattr(executor, "_release_matches", lambda *_args: True)
+    monkeypatch.setattr(executor, "_claim_and_account_current", lambda *_args: True)
+    monkeypatch.setattr(executor, "_assert_skill_versions", lambda *_args: None)
+
+    assert executor._execute_step(
+        "run_" + "b" * 32, "owner_a", "c" * 32, snapshot, plan,
+        plan["steps"][0], board=__import__(
+            "app.services.agent_runtime.blackboard", fromlist=["Blackboard"],
+        ).Blackboard(), session_id="session_bound_should_not_pass",
+    ) is False, repository.failed
+    assert seen["packet"]["skill_ids"] == safe_skills
+    assert seen["packet"]["read_keys"] == []
+    assert seen["packet"]["write_keys"] == []
+    assert seen["session_id"] is None
+    assert seen["student_id"] is None
+    assert seen["allow_tools"] is False
+    assert seen["allowlist"] == set()
+    assert repository.finished[0][1]["outcome"] == "completed"
+
+
+def test_read_named_step_fails_closed_without_a_server_receipt(monkeypatch):
+    from app.services.agent_runtime import mode_runtime
+    from app.services.agent_runtime.budget import (
+        record_model_call, require_turn_token_capacity,
+    )
+
+    class Repository(_Repository):
+        def has_completed_resource_read_for_step(self, *_args, **_kwargs):
+            return False
+
+    repository = Repository()
+    executor = AgentRunExecutor(repository, _Dispatch())
+
+    def invoke(*_args, **_kwargs):
+        require_turn_token_capacity(10, estimated_input_tokens=10)
+        record_model_call(
+            provider="openai", model="gpt-4o-mini", stage="false-read-fixture",
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            preflight=_fixture_preflight(), finish_reason="stop",
+        )
+        return {"reply": "已经读取并分析了绑定资料。", "tool_calls": [],
+                "skill_versions": []}
+
+    monkeypatch.setattr(mode_runtime, "_invoke_subagent", invoke)
+    monkeypatch.setattr(executor, "_release_matches", lambda *_args: True)
+    monkeypatch.setattr(executor, "_claim_and_account_current", lambda *_args: True)
+    plan = _plan()
+    plan["steps"][0]["goal"] = "读取绑定资料并形成建议"
+
+    done = executor._execute_step(
+        "run_" + "e" * 32, "owner_a", "f" * 32,
+        {"message": "请读取绑定资料并形成建议", "interaction_mode": "agent"},
+        plan, plan["steps"][0], board=__import__(
+            "app.services.agent_runtime.blackboard", fromlist=["Blackboard"],
+        ).Blackboard(), session_id="session_read_receipt",
+    )
+
+    assert done is True
+    assert repository.finished[0][1]["outcome"] == "failed"
+    assert repository.finished[0][1]["error_code"] == "resource_read_result_unverified"
+    assert repository.failed[0][1]["error_code"] == "resource_read_result_unverified"

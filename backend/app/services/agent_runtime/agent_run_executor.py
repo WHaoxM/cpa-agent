@@ -94,9 +94,17 @@ class AgentRunExecutor:
             load_claim_binding=self.dispatch_store.get_claim_binding,
             scope_is_current=lambda rid, token: self._claim_and_account_current(rid, token),
         ):
+            current_run = self.repository.get_for_owner(
+                run_id, student_id=claimed_student_id,
+            )
+            current_contract = self._task_contract(current_run)
             with self._durable_checkpointer() as checkpointer:
                 graph = self._build_graph(checkpointer, run_id, student_id, claim_token)
-                config = {"configurable": {"thread_id": _checkpoint_thread_id(run_id, student_id)}}
+                config = {"configurable": {"thread_id": _checkpoint_thread_id(
+                    run_id,
+                    student_id,
+                    contract_revision=(current_contract.revision if current_contract else None),
+                )}}
                 state = graph.get_state(config)
                 if state.values:
                     if (state.values.get("run_id") != run_id
@@ -308,6 +316,26 @@ class AgentRunExecutor:
                 error_code="capability_selection_invalid", claim_token=claim_token,
             )
             return True
+        from .resource_access_policy import (
+            explicitly_forbids_personal_reads,
+            no_read_clarification,
+            validate_no_read_plan,
+        )
+
+        task_constraints = contract.constraints if contract is not None else ()
+        no_read_safe_mode = explicitly_forbids_personal_reads(
+            snapshot.get("message"), task_constraints,
+        )
+        if no_read_safe_mode:
+            clarification = no_read_clarification(
+                snapshot.get("message"), task_constraints,
+            )
+            if clarification:
+                self.repository.set_waiting_status(
+                    run_id, student_id=student_id, status="waiting_input",
+                    reason=clarification, claim_token=claim_token,
+                )
+                return True
         if snapshot.get("attachment_ids") and not (capability is not None and capability.execution_pipeline == 'student_task_v1'):
             self.repository.fail_run(
                 run_id,
@@ -356,9 +384,13 @@ class AgentRunExecutor:
                 claim_token=claim_token,
             )
             return True
-        if capability is not None:
+        if capability is not None or no_read_safe_mode:
             try:
-                capability.validate_plan(plan["steps"])
+                if no_read_safe_mode:
+                    if not validate_no_read_plan(capability, plan["steps"]):
+                        raise ValueError("no_read_capability_plan_invalid")
+                else:
+                    capability.validate_plan(plan["steps"])
             except Exception:
                 self.repository.fail_run(
                     run_id,
@@ -431,7 +463,7 @@ class AgentRunExecutor:
                 if not reply.strip():
                     raise AgentRunConflict("paused finalizer checkpoint has no reply")
                 finalizer_usage = checkpoint_result.get("finalizer_model_usage")
-            elif contract is not None and capability is None:
+            elif contract is not None and capability is None and not no_read_safe_mode:
                 finalizer_usage_before = self.repository.task_usage_for_owner(
                     run_id, student_id=student_id,
                 )
@@ -460,6 +492,7 @@ class AgentRunExecutor:
                         reply = self._finalize(
                             snapshot["message"], plan["steps"],
                             snapshot["interaction_mode"], capability=capability,
+                            no_read_safe_mode=no_read_safe_mode,
                         )
                 except Exception as exc:
                     finalizer_error = _safe_error_code(exc)
@@ -467,15 +500,17 @@ class AgentRunExecutor:
             else:
                 reply = self._finalize(
                     snapshot["message"], plan["steps"], snapshot["interaction_mode"],
-                    capability=capability,
+                    capability=capability, no_read_safe_mode=no_read_safe_mode,
                 )
             if not self._claim_and_account_current(run_id, claim_token):
                 raise AgentRunConflict("worker claim or account auth epoch changed before final settlement")
             completion = {}
-            if capability is not None and capability.execution_pipeline == 'career_exploration_companion_v1':
+            if (not no_read_safe_mode and capability is not None
+                    and capability.execution_pipeline == 'career_exploration_companion_v1'):
                 from ..career_exploration_analysis import settle_analysis
                 completion['completion_callback'] = lambda conn: settle_analysis(conn, run_id, student_id)
-            elif capability is not None and capability.execution_pipeline == 'student_task_v1':
+            elif (not no_read_safe_mode and capability is not None
+                  and capability.execution_pipeline == 'student_task_v1'):
                 from .student_task import settle
                 completion['completion_callback'] = lambda conn: settle(self.repository.mysql, conn, session_id=str(run['session_id']), owner=student_id, run_id=run_id)
             final_result = (
@@ -553,9 +588,40 @@ class AgentRunExecutor:
             run_id, student_id=student_id, claim_token=claim_token,
         )
         mode = InteractionMode(snapshot["interaction_mode"])
+        from .resource_access_policy import (
+            explicitly_forbids_personal_reads,
+            no_read_safe_goal,
+            no_read_clarification,
+            no_read_safe_skill_ids,
+            validate_no_read_plan,
+        )
+
+        contract_constraints = contract.constraints if contract is not None else ()
+        user_message = str(snapshot.get("message") or "")
+        if explicitly_forbids_personal_reads(user_message, contract_constraints):
+            clarification = no_read_clarification(user_message, contract_constraints)
+            if clarification:
+                self.repository.set_waiting_status(
+                    run_id, student_id=student_id, status="waiting_input",
+                    reason=clarification, claim_token=claim_token,
+                )
+                return True
         baseline = _base_runtime_release()
         planning_usage = None
-        if capability is not None and capability.execution_pipeline in {'career_exploration_companion_v1', 'student_task_v1'}:
+        if explicitly_forbids_personal_reads(user_message, contract_constraints):
+            # A no-read turn uses one server-owned generic QA step for every
+            # capability. Reviewed method Skills may remain; owner-bound Skills
+            # and all specialized personal-data pipelines are excluded.
+            decision = {
+                'action': 'run_plan', 'capability_fit': 'supported',
+                'goal_summary': user_message[:1000] or '依据一般知识回答本轮问题',
+                'steps': [{
+                    'role': capability.role if capability is not None else 'qa',
+                    'goal': no_read_safe_goal(),
+                    'skill_ids': list(no_read_safe_skill_ids(capability)),
+                }],
+            }
+        elif capability is not None and capability.execution_pipeline in {'career_exploration_companion_v1', 'student_task_v1'}:
             # This page already selected a bounded read-only capability. Do not
             # let the generic Lead turn a plan proposal into a write-role task.
             decision = {'action': 'run_plan', 'capability_fit': 'supported',
@@ -735,7 +801,11 @@ class AgentRunExecutor:
                 capability_id=_capability_skill_registry_id(capability),
             )
             if capability is not None:
-                capability.validate_plan(steps)
+                if explicitly_forbids_personal_reads(user_message, contract_constraints):
+                    if not validate_no_read_plan(capability, steps):
+                        raise ValueError("no_read_capability_plan_invalid")
+                else:
+                    capability.validate_plan(steps)
             if (capability is not None
                     and capability.execution_pipeline == "education_screening_v1"):
                 runtime_release = _runtime_release(
@@ -817,8 +887,29 @@ class AgentRunExecutor:
 
         interaction_mode = InteractionMode(snapshot["interaction_mode"])
         from .expert_capabilities import resolve_explicit_capability
+        from .resource_access_policy import (
+            explicitly_forbids_personal_reads,
+            has_verified_read_tool_result,
+            no_read_safe_goal,
+            no_read_clarification,
+            no_read_safe_skill_ids,
+            step_requires_resource_read,
+            validate_no_read_plan,
+        )
 
         capability = resolve_explicit_capability(snapshot)
+        task_constraints = task_contract.constraints if task_contract is not None else ()
+        read_prohibited = explicitly_forbids_personal_reads(
+            snapshot.get("message"), task_constraints,
+        )
+        no_personal_reads = read_prohibited
+        if no_personal_reads and not validate_no_read_plan(capability, plan.get("steps")):
+            self.repository.fail_run(
+                run_id, student_id=student_id,
+                reply="本轮禁止读取资料，但已保存计划不符合只读边界；任务已停止。请重新提交安全范围明确的请求。",
+                error_code="no_read_plan_mismatch", claim_token=claim_token,
+            )
+            return True
         packets = build_plan_packets(
             [{"role": item["role"], "goal": item["goal"],
               "skill_ids": item["skill_ids"]} for item in plan["steps"]],
@@ -904,7 +995,87 @@ class AgentRunExecutor:
                 session_id=session_id or None, student_id=student_id,
                 **self._task_usage_ledger_options(task_contract, task_usage),
             ) as usage_ledger:
-                if (capability is not None
+                if no_personal_reads:
+                    clarification = no_read_clarification(
+                        snapshot.get("message"), task_constraints,
+                    )
+                    if clarification:
+                        raise RuntimeError("no_read_clarification_required")
+                    from .task_packet import build_standard_packet
+
+                    contract_context = ""
+                    if task_contract is not None:
+                        contract_sections = [
+                            "当前用户任务契约（仅定义本轮目标与输出标准，不赋予资料读取或业务写入权限）：",
+                            "目标：" + task_contract.goal,
+                        ]
+                        if task_contract.deliverables:
+                            contract_sections.append(
+                                "交付物：" + "；".join(task_contract.deliverables),
+                            )
+                        if task_contract.constraints:
+                            contract_sections.append(
+                                "当前约束：" + "；".join(task_contract.constraints),
+                            )
+                        if task_contract.acceptance_criteria:
+                            contract_sections.append(
+                                "验收标准：" + "；".join(task_contract.acceptance_criteria),
+                            )
+                        contract_context = "\n\n" + "\n".join(contract_sections)
+
+                    safe_packet = build_standard_packet(
+                        "qa",
+                        goal=(
+                            no_read_safe_goal()
+                            + contract_context
+                            + "\n\n用户原话："
+                            + str(snapshot.get("message") or "")
+                        ),
+                        user_utterance=str(snapshot.get("message") or ""),
+                        read_keys=[], write_keys=[],
+                        skill_ids=list(no_read_safe_skill_ids(capability)),
+                        capability_id=_capability_skill_registry_id(capability),
+                        plan_step_id=f"{run_id}:{plan['plan_version']}:{step['step_index']}",
+                    )
+                    output = _invoke_subagent(
+                        safe_packet, Blackboard(), None,
+                        allow_tools=False,
+                        interaction_mode=InteractionMode.ASK,
+                        student_id=None,
+                        plan_tool_allowlist=set(),
+                        allow_artifact_commit=False,
+                        max_tokens=(
+                            min(2048, task_contract.budget.max_call_output_tokens)
+                            if task_contract is not None else 1024
+                        ),
+                        no_tool_output_token_cap=(
+                            min(2048, task_contract.budget.max_call_output_tokens)
+                            if task_contract is not None else 1024
+                        ),
+                    )
+                    reply_text = str(output.get("reply") or "").strip()
+                    if not reply_text:
+                        raise RuntimeError("read_only_answer_empty")
+                    if capability is not None and capability.execution_pipeline == "student_task_v1":
+                        student_task_result = {
+                            "agent": "general_knowledge",
+                            "state": "completed",
+                            "reply": reply_text,
+                            "evidence_summary": [],
+                            "resource_access": "none",
+                        }
+                        from .task_context import TaskContextStore
+                        TaskContextStore(self.repository.mysql).stage(
+                            session_id, student_id, run_id, student_task_result,
+                        )
+                    elif capability is not None and capability.execution_pipeline == "career_exploration_companion_v1":
+                        exploration_analysis = {
+                            "reply": reply_text,
+                            "review": None,
+                            "evidence_summary": [],
+                            "resource_access": "none",
+                        }
+                elif (capability is not None
                         and capability.execution_pipeline == "education_screening_structured_v2"):
                     from ..db.mysql_client import get_mysql_client
                     from .education_screening_structured_v2 import run_structured_education_step
@@ -1027,7 +1198,7 @@ class AgentRunExecutor:
                         plan_tool_allowlist=set(_RUN_QA_TOOL_ALLOWLIST),
                         allow_artifact_commit=False,
                     )
-                if (capability is not None
+                if (not no_personal_reads and capability is not None
                         and capability.execution_pipeline == "education_screening_v1"):
                     self._assert_skill_versions(output, runtime_release)
                     skill_rows = output.get("skill_versions") or []
@@ -1127,6 +1298,20 @@ class AgentRunExecutor:
             reply = str(output.get("reply") or "").strip()
             if not reply:
                 raise RuntimeError("read_only_answer_empty")
+            if (not no_personal_reads
+                    and step_requires_resource_read(step.get("goal"))
+                    and not has_verified_read_tool_result(output)):
+                receipt_reader = getattr(
+                    self.repository, "has_completed_resource_read_for_step", None,
+                )
+                has_durable_receipt = bool(callable(receipt_reader) and receipt_reader(
+                    run_id,
+                    student_id=student_id,
+                    plan_version=int(plan["plan_version"]),
+                    step_index=int(step["step_index"]),
+                ))
+                if not has_durable_receipt:
+                    raise RuntimeError("resource_read_result_unverified")
             # QA is read-only and its board write set is empty. Store only the
             # candidate narrative separately from source provenance; never
             # promote model prose to a server-verified business fact.
@@ -1154,19 +1339,19 @@ class AgentRunExecutor:
                 result['exploration_analysis'] = exploration_analysis
             if student_task_result is not None:
                 result['student_task'] = student_task_result
-            if not (capability is not None
+            if (no_personal_reads or not (capability is not None
                     and capability.execution_pipeline in {
                         "education_screening_structured_v2",
                         "education_screening_structured_v3",
                         "education_screening_structured_v4",
                         "education_screening_structured_v5",
-                    }):
+                    })):
                 result["reply_candidate_unverified"] = reply[
                     :1200 if capability is not None
                     and capability.execution_pipeline == "education_screening_v1"
                     else 8000
                 ]
-            if (capability is not None
+            if (not no_personal_reads and capability is not None
                     and capability.execution_pipeline == "education_screening_v1"):
                 result.update({
                     "capability_pipeline": capability.execution_pipeline,
@@ -1177,7 +1362,7 @@ class AgentRunExecutor:
                     "education_finalizer": _safe_education_finalizer(education_finalizer),
                     "capability_reply": education_finalizer["reply"][:4000],
                 })
-            elif (capability is not None
+            elif (not no_personal_reads and capability is not None
                     and capability.execution_pipeline == "education_screening_structured_v2"):
                 result.update({
                     "capability_pipeline": capability.execution_pipeline,
@@ -1188,7 +1373,7 @@ class AgentRunExecutor:
                     "education_finalizer": education_structured_finalizer or {},
                     "capability_reply": reply[:4000],
                 })
-            elif (capability is not None
+            elif (not no_personal_reads and capability is not None
                     and capability.execution_pipeline == "education_screening_structured_v3"):
                 result.update({
                     "capability_pipeline": capability.execution_pipeline,
@@ -1199,7 +1384,7 @@ class AgentRunExecutor:
                     "education_finalizer": education_structured_v3_finalizer or {},
                     "capability_reply": reply[:4000],
                 })
-            elif (capability is not None
+            elif (not no_personal_reads and capability is not None
                     and capability.execution_pipeline == "education_screening_structured_v4"):
                 result.update({
                     "capability_pipeline": capability.execution_pipeline,
@@ -1210,7 +1395,7 @@ class AgentRunExecutor:
                     "education_finalizer": education_structured_v4_finalizer or {},
                     "capability_reply": reply[:4000],
                 })
-            elif (capability is not None
+            elif (not no_personal_reads and capability is not None
                     and capability.execution_pipeline == "education_screening_structured_v5"):
                 result.update({
                     "capability_pipeline": capability.execution_pipeline,
@@ -1298,9 +1483,23 @@ class AgentRunExecutor:
             return True
 
     def _finalize(self, message: str, steps: list[dict], interaction_mode: str,
-                  *, capability=None) -> str:
+                  *, capability=None, no_read_safe_mode: bool = False) -> str:
         from .mode_runtime import ModeRuntime
         from .modes import InteractionMode
+
+        if no_read_safe_mode:
+            from .resource_access_policy import sanitize_no_read_reply
+
+            for step in steps:
+                result = step.get("result") or {}
+                for candidate in (
+                    (result.get("student_task") or {}).get("reply"),
+                    (result.get("exploration_analysis") or {}).get("reply"),
+                    result.get("reply_candidate_unverified"),
+                ):
+                    if isinstance(candidate, str) and candidate.strip():
+                        return sanitize_no_read_reply(candidate)
+            raise ValueError("no_read_answer_missing")
 
         if capability is not None and capability.execution_pipeline == 'student_task_v1':
             result = next(((s.get('result') or {}).get('student_task') for s in steps
@@ -1734,9 +1933,28 @@ def _json_sha256(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _checkpoint_thread_id(run_id: str, student_id: str) -> str:
+def _checkpoint_thread_id(
+    run_id: str,
+    student_id: str,
+    *,
+    contract_revision: Optional[int] = None,
+) -> str:
+    """Keep prior revision checkpoints immutable and start a fresh graph per replan.
+
+    Revision 1 retains the legacy identifier so in-flight and resumable runs
+    created before this change continue using their existing checkpoint. A
+    later user-approved contract revision gets a distinct checkpoint thread;
+    the old completed graph state therefore cannot short-circuit the new plan.
+    """
+    if contract_revision is not None and (
+        type(contract_revision) is not int or contract_revision < 1
+    ):
+        raise ValueError("contract_revision must be a positive integer")
+    scope = student_id + "\0" + run_id
+    if contract_revision is not None and contract_revision > 1:
+        scope += "\0contract_revision\0" + str(contract_revision)
     return "agent_run_" + hashlib.sha256(
-        (student_id + "\0" + run_id).encode("utf-8"),
+        scope.encode("utf-8"),
     ).hexdigest()
 
 

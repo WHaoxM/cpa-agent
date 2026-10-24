@@ -429,7 +429,10 @@ def decide_control(message: TaskControlMessage, *, task_status: str,
     """Return a side-effect-free instruction for the durable run adapter."""
     if not isinstance(message, TaskControlMessage):
         raise TaskControlError("message must be a validated TaskControlMessage")
-    if task_status in _TERMINAL_STATUSES:
+    if task_status in _TERMINAL_STATUSES and not (
+        task_status == "completed"
+        and message.intent in {ControlIntent.SUPPLEMENT, ControlIntent.REVISE_GOAL}
+    ):
         if message.intent is ControlIntent.CANCEL and task_status == "cancelled":
             return ControlDecision("already_cancelled")
         if message.intent is ControlIntent.PROGRESS_QUERY:

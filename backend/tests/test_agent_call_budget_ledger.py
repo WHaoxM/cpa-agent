@@ -243,6 +243,42 @@ def test_public_turn_contains_usage_without_private_provider_metadata():
     assert "private" not in str(turn["usage_ledger"])
 
 
+def test_no_tool_reply_output_cap_defaults_low_and_can_use_bounded_task_budget(monkeypatch):
+    from app.services.agent_runtime.blackboard import Blackboard
+    from app.services.agent_runtime.scoped_invoke import scoped_invoke
+    from app.services.agent_runtime.task_packet import build_standard_packet
+    from app.services.agent_runtime.modes import InteractionMode
+
+    requested = []
+
+    class FakeLLM:
+        def chat(self, *, max_tokens, **_kwargs):
+            requested.append(max_tokens)
+            return "A bounded synthetic answer."
+
+    monkeypatch.setattr("app.utils.llm_client.get_llm_client", lambda: FakeLLM())
+    packet = build_standard_packet(
+        "qa", goal="Explain a database isolation concept", user_utterance="Explain it",
+        read_keys=[], write_keys=[],
+    )
+
+    scoped_invoke(
+        packet, Blackboard(), allow_tools=False, interaction_mode=InteractionMode.ASK,
+    )
+    scoped_invoke(
+        packet, Blackboard(), allow_tools=False, interaction_mode=InteractionMode.ASK,
+        max_tokens=4000, no_tool_output_token_cap=4000,
+    )
+
+    assert requested == [1024, 2048]
+
+    with pytest.raises(ValueError, match="invalid_no_tool_output_token_cap"):
+        scoped_invoke(
+            packet, Blackboard(), allow_tools=False, interaction_mode=InteractionMode.ASK,
+            no_tool_output_token_cap=0,
+        )
+
+
 def test_failed_provider_dispatch_is_unverified_not_free(monkeypatch, offline_budget_estimator):
     from app.utils.llm_client import LLMClient
 

@@ -90,7 +90,7 @@ EVENT_TYPES = frozenset({
     "run.followup_classification_waiting", "run.followup_received",
     "run.followup_classification_started", "run.followup_classified",
     "run.followup_needs_reconciliation", "run.followup_budget_blocked",
-    "run.followup_applied",
+    "run.followup_applied", "run.followup_deterministic_reconciled",
 })
 
 
@@ -551,7 +551,12 @@ class AgentRunRepository:
             message = parse_control_message(control, current=current)
             if message.intent not in {ControlIntent.SUPPLEMENT, ControlIntent.REVISE_GOAL}:
                 raise ValueError("only supplement and revise_goal create a contract revision")
-            if run["status"] in TERMINAL_RUN_STATUSES | {"needs_reconciliation"}:
+            # A completed run may be continued by an explicit, revision-bound
+            # user follow-up. The new contract fences the old result and queues
+            # a fresh plan; cancellation, failure, partial completion and
+            # uncertain execution remain terminal until separately reconciled.
+            non_revisable_terminal_statuses = TERMINAL_RUN_STATUSES - {"completed"}
+            if run["status"] in non_revisable_terminal_statuses | {"needs_reconciliation"}:
                 raise AgentRunConflict("terminal or uncertain task cannot be revised")
             if run.get("cancel_requested_at") is not None:
                 raise AgentRunConflict("cancel is pending; task cannot be revised")
@@ -588,6 +593,15 @@ class AgentRunRepository:
                     UPDATE agent_run_step SET status='superseded', finished_at=:now
                     WHERE run_id=:run_id AND plan_version=:version AND status='pending'
                 """), {"now": now, "run_id": run_id, "version": version})
+
+            # The append-only completion event remains as history, but this
+            # row is the current result pointer. A new contract revision must
+            # not expose the prior answer/checkpoint as the current result.
+            conn.execute(text("""
+                UPDATE agent_run SET final_result_json=NULL,
+                    final_result_sha256=NULL, finalized_at=NULL
+                WHERE run_id=:run_id AND student_id=:student_id
+            """), {"run_id": run_id, "student_id": student_id})
 
             active_read = active_status == "running"
             next_status = "pause_requested" if active_read else "queued"
@@ -627,6 +641,8 @@ class AgentRunRepository:
     @staticmethod
     def _followup_operation_view(row) -> Dict[str, Any]:
         return {
+            # Private to trusted server code. API response projection omits it.
+            "_operation_key_sha256": str(row["idempotency_key_sha256"]),
             "status": str(row["operation_status"]),
             "contract_revision": int(row["contract_revision"]),
             "request": _decode_json(row["request_json"], expected_type=dict,
@@ -1171,6 +1187,225 @@ class AgentRunRepository:
                     raise AgentRunNotFound("Task follow-up operation not found")
                 return {"operation": self._followup_operation_view(row),
                         "run": self._run_view(run)}
+
+    def get_recoverable_classified_followup_for_owner(
+        self, run_id: str, *, student_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Find the one safely recoverable classified contract revision.
+
+        The idempotency digest is returned only to the trusted API layer so it
+        can complete the already-persisted operation without asking the client
+        to recover or resend its original key.
+        """
+        run_id = _run_id_value(run_id)
+        student_id = _owner_value(student_id, field="student_id")
+        with self._read_connection() as conn:
+            with conn.begin():
+                run = self._select_run(conn, run_id=run_id, student_id=student_id)
+                if run is None:
+                    raise AgentRunNotFound("Agent run not found")
+                if not self._task_contract_schema_available(conn):
+                    raise AgentRunStoreError("Agent follow-up migration 0021 is not applied")
+                row = conn.execute(text("""
+                    SELECT * FROM agent_run_task_followup
+                    WHERE run_id=:run_id AND student_id=:student_id
+                      AND operation_status='classified'
+                    ORDER BY created_at DESC LIMIT 1
+                """), {"run_id": run_id, "student_id": student_id}).mappings().first()
+                if row is None or int(row["contract_revision"]) != int(
+                    run.get("current_contract_revision") or 0
+                ):
+                    return None
+                if (run.get("status") in {
+                        "failed", "cancelled", "partial", "needs_reconciliation",
+                    } or run.get("cancel_requested_at") is not None):
+                    return None
+                operation = self._followup_operation_view(row)
+                classification = operation.get("classification") or {}
+                if classification.get("intent") not in {"supplement", "revise_goal"}:
+                    return None
+                _, request_digest = _canonical_json(
+                    operation["request"], max_bytes=8192,
+                )
+                if request_digest != row["request_sha256"]:
+                    raise AgentRunStoreError("Persisted Agent follow-up request hash does not match")
+                return {
+                    "operation": operation,
+                    "operation_key_sha256": str(row["idempotency_key_sha256"]),
+                    "run": self._run_view(run),
+                }
+
+    def reconcile_deterministic_no_call_followup_for_owner(
+        self, run_id: str, *, student_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Recover only an unclassified request whose persisted text is now
+        provably handled by the strict deterministic follow-up path.
+
+        This does not retry a provider call. It is owner/current-revision
+        bound, requires an empty unverified usage ledger and no stored
+        classification/result, and reruns only the pure deterministic
+        classifier against the current persisted contract. Ambiguous or
+        model-backed requests remain uncertain for explicit reconciliation.
+        """
+        from .agent_task_followup import classify_deterministic_task_followup
+
+        run_id = _run_id_value(run_id)
+        student_id = _owner_value(student_id, field="student_id")
+        with self._utc_transaction() as conn:
+            run = self._locked_run(conn, run_id=run_id, student_id=student_id)
+            if not self._task_contract_schema_available(conn):
+                raise AgentRunStoreError("Agent follow-up migration 0021 is not applied")
+            if (run.get("status") in {"failed", "cancelled", "partial", "needs_reconciliation"}
+                    or run.get("cancel_requested_at") is not None):
+                return None
+            row = conn.execute(text("""
+                SELECT * FROM agent_run_task_followup
+                WHERE run_id=:run_id AND student_id=:student_id
+                  AND operation_status='needs_reconciliation'
+                ORDER BY created_at DESC LIMIT 1
+            """ + (" FOR UPDATE" if conn.dialect.name in {
+                "mysql", "mariadb", "postgresql",
+            } else "")), {
+                "run_id": run_id, "student_id": student_id,
+            }).mappings().first()
+            if row is None or int(row["contract_revision"]) != int(
+                run.get("current_contract_revision") or 0
+            ):
+                return None
+            if (row["classification_json"] is not None or row["result_json"] is not None
+                    or not bool(row["model_required"])
+                    or int(row["reserved_model_calls"] or 0) < 1):
+                return None
+            operation = self._followup_operation_view(row)
+            usage = operation.get("model_usage")
+            if (not isinstance(usage, dict) or usage.get("status") != "unverified"
+                    or usage.get("call_count") != 0 or usage.get("calls") != []):
+                return None
+            request_record = operation.get("request")
+            if (not isinstance(request_record, dict)
+                    or set(request_record) != {"task_id", "expected_revision", "message"}
+                    or request_record.get("task_id") != run_id
+                    or request_record.get("expected_revision") != int(row["contract_revision"])
+                    or not isinstance(request_record.get("message"), str)):
+                raise AgentRunStoreError("Persisted Agent follow-up request is invalid")
+            _, request_digest = _canonical_json(request_record, max_bytes=8192)
+            if request_digest != row["request_sha256"]:
+                raise AgentRunStoreError("Persisted Agent follow-up request hash does not match")
+            contract = self._task_contract_for_row(conn, run)
+            if contract is None:
+                return None
+            classification = classify_deterministic_task_followup(
+                request_record["message"], contract=contract,
+            )
+            if classification is None or classification.intent.value not in {
+                "supplement", "revise_goal",
+            }:
+                return None
+            classification_json, _ = _canonical_json(
+                classification.to_record(), max_bytes=8192,
+            )
+            now = _utcnow()
+            updated_count = conn.execute(text("""
+                UPDATE agent_run_task_followup
+                SET operation_status='classified', model_required=0,
+                    reserved_model_calls=0, classification_json=:classification_json,
+                    updated_at=:now
+                WHERE run_id=:run_id AND student_id=:student_id
+                  AND idempotency_key_sha256=:key_hash
+                  AND operation_status='needs_reconciliation'
+                  AND classification_json IS NULL AND result_json IS NULL
+                  AND request_sha256=:request_sha256
+            """), {
+                "classification_json": classification_json, "now": now,
+                "run_id": run_id, "student_id": student_id,
+                "key_hash": row["idempotency_key_sha256"],
+                "request_sha256": row["request_sha256"],
+            }).rowcount
+            if updated_count != 1:
+                return None
+            self._append_event(
+                conn, run, event_type="run.followup_deterministic_reconciled",
+                payload={
+                    "idempotency_key_sha256": str(row["idempotency_key_sha256"]),
+                    "request_sha256": str(row["request_sha256"]),
+                    "contract_revision": int(row["contract_revision"]),
+                    "intent": classification.intent.value,
+                    "usage_ledger_status": "unverified",
+                    "recorded_model_call_count": 0,
+                    "released_reserved_model_calls": int(row["reserved_model_calls"] or 0),
+                },
+            )
+            updated = conn.execute(text("""
+                SELECT * FROM agent_run_task_followup
+                WHERE run_id=:run_id AND student_id=:student_id
+                  AND idempotency_key_sha256=:key_hash
+            """), {
+                "run_id": run_id, "student_id": student_id,
+                "key_hash": row["idempotency_key_sha256"],
+            }).mappings().first()
+            return {
+                "operation": self._followup_operation_view(updated),
+                "operation_key_sha256": str(row["idempotency_key_sha256"]),
+                "run": self._run_view(run),
+            }
+
+    def complete_task_followup_operation_by_hash(
+        self, run_id: str, *, student_id: str,
+        operation_key_sha256: str, result: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        """Complete a persisted follow-up by its already-stored owner-bound digest."""
+        run_id = _run_id_value(run_id)
+        student_id = _owner_value(student_id, field="student_id")
+        key_hash = str(operation_key_sha256 or "")
+        if len(key_hash) != 64 or any(char not in "0123456789abcdef" for char in key_hash):
+            raise ValueError("operation digest is invalid")
+        result_json, _ = _canonical_json(dict(result), max_bytes=8192)
+        with self._utc_transaction() as conn:
+            run = self._locked_run(conn, run_id=run_id, student_id=student_id)
+            row = conn.execute(text("""
+                SELECT * FROM agent_run_task_followup
+                WHERE run_id=:run_id AND student_id=:student_id
+                  AND idempotency_key_sha256=:key_hash
+            """), {"run_id": run_id, "student_id": student_id,
+                   "key_hash": key_hash}).mappings().first()
+            if row is None:
+                raise AgentRunNotFound("Task follow-up operation not found")
+            if row["operation_status"] == "completed":
+                if row["result_json"] is None:
+                    raise AgentRunStoreError("Completed follow-up has no persisted result")
+                previous = _decode_json(row["result_json"], expected_type=dict,
+                                        field="task follow-up result")
+                if previous != dict(result):
+                    raise AgentRunIdempotencyConflict(
+                        "Follow-up retry produced a different control result"
+                    )
+                return {"operation": self._followup_operation_view(row),
+                        "run": self._run_view(run)}
+            if row["operation_status"] != "classified":
+                raise AgentRunConflict("follow-up classification is not ready to apply")
+            now = _utcnow()
+            conn.execute(text("""
+                UPDATE agent_run_task_followup SET operation_status='completed',
+                    active_slot=NULL, result_json=:result_json, updated_at=:now
+                WHERE run_id=:run_id AND student_id=:student_id
+                  AND idempotency_key_sha256=:key_hash
+                  AND operation_status='classified'
+            """), {"run_id": run_id, "student_id": student_id,
+                   "key_hash": key_hash, "result_json": result_json, "now": now})
+            self._append_event(
+                conn, run, event_type="run.followup_applied",
+                payload={"idempotency_key_sha256": key_hash,
+                         "contract_revision": int(row["contract_revision"]),
+                         "action": dict(result).get("action")},
+            )
+            updated = conn.execute(text("""
+                SELECT * FROM agent_run_task_followup
+                WHERE run_id=:run_id AND student_id=:student_id
+                  AND idempotency_key_sha256=:key_hash
+            """), {"run_id": run_id, "student_id": student_id,
+                   "key_hash": key_hash}).mappings().first()
+            return {"operation": self._followup_operation_view(updated),
+                    "run": self._run_view(run)}
 
     def request_pause(self, run_id: str, *, student_id: str) -> Dict[str, Any]:
         run_id = _run_id_value(run_id)
@@ -1743,8 +1978,64 @@ class AgentRunRepository:
             self._assert_current_claim(conn, run_id, claim_token)
             if row['status'] != 'running':
                 raise AgentRunConflict('resource read is not in an active step')
+            step = conn.execute(text("""
+                SELECT plan_version, step_index FROM agent_run_step
+                WHERE run_id=:run_id AND plan_version=:version AND status='running'
+                ORDER BY step_index DESC LIMIT 1
+            """), {
+                'run_id': run_id,
+                'version': int(row['current_plan_version'] or 0),
+            }).mappings().first()
+            if step is None:
+                raise AgentRunConflict('resource read has no active durable step')
             self._append_event(conn, row, event_type='run.resource_read_' + phase,
-                               payload={'label': label})
+                               payload={
+                                   'label': label,
+                                   'plan_version': int(step['plan_version']),
+                                   'step_index': int(step['step_index']),
+                               })
+
+    def has_completed_resource_read_for_step(
+        self, run_id, *, student_id, plan_version, step_index,
+    ) -> bool:
+        """Check for a durable read receipt after this step's latest start."""
+        run_id = _run_id_value(run_id)
+        student_id = _owner_value(student_id, field='student_id')
+        self._validate_version_index(plan_version, step_index)
+        with self._read_connection() as conn:
+            with conn.begin():
+                run = self._select_run(conn, run_id=run_id, student_id=student_id)
+                if run is None:
+                    raise AgentRunNotFound('Agent run not found')
+                rows = conn.execute(text("""
+                    SELECT event_seq, event_type, payload_json
+                    FROM agent_run_event
+                    WHERE run_id=:run_id AND student_id=:student_id
+                      AND event_type IN (
+                        'run.step_started', 'run.resource_read_completed'
+                      )
+                    ORDER BY event_seq
+                """), {
+                    'run_id': run_id,
+                    'student_id': student_id,
+                }).mappings().all()
+        latest_step_start = None
+        completed_reads = []
+        for item in rows:
+            payload = _decode_json(
+                item['payload_json'], expected_type=dict, field='resource read event',
+            )
+            if (payload.get('plan_version') != plan_version
+                    or payload.get('step_index') != step_index):
+                continue
+            if item['event_type'] == 'run.step_started':
+                latest_step_start = int(item['event_seq'])
+            elif item['event_type'] == 'run.resource_read_completed':
+                completed_reads.append(int(item['event_seq']))
+        return bool(
+            latest_step_start is not None
+            and any(seq > latest_step_start for seq in completed_reads)
+        )
 
     def begin_planning(
         self, run_id: str, *, student_id: str, claim_token: Optional[str] = None,

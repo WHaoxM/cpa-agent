@@ -188,3 +188,16 @@ Content-Type: application/json
 - 只有服务端已完成分类并返回 `result.action=create_new_task`，页面才提交新 run。`ask_clarification` 显示分类器返回的澄清问题；进度、暂停、取消和约束修订更新原 run，不把它们转成新任务。`confirm_save` 只显示确切契约版本、计划版本及显式确认按钮；确认前不保存，保存回执再按原摘要核验。
 - 本实现的续接输入暂不支持附加新文件；有附件时会提示并阻止新建 run。续接原话与展示答复写入当前标签的 `sessionStorage`，便于刷新恢复，但不是服务端聊天历史；关闭浏览器标签后这份本地展示记录不保证保留。后端可按幂等键读取单次续接状态，但前端尚未接 GET 回读列表。
 - 验证记录：`cd cpa-xingtu && node --test tools/test-agent-task.mjs tools/test-agent-run-control-api.mjs tools/test-agent-run-control-panel.mjs`（36 passed）；`cd cpa-xingtu && npm run type-check` 通过。均为 mock API 的自动化前端测试，不等于真实浏览器、真实模型或安全测试账号验收。当前本地页面虽可访问 `127.0.0.1:5174`，`cpa_agent` 尚未确认是隔离 QA 数据库；真实页面场景、保存回放与截图仍待安全合成账号。
+
+### Agent 终态取消显示与 QA 复测（2026-10-24）
+
+- 控制面板的取消请求提示仅在 run 非终态且取消仍待处理时显示。持久快照即使保留 `cancel_requested=true`，`completed`、`failed`、`cancelled` 终态仍优先，避免已结束任务继续显示“正在等待取消安全点”。
+- 回归命令：`cd cpa-xingtu && node tools/test-agent-run-control-panel.mjs`（10 passed）；`cd cpa-xingtu && npm run type-check` 通过。用例覆盖终态残留取消标志、非终态安全点等待、以及刷新后较新契约版本的目标呈现。
+- 隔离 QA 真实页面：合成 run `run_e6662b2411ce4102a418f9bfbe06889d` 创建、目标修订至第 2 版、取消及全页刷新恢复均可见；刷新后显示“已取消”和第 2 版目标，等待安全点提示消失。没有 worker 或模型调用；Qwen 0/10、Tavily 未测，不能据此宣称 AI 结果验收通过。截图为本任务内嵌浏览器证据，没有本地导出文件。
+
+### Agent 对话锚定执行时间线（2026-10-24）
+
+- 本节更新较早的“当前任务自然语言续接”实现说明：服务端 run/plan/event 是当前任务状态的权威来源；本地展示缓存可辅助恢复消息，但不重建 run，也不覆盖较新的 revision。
+- 持久 run 现在锚定在对应对话消息；执行事件按稳定序号分页读取并去重，历史回放只展示服务端已持久化事件，不伪造思考文本或进度。最终答复不再重复展示整份目标和计划；当前计划版本与已保存 artifact 版本分开显示，旧快照不能覆盖较新的 run 状态。
+- follow-up 的确定性补充、目标修订和短控制指令在预算预留前分类，只有符合严格当前 run/版本和意图条件时才走无模型路径；混合或含糊意图仍进入分类。刷新后若客户端丢失幂等键，owner/current-run/current-revision 绑定的恢复接口只处理已经持久化且满足无调用条件的操作，不接受新消息或触发模型重调；save 与新任务不自动恢复。
+- 验证：`node --test tools/test-agent-run-control-api.mjs tools/test-agent-run-control-panel.mjs tools/test-agent-task.mjs tools/test-agent-run-event-model.mjs`（合计结果见[当日 QA 报告](../../../reports/2026-10-24-qa-ask-agent-ui-replay.md)）；真实 QA 桌面及 433 px 窄屏只读检查通过，完整前端套件、trace 与生产构建结果也见该报告。真实 UI 暂停/恢复完整场景和所有事件/卡片 schema 仍未全部覆盖；截图只有内嵌浏览器图像，没有本地可交付文件。

@@ -512,6 +512,7 @@ def _followup_response(repository, run_id: str, student_id: str, operation: dict
     )["status"]
     return jsonify({"success": True, "data": {
         "operation_status": operation["status"],
+        "request": operation.get("request"),
         "classification": operation.get("classification"),
         "result": operation.get("result"),
         "run": _run_data(latest, dispatch_status=dispatch_status),
@@ -535,10 +536,36 @@ def _resume_followup_paused_run(repository, run_id: str, student_id: str,
     return latest
 
 
-def _apply_task_followup(repository, run_id: str, student_id: str, idempotency_key: str,
-                         operation: dict):
+def _apply_task_followup(repository, run_id: str, student_id: str,
+                         idempotency_key: Optional[str], operation: dict,
+                         *, operation_key_sha256: Optional[str] = None):
     """Apply one persisted classifier result through the existing run state machine."""
     from ..services.agent_runtime.agent_task_followup import FollowupIntent
+
+    if operation_key_sha256 is not None:
+        if (not isinstance(operation_key_sha256, str)
+                or len(operation_key_sha256) != 64
+                or any(char not in "0123456789abcdef" for char in operation_key_sha256)):
+            raise AgentRunStoreError("persisted follow-up operation digest is invalid")
+        # This deterministic internal key is namespaced by the owner/run again
+        # inside revise_task_contract. It makes normal retries and server-side
+        # recovery converge without revealing or recreating the client key.
+        control_idempotency_key = f"followup-{operation_key_sha256}"
+    elif idempotency_key is not None:
+        control_idempotency_key = idempotency_key
+    else:
+        raise AgentRunStoreError("follow-up operation has no idempotency identity")
+
+    def complete(result):
+        if operation_key_sha256 is not None:
+            return repository.complete_task_followup_operation_by_hash(
+                run_id, student_id=student_id,
+                operation_key_sha256=operation_key_sha256, result=result,
+            )
+        return repository.complete_task_followup_operation(
+            run_id, student_id=student_id,
+            idempotency_key=control_idempotency_key, result=result,
+        )
 
     if operation.get("status") == "completed":
         return operation
@@ -566,7 +593,7 @@ def _apply_task_followup(repository, run_id: str, student_id: str, idempotency_k
             try:
                 revised = repository.revise_task_contract(
                     run_id, student_id=student_id, control=control,
-                    idempotency_key=idempotency_key,
+                    idempotency_key=control_idempotency_key,
                 )
             except StaleTaskRevision:
                 revised = None
@@ -585,9 +612,7 @@ def _apply_task_followup(repository, run_id: str, student_id: str, idempotency_k
                 result = {"action": "stale_revision", "intent": intent.value}
         else:
             result = {"action": "stale_revision", "intent": intent.value}
-        done = repository.complete_task_followup_operation(
-            run_id, student_id=student_id, idempotency_key=idempotency_key, result=result,
-        )
+        done = complete(result)
         return done["operation"]
 
     if intent in {FollowupIntent.SUPPLEMENT, FollowupIntent.REVISE_GOAL}:
@@ -598,7 +623,7 @@ def _apply_task_followup(repository, run_id: str, student_id: str, idempotency_k
         }
         repository.revise_task_contract(
             run_id, student_id=student_id, control=control,
-            idempotency_key=idempotency_key,
+            idempotency_key=control_idempotency_key,
         )
         from ..services.agent_runtime.agent_run_jobs import dispatch_agent_run
 
@@ -655,9 +680,7 @@ def _apply_task_followup(repository, run_id: str, student_id: str, idempotency_k
     else:
         raise AgentRunStoreError("persisted follow-up intent is unsupported")
 
-    completed = repository.complete_task_followup_operation(
-        run_id, student_id=student_id, idempotency_key=idempotency_key, result=result,
-    )
+    completed = complete(result)
     return completed["operation"]
 
 
@@ -690,20 +713,18 @@ def followup_agent_run(run_id: str):
         from ..services.agent_runtime.agent_task_followup import (
             FollowupIntent, FollowupClassifierError, TaskFollowupClassification,
             classify_task_followup,
-            quick_control_intent,
+            classify_deterministic_task_followup,
         )
 
         contract = task_contract_from_record(contract_record)
         expected_revision = data.get("expected_revision")
         message = data.get("message")
-        quick_intent = quick_control_intent(message)
-        deterministic = None
-        if quick_intent is not None:
-            deterministic = TaskFollowupClassification(
-                intent=quick_intent, confidence=1.0, patch=None,
-                clarification_question="", requested_plan_version=None,
-                reason="explicit_short_control_command",
-            ).to_record()
+        deterministic_result = classify_deterministic_task_followup(
+            message, contract=contract,
+        )
+        deterministic = (
+            deterministic_result.to_record() if deterministic_result is not None else None
+        )
         begun = repository.begin_task_followup_operation(
             run_id, student_id=scope.student_id,
             expected_revision=expected_revision, message=message,
@@ -822,6 +843,7 @@ def followup_agent_run(run_id: str):
         if operation["status"] == "classified":
             operation = _apply_task_followup(
                 repository, run_id, scope.student_id, idempotency_key, operation,
+                operation_key_sha256=operation.get("_operation_key_sha256"),
             )
         return _followup_response(repository, run_id, scope.student_id, operation)
     except Exception as exc:
@@ -849,6 +871,48 @@ def get_agent_run_followup(run_id: str):
                                   status=202 if operation["status"] in {
                                       "waiting_safe_point", "classifying", "classified",
                                   } else 200)
+    except Exception as exc:
+        return _store_error_response(exc)
+
+
+@agent_bp.route("/runs/<run_id>/followup/recover", methods=["POST"])
+def recover_classified_agent_run_followup(run_id: str):
+    """Apply one already-classified supplement after a client lost its key.
+
+    This never invokes the classifier. It is owner/current-task scoped, accepts
+    no message body, and only recovers a persisted contract revision. Explicit
+    save confirmation and new-run creation remain on their original UI paths.
+    """
+    try:
+        scope = resolve_request_scope()
+    except ScopeError as exc:
+        return scope_error_response(exc)
+    data = request.get_json(silent=True)
+    if data not in (None, {}):
+        return jsonify(safe_bad_request("follow-up recovery does not accept a request body")), 400
+    try:
+        repository = get_agent_run_repository()
+        run = repository.get_for_owner(run_id, student_id=scope.student_id)
+        _assert_current_task_context(repository, run, student_id=scope.student_id)
+        pending = repository.get_recoverable_classified_followup_for_owner(
+            run_id, student_id=scope.student_id,
+        )
+        if pending is None:
+            pending = repository.reconcile_deterministic_no_call_followup_for_owner(
+                run_id, student_id=scope.student_id,
+            )
+        if pending is None:
+            operation = {
+                "status": "none", "request": None,
+                "classification": None, "result": None,
+            }
+        else:
+            operation = _apply_task_followup(
+                repository, run_id, scope.student_id, None,
+                pending["operation"],
+                operation_key_sha256=pending["operation_key_sha256"],
+            )
+        return _followup_response(repository, run_id, scope.student_id, operation)
     except Exception as exc:
         return _store_error_response(exc)
 

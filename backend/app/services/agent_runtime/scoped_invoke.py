@@ -173,7 +173,12 @@ def _build_subagent_system(
             '（格式: ```blackboard\\n{"key": {...}}\\n```，key 必须在 write_keys 内）。'
         )
     else:
-        rules += "用自然语言回答用户；不要输出内部工具名或状态键。"
+        rules += (
+            "用自然语言回答用户；不要输出内部工具名或状态键。"
+            "一般知识、用户原文和本轮实际读取的来源必须分开。只有当服务端上下文"
+            "明确提供来源回执时，才可称为已核验/已查阅；模型记忆不算本轮来源证据。"
+            "没有来源回执时不要生成‘已核验证据/已查阅来源’小节，并说明一般知识未外部核验。"
+        )
 
     skill_section = ""
     for skill in loaded_skills or []:
@@ -240,6 +245,7 @@ def scoped_invoke(
     allow_artifact_commit: bool = True,
     ask_context_messages: Optional[List[Dict[str, str]]] = None,
     ask_context_appendix: str = "",
+    no_tool_output_token_cap: Optional[int] = None,
 ) -> Dict[str, Any]:
     start = time.time()
     subagent = packet.subagent
@@ -386,10 +392,17 @@ def scoped_invoke(
             ))
         else:
             messages += [{"role": "user", "content": user_content}]
+        no_tool_limit = 1024
+        if no_tool_output_token_cap is not None:
+            if (isinstance(no_tool_output_token_cap, bool)
+                    or not isinstance(no_tool_output_token_cap, int)
+                    or no_tool_output_token_cap < 1):
+                raise ValueError("invalid_no_tool_output_token_cap")
+            no_tool_limit = min(no_tool_output_token_cap, 2048)
         reply = llm.chat(
             messages=messages,
             temperature=temperature,
-            max_tokens=min(max_tokens, 1024),
+            max_tokens=min(max_tokens, no_tool_limit),
         ) or "（无工具轻量回复）"
         return {
             "reply": redact_text(reply, max_len=8000),

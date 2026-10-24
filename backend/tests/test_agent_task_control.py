@@ -237,6 +237,25 @@ def test_pending_uncertain_step_blocks_revision_until_reconciled(contract):
         )
 
 
+def test_completed_task_can_be_revised_but_cancelled_task_stays_terminal(contract):
+    message = parse_control_message({
+        "intent": "supplement",
+        "task_id": contract.task_id,
+        "expected_revision": contract.revision,
+        "patch": {"add_constraints": ["Add one verification item"]},
+    }, current=contract)
+
+    completed = decide_control(
+        message, task_status="completed", active_step_status=None,
+    )
+    cancelled = decide_control(
+        message, task_status="cancelled", active_step_status=None,
+    )
+
+    assert completed.action == "revise_contract_and_replan"
+    assert cancelled.action == "reject_terminal_task"
+
+
 def test_write_confirmation_is_bound_to_exact_revision_target_and_version(contract):
     assert write_is_authorized(
         contract,

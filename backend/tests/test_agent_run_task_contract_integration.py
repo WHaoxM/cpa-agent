@@ -831,6 +831,82 @@ def test_natural_followup_revises_contract_once_and_persists_classifier_usage(
     assert len(classifier_calls) == 1
 
 
+@pytest.mark.parametrize(("message", "expected_intent"), [
+    (
+        "请补充当前计划：加入一道并发控制自测题，并写明答案要点。",
+        "supplement",
+    ),
+    (
+        "请将当前任务目标修改为：Create a four-week backend study plan",
+        "revise_goal",
+    ),
+])
+def test_api_persists_explicit_deterministic_followup_without_model_reservation(
+    run_api, monkeypatch, message, expected_intent,
+):
+    client, repository = run_api
+    _install_task_schema(repository)
+    run_id = _submit_open_task(repository)
+    _bind_followup_context(monkeypatch, run_id)
+    dispatched = []
+
+    def no_model_call(*_args, **_kwargs):
+        pytest.fail("explicit deterministic follow-up must not invoke a classifier")
+
+    def no_reservation(*_args, **_kwargs):
+        pytest.fail("deterministic follow-up must not reserve a model call")
+
+    monkeypatch.setattr(
+        "app.services.agent_runtime.agent_task_followup.classify_task_followup",
+        no_model_call,
+    )
+    monkeypatch.setattr(
+        "app.services.agent_runtime.budget.capture_usage_ledger", no_model_call,
+    )
+    monkeypatch.setattr(
+        repository, "reserve_task_followup_model_call", no_reservation,
+    )
+    monkeypatch.setattr(
+        "app.services.agent_runtime.agent_run_jobs.dispatch_agent_run",
+        lambda *args, **kwargs: dispatched.append((args, kwargs)) or "pending",
+    )
+
+    body = {"task_id": run_id, "expected_revision": 1, "message": message}
+    headers = {"X-Test-Owner": "alice", "Idempotency-Key": "deterministic-followup-001"}
+    first = client.post(f"/api/agent/runs/{run_id}/followup", json=body, headers=headers)
+
+    assert first.status_code == 200, first.get_json()
+    data = first.get_json()["data"]
+    assert data["operation_status"] == "completed"
+    assert data["classification"]["intent"] == expected_intent
+    assert data["result"]["action"] == "contract_revised"
+    current = repository.get_for_owner(run_id, student_id="alice")
+    assert current["task_contract"]["revision"] == 2
+    if expected_intent == "supplement":
+        assert current["task_contract"]["acceptance_criteria"][-1] == message
+        assert current["task_contract"]["goal"] == "Create a backend study plan"
+    else:
+        assert current["task_contract"]["goal"] == "Create a four-week backend study plan"
+    operation = repository.get_task_followup_operation(
+        run_id, student_id="alice", idempotency_key=headers["Idempotency-Key"],
+    )["operation"]
+    assert operation["reserved_model_calls"] == 0
+    assert len(dispatched) == 1
+
+    replay = client.post(f"/api/agent/runs/{run_id}/followup", json=body, headers=headers)
+    assert replay.status_code == 200, replay.get_json()
+    assert replay.get_json()["data"]["result"]["action"] == "contract_revised"
+    assert repository.get_for_owner(run_id, student_id="alice")["task_contract"]["revision"] == 2
+    assert len(dispatched) == 1
+
+    conflict = client.post(
+        f"/api/agent/runs/{run_id}/followup",
+        json={**body, "message": message + " 再新建任务"}, headers=headers,
+    )
+    assert conflict.status_code == 409
+    assert repository.get_for_owner(run_id, student_id="alice")["task_contract"]["revision"] == 2
+
+
 def test_followup_reconciles_revision_committed_before_dispatch_result_is_lost(
     run_api, monkeypatch,
 ):
@@ -881,6 +957,484 @@ def test_followup_reconciles_revision_committed_before_dispatch_result_is_lost(
     assert repository.get_for_owner(run_id, student_id="alice")["task_contract"]["revision"] == 2
     assert len(classifier_calls) == 1
     assert len(dispatch_calls) == 2
+
+
+def test_server_recovers_persisted_classification_without_client_key_or_second_model_call(
+    run_api, monkeypatch,
+):
+    from app.services.agent_runtime.agent_task_followup import (
+        FollowupIntent, TaskFollowupClassification,
+    )
+    import app.api.agent_runs as agent_runs_api
+
+    client, repository = run_api
+    _install_task_schema(repository)
+    run_id = _submit_open_task(repository)
+    _bind_followup_context(monkeypatch, run_id)
+    _followup_usage_ledger(monkeypatch)
+    classifier_calls = []
+
+    def classify(message, *, contract, run):
+        classifier_calls.append((message, contract.revision, run["run_id"]))
+        return TaskFollowupClassification(
+            intent=FollowupIntent.SUPPLEMENT, confidence=0.98,
+            patch={"add_constraints": ["One isolation-level self-test"]},
+            clarification_question="", requested_plan_version=None,
+            reason="The user added one test to the existing plan.",
+        )
+
+    monkeypatch.setattr(
+        "app.services.agent_runtime.agent_task_followup.classify_task_followup", classify,
+    )
+    real_apply = agent_runs_api._apply_task_followup
+    apply_attempts = []
+
+    def lose_response_after_classification(*_args, **_kwargs):
+        apply_attempts.append(1)
+        raise RuntimeError("simulated process interruption after durable classification")
+
+    monkeypatch.setattr(agent_runs_api, "_apply_task_followup", lose_response_after_classification)
+    body = {
+        "task_id": run_id, "expected_revision": 1,
+        "message": "Add one isolation-level self-test to the existing plan; do not save yet.",
+    }
+    first = client.post(
+        f"/api/agent/runs/{run_id}/followup", json=body,
+        headers={"X-Test-Owner": "alice", "Idempotency-Key": "followup-recovery-001"},
+    )
+    assert first.status_code == 503
+    assert len(classifier_calls) == 1
+    assert repository.get_for_owner(run_id, student_id="alice")["task_contract"]["revision"] == 1
+
+    monkeypatch.setattr(agent_runs_api, "_apply_task_followup", real_apply)
+    recovered = client.post(
+        f"/api/agent/runs/{run_id}/followup/recover",
+        headers={"X-Test-Owner": "alice"}, json={},
+    )
+    assert recovered.status_code == 200, recovered.get_json()
+    data = recovered.get_json()["data"]
+    assert data["operation_status"] == "completed"
+    assert data["request"] == body
+    assert data["result"]["action"] == "contract_revised"
+    assert "_operation_key_sha256" not in data
+    after = repository.get_for_owner(run_id, student_id="alice")
+    assert after["task_contract"]["revision"] == 2
+    assert after["task_contract"]["constraints"] == ["One isolation-level self-test"]
+    assert len(classifier_calls) == 1
+
+    repeated = client.post(
+        f"/api/agent/runs/{run_id}/followup/recover",
+        headers={"X-Test-Owner": "alice"}, json={},
+    )
+    assert repeated.status_code == 200, repeated.get_json()
+    assert repeated.get_json()["data"]["operation_status"] == "none"
+    assert repository.get_for_owner(run_id, student_id="alice")["task_contract"]["revision"] == 2
+    assert len(classifier_calls) == 1
+
+    wrong_owner = client.post(
+        f"/api/agent/runs/{run_id}/followup/recover",
+        headers={"X-Test-Owner": "mallory"}, json={},
+    )
+    assert wrong_owner.status_code == 404
+
+
+def test_recover_owner_bound_deterministic_followup_with_no_recorded_model_call(
+    run_api, monkeypatch,
+):
+    import app.api.agent_runs as agent_runs_api
+
+    client, repository = run_api
+    _install_task_schema(repository)
+    run_id = _submit_open_task(repository)
+    _bind_followup_context(monkeypatch, run_id)
+    message = "请补充当前计划：加入一道并发控制自测题，并写明答案要点。"
+    idempotency_key = "deterministic-recovery-001"
+    repository.begin_task_followup_operation(
+        run_id, student_id="alice", expected_revision=1, message=message,
+        idempotency_key=idempotency_key, model_required=True,
+    )
+    repository.mark_task_followup_uncertain(
+        run_id, student_id="alice", idempotency_key=idempotency_key,
+        model_usage={
+            "status": "unverified", "reason": "provider_usage_unverified",
+            "call_count": 0, "calls": [],
+        },
+    )
+
+    def no_model_call(*_args, **_kwargs):
+        pytest.fail("deterministic recovery must not invoke the model classifier")
+
+    monkeypatch.setattr(
+        "app.services.agent_runtime.agent_task_followup.classify_task_followup",
+        no_model_call,
+    )
+    monkeypatch.setattr(
+        "app.services.agent_runtime.budget.capture_usage_ledger", no_model_call,
+    )
+    dispatches = []
+    monkeypatch.setattr(
+        "app.services.agent_runtime.agent_run_jobs.dispatch_agent_run",
+        lambda *args, **kwargs: dispatches.append((args, kwargs)) or "pending",
+    )
+
+    recovered = client.post(
+        f"/api/agent/runs/{run_id}/followup/recover",
+        headers={"X-Test-Owner": "alice"}, json={},
+    )
+    assert recovered.status_code == 200, recovered.get_json()
+    data = recovered.get_json()["data"]
+    assert data["operation_status"] == "completed"
+    assert data["classification"]["intent"] == "supplement"
+    assert data["result"]["action"] == "contract_revised"
+    assert "_operation_key_sha256" not in data
+
+    operation = repository.get_task_followup_operation(
+        run_id, student_id="alice", idempotency_key=idempotency_key,
+    )["operation"]
+    assert operation["status"] == "completed"
+    assert operation["model_required"] is False
+    assert operation["reserved_model_calls"] == 0
+    assert operation["model_usage"]["status"] == "unverified"
+    assert operation["model_usage"]["call_count"] == 0
+    current = repository.get_for_owner(run_id, student_id="alice")
+    assert current["task_contract"]["revision"] == 2
+    assert current["task_contract"]["acceptance_criteria"][-1] == message
+    assert len(dispatches) == 1
+
+    event_types = [
+        event["event_type"] for event in repository.read_events(
+            run_id, student_id="alice", after_seq=0, limit=200,
+        )["events"]
+    ]
+    assert "run.followup_needs_reconciliation" in event_types
+    assert "run.followup_deterministic_reconciled" in event_types
+    assert "run.followup_applied" in event_types
+
+    repeated = client.post(
+        f"/api/agent/runs/{run_id}/followup/recover",
+        headers={"X-Test-Owner": "alice"}, json={},
+    )
+    assert repeated.status_code == 200, repeated.get_json()
+    assert repeated.get_json()["data"]["operation_status"] == "none"
+    assert repository.get_for_owner(run_id, student_id="alice")["task_contract"]["revision"] == 2
+    assert len(dispatches) == 1
+
+    wrong_owner = client.post(
+        f"/api/agent/runs/{run_id}/followup/recover",
+        headers={"X-Test-Owner": "mallory"}, json={},
+    )
+    assert wrong_owner.status_code == 404
+
+
+@pytest.mark.parametrize(("message", "call_count"), [
+    ("What should I do next?", 0),
+    ("请补充当前计划：加入一道并发控制自测题。", 1),
+])
+def test_deterministic_recovery_rejects_ambiguous_or_recorded_provider_call(
+    run_api, monkeypatch, message, call_count,
+):
+    client, repository = run_api
+    _install_task_schema(repository)
+    run_id = _submit_open_task(repository)
+    _bind_followup_context(monkeypatch, run_id)
+    idempotency_key = "deterministic-recovery-reject-001"
+    repository.begin_task_followup_operation(
+        run_id, student_id="alice", expected_revision=1, message=message,
+        idempotency_key=idempotency_key, model_required=True,
+    )
+    recorded_calls = ([{"usage": {"prompt_tokens": 2, "completion_tokens": 1,
+                                    "total_tokens": 3}}]
+                      if call_count else [])
+    repository.mark_task_followup_uncertain(
+        run_id, student_id="alice", idempotency_key=idempotency_key,
+        model_usage={
+            "status": "unverified", "reason": "provider_usage_unverified",
+            "call_count": call_count, "calls": recorded_calls,
+        },
+    )
+    response = client.post(
+        f"/api/agent/runs/{run_id}/followup/recover",
+        headers={"X-Test-Owner": "alice"}, json={},
+    )
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()["data"]["operation_status"] == "none"
+    operation = repository.get_task_followup_operation(
+        run_id, student_id="alice", idempotency_key=idempotency_key,
+    )["operation"]
+    assert operation["status"] == "needs_reconciliation"
+    assert operation["classification"] is None
+    assert operation["result"] is None
+    assert repository.get_for_owner(run_id, student_id="alice")["task_contract"]["revision"] == 1
+
+
+def test_deterministic_recovery_does_not_apply_a_stale_contract_revision(
+    run_api, monkeypatch,
+):
+    client, repository = run_api
+    _install_task_schema(repository)
+    run_id = _submit_open_task(repository)
+    _bind_followup_context(monkeypatch, run_id)
+    message = "请补充当前计划：加入一道并发控制自测题，并写明答案要点。"
+    idempotency_key = "deterministic-recovery-stale-001"
+    repository.begin_task_followup_operation(
+        run_id, student_id="alice", expected_revision=1, message=message,
+        idempotency_key=idempotency_key, model_required=True,
+    )
+    repository.mark_task_followup_uncertain(
+        run_id, student_id="alice", idempotency_key=idempotency_key,
+        model_usage={
+            "status": "unverified", "reason": "provider_usage_unverified",
+            "call_count": 0, "calls": [],
+        },
+    )
+    repository.revise_task_contract(
+        run_id, student_id="alice", idempotency_key="recovery-stale-control-001",
+        control={
+            "intent": "supplement", "task_id": run_id, "expected_revision": 1,
+            "patch": {"add_constraints": ["Keep the existing task constraints"]},
+        },
+    )
+
+    response = client.post(
+        f"/api/agent/runs/{run_id}/followup/recover",
+        headers={"X-Test-Owner": "alice"}, json={},
+    )
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()["data"]["operation_status"] == "none"
+    operation = repository.get_task_followup_operation(
+        run_id, student_id="alice", idempotency_key=idempotency_key,
+    )["operation"]
+    assert operation["status"] == "needs_reconciliation"
+    assert operation["classification"] is None
+    assert operation["result"] is None
+    assert repository.get_for_owner(run_id, student_id="alice")["task_contract"]["revision"] == 2
+
+
+def test_completed_current_run_can_be_revised_without_overwriting_saved_history(
+    run_api, monkeypatch,
+):
+    from app.services.agent_runtime.agent_task_followup import (
+        FollowupIntent, TaskFollowupClassification,
+    )
+
+    client, repository = run_api
+    _install_task_schema(repository)
+    run_id = _submit_completed(repository)
+    _bind_followup_context(monkeypatch, run_id)
+    _followup_usage_ledger(monkeypatch)
+    before = repository.get_for_owner(run_id, student_id="alice")
+    assert before["status"] == "completed"
+    usage = repository.task_usage_for_owner(run_id, student_id="alice")
+    classifier_calls = []
+
+    def observed_usage(*_args, **_kwargs):
+        return {
+            **usage, "verified": True, "reason": "test_fixture_observed",
+            "model_calls": len(classifier_calls), "tool_calls": 0,
+            "input_tokens": 0, "output_tokens": 0, "total_tokens": 0,
+        }
+
+    monkeypatch.setattr(
+        repository, "task_usage_for_owner", observed_usage,
+    )
+    dispatch_calls = []
+
+    def classify(*_args, **_kwargs):
+        classifier_calls.append(1)
+        return TaskFollowupClassification(
+            intent=FollowupIntent.SUPPLEMENT, confidence=0.98,
+            patch={"add_constraints": ["Add one isolation-level self-test"]},
+            clarification_question="", requested_plan_version=None,
+            reason="The user adds one verifiable item to the current plan.",
+        )
+
+    monkeypatch.setattr(
+        "app.services.agent_runtime.agent_task_followup.classify_task_followup", classify,
+    )
+
+    def dispatch(run_id, **_kwargs):
+        dispatch_calls.append(run_id)
+        return "pending"
+
+    monkeypatch.setattr(
+        "app.services.agent_runtime.agent_run_jobs.dispatch_agent_run", dispatch,
+    )
+    body = {
+        "task_id": run_id, "expected_revision": 1,
+        "message": "Add one self-test to the current plan; do not save it yet.",
+    }
+    response = client.post(
+        f"/api/agent/runs/{run_id}/followup", json=body,
+        headers={"X-Test-Owner": "alice", "Idempotency-Key": "followup-completed-001"},
+    )
+
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()["data"]["result"]["action"] == "contract_revised"
+    after = repository.get_for_owner(run_id, student_id="alice")
+    assert after["status"] == "queued"
+    assert after["task_contract"]["revision"] == 2
+    assert after["task_contract"]["constraints"] == ["Add one isolation-level self-test"]
+    assert after["saved_artifacts"] == before["saved_artifacts"]
+    assert after["current_plan_version"] == before["current_plan_version"]
+    assert after["final_result"] is None
+    assert dispatch_calls == [run_id]
+    assert classifier_calls == [1]
+    usage = repository.task_usage_for_owner(run_id, student_id="alice")
+    assert usage["model_calls"] == 1
+
+
+def test_revised_completed_run_worker_starts_a_new_checkpoint_for_current_revision(
+    run_api, monkeypatch,
+):
+    """A completed graph checkpoint cannot suppress execution of a new revision."""
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from app.services.agent_runtime import agent_run_jobs
+    from app.services.agent_runtime.agent_run_dispatch import AgentRunDispatchStore
+    from app.services.agent_runtime.agent_run_executor import (
+        AgentRunExecutor, _checkpoint_thread_id,
+    )
+    from app.services.agent_runtime.agent_task_followup import (
+        FollowupIntent, TaskFollowupClassification,
+    )
+
+    client, repository = run_api
+    _install_task_schema(repository)
+    run_id = _submit_completed(repository)
+    # The worker's trusted scope requires the production-shaped account binding;
+    # this is synthetic fixture state, not a real user or authentication setup.
+    with repository.mysql.engine.begin() as conn:
+        conn.execute(text("""
+            UPDATE agent_run SET principal_id='qa:alice', principal_source='account',
+                principal_auth_epoch=1 WHERE run_id=:run_id
+        """), {"run_id": run_id})
+    _bind_followup_context(monkeypatch, run_id)
+    _followup_usage_ledger(monkeypatch)
+    prior_usage = repository.task_usage_for_owner(run_id, student_id="alice")
+    monkeypatch.setattr(repository, "task_usage_for_owner", lambda *_args, **_kwargs: {
+        **prior_usage, "verified": True, "reason": "fixture_usage",
+        "model_calls": 1, "tool_calls": 0, "input_tokens": 0,
+        "output_tokens": 0, "total_tokens": 0,
+    })
+    monkeypatch.setattr(
+        "app.services.agent_runtime.agent_task_followup.classify_task_followup",
+        lambda *_args, **_kwargs: TaskFollowupClassification(
+            intent=FollowupIntent.SUPPLEMENT, confidence=0.98,
+            patch={"add_constraints": ["Add one isolation-level self-test"]},
+            clarification_question="", requested_plan_version=None,
+            reason="A bounded addition to the existing plan.",
+        ),
+    )
+    response = client.post(
+        f"/api/agent/runs/{run_id}/followup",
+        headers={"X-Test-Owner": "alice", "Idempotency-Key": "revision-worker-001"},
+        json={
+            "task_id": run_id, "expected_revision": 1,
+            "message": "Add one self-test to the current plan; do not save it yet.",
+        },
+    )
+    assert response.status_code == 200, response.get_json()
+    revised = repository.get_for_owner(run_id, student_id="alice")
+    assert revised["status"] == "queued"
+    assert revised["task_contract"]["revision"] == 2
+    assert revised["current_plan_version"] == 1
+
+    dispatch = AgentRunDispatchStore(repository)
+    reservation = dispatch.reserve_publish(run_id)
+    assert reservation["reserved"] is True, reservation
+    assert dispatch.finish_publish(
+        run_id, publish_token=reservation["publish_token"], published=True,
+    ) == "published"
+    monkeypatch.setattr(agent_run_jobs, "get_agent_run_dispatch_store", lambda: dispatch)
+    monkeypatch.setattr(agent_run_jobs, "get_agent_run_repository", lambda: repository)
+    monkeypatch.setattr(AgentRunExecutor, "_has_current_account", lambda *_args: True)
+    monkeypatch.setattr(AgentRunExecutor, "_claim_and_account_current", lambda *_args: True)
+    monkeypatch.setattr(AgentRunExecutor, "_durable_checkpointer", lambda _self: nullcontext(None))
+
+    observed = {}
+    legacy_thread_id = _checkpoint_thread_id(run_id, "alice")
+
+    class FakeGraph:
+        def __init__(self, executor, claim_token):
+            self.executor = executor
+            self.claim_token = claim_token
+
+        def get_state(self, config):
+            thread_id = config["configurable"]["thread_id"]
+            observed["thread_id"] = thread_id
+            if thread_id == legacy_thread_id:
+                # This models the prior completed LangGraph state: it has no
+                # next node, although the authoritative MySQL run was revised.
+                return SimpleNamespace(
+                    values={"run_id": run_id, "student_id": "alice", "done": True},
+                    next=(),
+                )
+            return SimpleNamespace(values={}, next=())
+
+        def invoke(self, initial, *, config):
+            assert initial == {"run_id": run_id, "student_id": "alice", "done": False}
+            current = repository.get_for_owner(run_id, student_id="alice")
+            observed["contract_revision"] = current["task_contract"]["revision"]
+            observed["executed"] = self.executor._advance_once(
+                    run_id, "alice", self.claim_token,
+            )
+            return {"run_id": run_id, "student_id": "alice", "done": True}
+
+    def build_graph(executor, _checkpointer, _run_id, _owner, claim_token):
+        return FakeGraph(executor, claim_token)
+
+    def advance(executor, claimed_run_id, owner, claim_token):
+        assert (claimed_run_id, owner) == (run_id, "alice")
+        current = repository.get_for_owner(run_id, student_id=owner)
+        assert current["task_contract"]["revision"] == 2
+        observed["claim_token"] = claim_token
+        return True
+
+    monkeypatch.setattr(AgentRunExecutor, "_build_graph", build_graph)
+    monkeypatch.setattr(AgentRunExecutor, "_advance_once", advance)
+    result = agent_run_jobs.agent_run_task.apply(args=[run_id], throw=True)
+
+    assert result.failed() is False
+    assert observed["thread_id"] != legacy_thread_id
+    assert observed["contract_revision"] == 2
+    assert observed["executed"] is True
+    final = repository.get_for_owner(run_id, student_id="alice")
+    assert final["task_contract"]["revision"] == 2
+    assert final["current_plan_version"] == 1
+
+
+def test_cancelled_run_cannot_be_resurrected_by_contract_revision(run_api):
+    from app.services.agent_runtime.agent_run_store import AgentRunConflict
+
+    client, repository = run_api
+    _install_task_schema(repository)
+    run_id = _submit_open_task(repository)
+    run = repository.get_for_owner(run_id, student_id="alice")
+    before_revision = run["current_contract_revision"]
+    repository.request_cancel(run_id, student_id="alice")
+    cancelled = repository.mark_cancelled_at_safe_point(run_id, student_id="alice")
+    assert cancelled["status"] == "cancelled"
+
+    with pytest.raises(AgentRunConflict, match="terminal or uncertain"):
+        repository.revise_task_contract(
+            run_id,
+            student_id="alice",
+            control={
+                "intent": "supplement",
+                "task_id": run_id,
+                "expected_revision": before_revision,
+                "patch": {"add_constraints": ["Do not run this cancelled task"]},
+            },
+            idempotency_key="cancelled-revision-001",
+        )
+
+    after = repository.get_for_owner(run_id, student_id="alice")
+    assert after["status"] == "cancelled"
+    assert after["current_contract_revision"] == before_revision
+    assert AgentRunDispatchStore(repository).get_for_owner(
+        run_id, student_id="alice",
+    )["status"] == "cancelled"
 
 
 def test_quick_pause_is_idempotent_and_does_not_spend_classifier_budget(run_api, monkeypatch):

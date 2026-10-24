@@ -182,6 +182,61 @@ def test_submit_is_owner_bound_idempotent_and_rejects_payload_conflict(store):
         store.get_for_owner(run["run_id"], student_id="owner_b")
 
 
+def test_resource_read_receipt_is_bound_to_owner_plan_and_started_step(store):
+    run_id = _submit(store, key="resource-read-receipt-01")["run"]["run_id"]
+    plan = _plan(
+        store, run_id,
+        steps=[
+            {"role": "qa", "goal": "读取绑定资料并回答", "skill_ids": []},
+            {"role": "qa", "goal": "基于已核验资料给出总结", "skill_ids": []},
+        ],
+    )
+    store.start_step(
+        run_id, student_id="owner_a", plan_version=plan["plan_version"],
+        step_index=1,
+    )
+
+    assert not store.has_completed_resource_read_for_step(
+        run_id, student_id="owner_a", plan_version=1, step_index=1,
+    )
+    store.record_resource_read(
+        run_id, student_id="owner_a", claim_token=None,
+        label="本人经历与自述", phase="started",
+    )
+    store.record_resource_read(
+        run_id, student_id="owner_a", claim_token=None,
+        label="本人经历与自述", phase="completed",
+    )
+
+    assert store.has_completed_resource_read_for_step(
+        run_id, student_id="owner_a", plan_version=1, step_index=1,
+    )
+    events = store.read_events(run_id, student_id="owner_a", limit=10)["events"]
+    read_event = next(event for event in events if event["event_type"] == "run.resource_read_completed")
+    assert read_event["payload"] == {
+        "label": "本人经历与自述", "plan_version": 1, "step_index": 1,
+    }
+    store.finish_step(
+        run_id, student_id="owner_a", plan_version=1, step_index=1,
+        outcome="completed", result={"reply_candidate_unverified": "旧步骤结果"},
+    )
+    revised = _plan(
+        store, run_id, expected=1,
+        steps=[{"role": "qa", "goal": "新版本读取绑定资料", "skill_ids": []}],
+    )
+    store.start_step(
+        run_id, student_id="owner_a", plan_version=revised["plan_version"],
+        step_index=1,
+    )
+    assert not store.has_completed_resource_read_for_step(
+        run_id, student_id="owner_a", plan_version=revised["plan_version"], step_index=1,
+    )
+    with pytest.raises(AgentRunNotFound):
+        store.has_completed_resource_read_for_step(
+            run_id, student_id="owner_b", plan_version=1, step_index=1,
+        )
+
+
 def test_submission_and_dispatch_outbox_are_atomic_and_publish_failure_replays(store):
     run_id = _submit(store)["run"]["run_id"]
     dispatch = AgentRunDispatchStore(store)
