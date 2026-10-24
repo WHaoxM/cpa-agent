@@ -3325,14 +3325,46 @@ class AgentRunRepository:
         _, digest = _canonical_json(plan_json, max_bytes=16 * 1024)
         if digest != row["plan_sha256"]:
             raise AgentRunStoreError("Persisted Agent plan hash does not match")
+        metadata = plan_json.get("metadata") or {}
+        capability_binding = (
+            metadata.get("capability_binding")
+            if isinstance(metadata, Mapping) else None
+        )
+        capability_id = (
+            str(capability_binding.get("capability_id") or "")
+            if isinstance(capability_binding, Mapping) else None
+        )
+        try:
+            planned_steps = validate_plan_steps(
+                plan_json.get("steps"), capability_id=capability_id,
+            )
+        except (TypeError, ValueError) as exc:
+            raise AgentRunStoreError("Persisted Agent plan structure is invalid") from exc
+        if (
+            plan_json.get("steps") != planned_steps
+            or plan_json.get("goal_summary") != row["goal_summary"]
+        ):
+            raise AgentRunStoreError("Persisted Agent plan and step rows do not match")
         step_rows = list(conn.execute(text("""
             SELECT step_index, role, goal, skill_ids_json, status, attempts,
                    result_json, result_sha256, error_code, started_at, finished_at, updated_at
             FROM agent_run_step WHERE run_id=:run_id AND plan_version=:version
             ORDER BY step_index
         """), {"run_id": run_id, "version": plan_version}).mappings())
+        if len(step_rows) != len(planned_steps):
+            raise AgentRunStoreError("Persisted Agent plan and step rows do not match")
         steps = []
-        for item in step_rows:
+        for index, (item, planned) in enumerate(zip(step_rows, planned_steps), 1):
+            skill_ids = _decode_json(
+                item["skill_ids_json"], expected_type=list, field="skill ids",
+            )
+            if (
+                int(item["step_index"]) != index
+                or item["role"] != planned["role"]
+                or item["goal"] != planned["goal"]
+                or skill_ids != planned["skill_ids"]
+            ):
+                raise AgentRunStoreError("Persisted Agent plan and step rows do not match")
             result = None
             if item["result_json"] is not None:
                 result = _decode_json(item["result_json"], expected_type=dict, field="step result")
@@ -3343,7 +3375,7 @@ class AgentRunRepository:
                 "step_index": int(item["step_index"]),
                 "role": item["role"],
                 "goal": item["goal"],
-                "skill_ids": _decode_json(item["skill_ids_json"], expected_type=list, field="skill ids"),
+                "skill_ids": skill_ids,
                 "status": item["status"],
                 "attempts": int(item["attempts"] or 0),
                 "result": result,
