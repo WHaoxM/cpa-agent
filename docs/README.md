@@ -70,6 +70,7 @@ For open-source runnable hardening, keep these active and maintained:
 - `adr/0007-account-session-epoch-revocation.md` — 自建账号停用/降权/改密后的全会话代数撤销，显式迁移与 fail-closed 回退边界
 - `adr/0008-versioned-mysql-schema-migrations.md` — MySQL 结构由 Alembic 版本账本统一接管；冻结旧初始化快照，后续只新增版本
 - `guides/open-source-hardening.md`
+- `guides/account-profile-and-notification-preferences.md` — authenticated account facts, revisioned profile writes, persisted notification intent, and unavailable security/delivery capabilities
 - `specs/self-managed-account-auth.md` — 用户确认的平台自建账号窄闭环、Redis 会话/CSRF/管理员开户与未完成边界
 - `specs/admin-source-staging.md` — 管理员 dataset/KB 私有原文暂存、摘要回读、删除与迁移；不等于权威岗位入库或建图
 - `specs/admin-dataset-publication-binding.md` — 私有 dataset 单条记录经服务端来源重读、摘要绑定进入正式管理员人工岗位发布；不等于自动或官方来源认证
