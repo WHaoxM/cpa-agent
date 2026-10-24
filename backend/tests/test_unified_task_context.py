@@ -226,7 +226,9 @@ def test_task_lead_has_one_protocol_and_rejects_an_unlisted_direction(monkeypatc
     monkeypatch.setattr('app.utils.llm_client.get_llm_client',lambda:SimpleNamespace(chat=chat))
     result=experts_lead.task_lead_decide('想比较两个方向',{'catalogue':['数据分析']})
     assert result['agent']=='career_exploration'
-    with pytest.raises(ValueError):experts_lead.task_lead_decide('比较',{'catalogue':[]})
+    rejected=experts_lead.task_lead_decide('比较',{'catalogue':[]})
+    assert rejected['agent']=='clarify'
+    assert '当前可用目录' in rejected['reply']
     assert len(captured)==2
 
 
@@ -249,6 +251,62 @@ def test_task_lead_accepts_same_session_conversation_recall(monkeypatch):
 
     assert result['agent'] == 'conversation_recall'
     assert 'conversation_recall' in captured[0]['content']
+
+
+@pytest.mark.parametrize('raw,reply_fragment', [
+    ({'agent': 'practice_review', 'compared_roles': []}, '没有独立的实践记录复盘流程'),
+    ({'agent': 'send_email', 'compared_roles': []}, '没能可靠判断'),
+    ({'agent': ['career_exploration'], 'compared_roles': []}, '没能可靠判断'),
+    ({'agent': 'career_exploration', 'compared_roles': '数据分析'}, '当前可用目录'),
+    ({'agent': 'career_exploration', 'compared_roles': [42]}, '当前可用目录'),
+    ({'agent': 'career_exploration', 'compared_roles': ['数据分析', '数据分析']}, '当前可用目录'),
+    ({'agent': 'career_exploration', 'compared_roles': ['未发布方向']}, '当前可用目录'),
+    ({'agent': 'resume_preparation', 'compared_roles': [], 'document_action': 'read_everything'}, '没能可靠判断'),
+])
+def test_task_lead_unsupported_or_malformed_intent_stops_at_clarify(
+    monkeypatch, raw, reply_fragment,
+):
+    import json
+    from app.services.agent_runtime import experts_lead
+
+    monkeypatch.setattr(
+        'app.utils.llm_client.get_llm_client',
+        lambda: SimpleNamespace(chat=lambda **_kwargs: json.dumps(raw, ensure_ascii=False)),
+    )
+
+    result = experts_lead.task_lead_decide(
+        '复盘我的实践记录', {'catalogue': ['数据分析']},
+    )
+
+    assert result['agent'] == 'clarify'
+    assert result['goal_summary'] == '当前请求尚不能安全映射到已实现的任务路径。'
+    assert result['compared_roles'] == []
+    assert result['document_action'] == 'discuss'
+    assert reply_fragment in result['reply']
+
+
+def test_task_lead_prompt_sets_no_read_correction_and_mixed_intent_boundaries(monkeypatch):
+    from app.services.agent_runtime import experts_lead
+    captured = []
+
+    def chat(**kwargs):
+        captured.append(kwargs['messages'][0]['content'])
+        return ('{"agent":"clarify","goal_summary":"","reply":"请说明优先项",'
+                '"compared_roles":[],"document_action":"discuss"}')
+
+    monkeypatch.setattr('app.utils.llm_client.get_llm_client', lambda: SimpleNamespace(chat=chat))
+    result = experts_lead.task_lead_decide(
+        '不要读取简历；纠正一下，并先帮我比较方向，再讨论实践记录。',
+        {'catalogue': ['数据分析'], 'recent_discussion': {'messages': []}},
+    )
+
+    assert result['agent'] == 'clarify'
+    prompt = captured[0]
+    assert 'practice_review' not in prompt
+    assert '没有独立的实践记录复盘路径' in prompt
+    assert '不读取/不访问资料' in prompt
+    assert '以当前用户原话为准' in prompt
+    assert '没有明确顺序或优先级' in prompt
 
 
 def test_student_task_history_reconciles_same_session_rows_by_message_id(monkeypatch):

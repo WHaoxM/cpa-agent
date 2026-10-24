@@ -112,23 +112,58 @@ def experts_lead_decide(
 
 
 def task_lead_decide(message, context):
-    """Use the existing structured Lead/client, with one bounded business enum."""
+    """Classify a student-task turn only into routes implemented by this adapter."""
     raw = _llm_lead(message, card='', summary='', memory_digest='', template_hint=None,
                     known_slots=[], interaction_mode='experts', selected_capability={
                         'execution_pipeline': 'student_task_v1', 'capability_id': 'student-task',
                         'task_context': context})
-    if not isinstance(raw, dict) or raw.get('agent') not in {
-        'resume_preparation', 'career_exploration', 'practice_review', 'conversation_recall', 'clarify',
+    if not isinstance(raw, dict):
+        return _task_lead_clarification()
+
+    agent = raw.get('agent')
+    if agent == 'practice_review':
+        # The current student-task executor has no dedicated practice-review
+        # handler. It must not fall through to the career-exploration branch.
+        return _task_lead_clarification(
+            '当前任务入口没有独立的实践记录复盘流程，因此我不会把它误当成职业探索。'
+            '你可以补充想复盘的记录内容，或改为简历材料与职业方向问题。'
+        )
+    if not isinstance(agent, str) or agent not in {
+        'resume_preparation', 'career_exploration', 'conversation_recall', 'clarify',
     }:
-        raise ValueError('主 Agent 未形成有效的业务委派，尚未启动分析')
-    roles = raw.get('compared_roles') or []
-    if not isinstance(roles, list) or len(roles) > 2 or any(r not in context['catalogue'] for r in roles):
-        raise ValueError('主 Agent 返回了目录之外的方向，未保存')
+        return _task_lead_clarification()
+
+    roles = raw.get('compared_roles')
+    if roles is None:
+        roles = []
+    catalogue = context.get('catalogue')
+    if not isinstance(catalogue, (list, tuple)):
+        catalogue = []
+    if (not isinstance(roles, list) or len(roles) > 2
+            or any(not isinstance(role, str) or role not in catalogue for role in roles)
+            or len(set(roles)) != len(roles)):
+        return _task_lead_clarification(
+            '我无法确认所选方向是否属于当前可用目录。请从页面提供的方向中选择，或说明你希望先处理什么。'
+        )
     action = raw.get('document_action', 'discuss')
-    if action not in {'discuss', 'continue', 'restart'}:
-        raise ValueError('主 Agent 未形成有效的材料读取意图')
-    return {'agent': raw['agent'], 'goal_summary': str(raw.get('goal_summary') or '')[:300],
+    if not isinstance(action, str) or action not in {'discuss', 'continue', 'restart'}:
+        return _task_lead_clarification()
+    return {'agent': agent, 'goal_summary': str(raw.get('goal_summary') or '')[:300],
             'reply': str(raw.get('reply') or '')[:1000], 'compared_roles': roles, 'document_action': action}
+
+
+def _task_lead_clarification(reply: Optional[str] = None) -> Dict[str, Any]:
+    """Return a non-executing response when classification is unsupported/invalid."""
+    return {
+        'agent': 'clarify',
+        'goal_summary': '当前请求尚不能安全映射到已实现的任务路径。',
+        'reply': reply or (
+            '我没能可靠判断这次要处理哪类任务。你希望回顾本会话、查看已关联的材料，'
+            '还是比较职业方向？'
+        ),
+        'compared_roles': [],
+        'document_action': 'discuss',
+    }
 
 
 def _llm_lead(
