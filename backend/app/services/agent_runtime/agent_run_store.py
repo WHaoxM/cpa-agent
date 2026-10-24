@@ -1958,7 +1958,10 @@ class AgentRunRepository:
         self._assert_current_claim(conn, run_id, claim_token)
 
     def record_business_delegation(self, run_id, *, student_id, claim_token, agent):
-        if agent not in {'resume_preparation','career_exploration','practice_review','clarify'}:
+        if agent not in {
+            'resume_preparation', 'career_exploration', 'practice_review',
+            'conversation_recall', 'clarify',
+        }:
             raise ValueError('unsupported business delegation')
         with self.mysql.engine.begin() as conn:
             row = self._locked_run(conn, run_id=run_id, student_id=student_id)

@@ -8,6 +8,7 @@ from app.services.agent_runtime.run_failure import failure_reply
     ('estimated_input_over_window','模型可接收的窗口','权限'),
     ('runtime_release_changed_during_step','执行期间发生更新','预算'),
     ('task_answer_validation_failed','资料与格式核对','稍后重新提交'),
+    ('resource_read_result_unverified','没有取得可核验的资料读取结果','权限'),
     ('ValueError','读取或答复核对','能力已经确认'),
     ('TimeoutError','及时响应','预算耗尽'),
     ('raw_database_password_uri','分析未完成','raw_database_password_uri'),
@@ -15,7 +16,10 @@ from app.services.agent_runtime.run_failure import failure_reply
 def test_public_failure_is_specific_when_known_and_never_echoes_internal_error(code,expected,absent):
     reply=failure_reply(code)
     assert expected in reply and absent not in reply
-    assert '材料仍保留' in reply
+    if code == 'resource_read_result_unverified':
+        assert '原问题和任务记录仍保留' in reply
+    else:
+        assert '材料仍保留' in reply
 
 
 def test_executor_persists_budget_reason_instead_of_generic_qa_failure(monkeypatch):

@@ -75,6 +75,8 @@ def _career_model_tool_views(tools):
 def _ask_context_messages(
     records: Optional[List[Dict[str, str]]],
     current_user_content: str,
+    *,
+    append_current_user: bool = False,
 ) -> List[BaseMessage]:
     """Keep the bounded Ask transcript assembled by the server, without tools.
 
@@ -99,7 +101,14 @@ def _ask_context_messages(
             HumanMessage(content=content) if role == "user"
             else AIMessage(content=content)
         )
-    if not messages or not (
+    if append_current_user:
+        # Agent-run submissions are stored in agent_run, not in the ordinary
+        # conversation_message stream. Preserve this new turn even when its
+        # text happens to equal the previous user turn.
+        if len(messages) >= MAX_HISTORY_MESSAGES + 1:
+            raise ValueError("Ask context is full and cannot append the current question")
+        messages.append(HumanMessage(content=current_user_content))
+    elif not messages or not (
         isinstance(messages[-1], HumanMessage)
         and str(messages[-1].content) == current_user_content
     ):
@@ -245,6 +254,7 @@ def scoped_invoke(
     allow_artifact_commit: bool = True,
     ask_context_messages: Optional[List[Dict[str, str]]] = None,
     ask_context_appendix: str = "",
+    ask_context_append_current: bool = False,
     no_tool_output_token_cap: Optional[int] = None,
 ) -> Dict[str, Any]:
     start = time.time()
@@ -327,6 +337,10 @@ def scoped_invoke(
     if ask_context_messages is not None or ask_context_appendix:
         if interaction_mode != InteractionMode.ASK:
             raise ValueError("Ask context extensions are only valid in Ask mode")
+    if type(ask_context_append_current) is not bool:
+        raise ValueError("Ask current-message append flag must be boolean")
+    if ask_context_append_current and ask_context_messages is None:
+        raise ValueError("Ask current-message append requires explicit history")
     if len(ask_context_appendix) > 20000:
         raise ValueError("Ask context appendix exceeds its assembled bound")
     if ask_context_appendix:
@@ -388,7 +402,10 @@ def scoped_invoke(
                          {'role':'user','content':'【本次问题】\n'+packet.user_utterance}]
         elif ask_context_messages is not None:
             messages.extend(_ask_context_records(
-                _ask_context_messages(ask_context_messages, user_content),
+                _ask_context_messages(
+                    ask_context_messages, user_content,
+                    append_current_user=ask_context_append_current,
+                ),
             ))
         else:
             messages += [{"role": "user", "content": user_content}]
@@ -570,7 +587,10 @@ def scoped_invoke(
 
     try:
         initial_messages = (
-            _ask_context_messages(ask_context_messages, user_content)
+            _ask_context_messages(
+                ask_context_messages, user_content,
+                append_current_user=ask_context_append_current,
+            )
             if interaction_mode == InteractionMode.ASK and ask_context_messages is not None
             else [HumanMessage(content=user_content)]
         )

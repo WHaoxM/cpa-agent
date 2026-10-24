@@ -98,6 +98,12 @@ D:\Miniconda\miniconda3\envs\mkg\python.exe -B -m pytest backend/tests/test_ask_
 
 ## 尚未覆盖
 
+### 2026-10-24 同 session 学生任务上下文
+
+Student task lead 的近期上下文由 `backend/app/services/agent_runtime/student_task.py::_history` 组装：只加载当前 owner/session 的普通 user/assistant 消息，并与 Redis session 历史按 `message_id` 合并。它不是跨 session 搜索，也不授予附件或个人档案读取权限。学生任务使用 `conversation_recall` 时只消费有界对话文本；缺少依据应澄清。默认计划不应强制读取探索资料；只有实际资料准备路径返回可验证读取证据时，执行器才要求相应持久 receipt。读取权限本身仍由工具 allowlist、owner/session 检查及执行器 receipt 校验控制。
+
+相关定位：历史来源与边界在 `student_task.py::_history`；task lead 方向枚举在 `experts_lead.py` 与 `backend/config/prompts/agent.task.lead.system/base.md`；student task 默认计划和 receipt 判定在 `agent_run_executor.py::_student_task_default_plan` / `_student_task_requires_resource_receipt`；最终模型输入的当前轮附加在 `scoped_invoke.py`。验证与未覆盖范围记录在[2026-10-24 QA 回放报告](../reports/2026-10-24-qa-ask-agent-ui-replay.md#同会话记忆与学生任务读取计划修正2026-10-24)。该报告中的测试使用 FakeLLM；它不证明真实 provider 或生产 worker 的多轮结果。
+
 - Ask 已能按 section 读取有界证据，但不是无上限全文读取；多页续读、其它业务资源和 Agent/Experts 对同一 EvidencePack 的复用尚未逐一完成真实验收。Ask 的长附件路径仍保留历史 `attachment_read` 只读例外，尚未全部收束到 EvidencePack。
 - Tavily 适配器、工具注册、按 provider 可用性授予 Ask 和查询隐私检查已实现，但此环境没有 `TAVILY_API_KEY`，仍未做真实联网联调；免费额度/账户状态也未由 provider 确认。要启用需由受信部署管理员在服务器环境安全配置 `TAVILY_API_KEY`，不得写入模型参数或日志；免费 key 额度用完后由 provider 拒绝，本轮熔断并如实报告，不自动升级或支付。`graph_query` 仍只读受限本地图谱，不能代称网络检索。Skill registry 有审核版本与角色边界；`qa` 当前仅有不需 capability 的 `school-context`，教育筛选 Skill 需要受限 capability，因此没有安全扩展到其它技能。本轮保持学校术语的按需选择，不把窄选择器宣称为一般 Skill 选择。
 - 当前可信真实岗位目录仍为空，因此真实学生的**岗位匹配与岗位专项报告**仍无可发布成果；这不阻断独立的已确认简历诊断报告。合成 MySQL 正链只验证岗位适配器和来源撤回门禁。

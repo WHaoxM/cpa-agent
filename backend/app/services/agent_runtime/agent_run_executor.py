@@ -30,6 +30,35 @@ _TASK_BUDGET_STOP_REASONS = frozenset({
 # not owner-partitioned, normalization may register OOV entities, and attachment
 # reads are not yet bound to durable run input references.
 _RUN_QA_TOOL_ALLOWLIST = frozenset({"career_data_read", "graph_query", "db_query"})
+
+
+def _student_task_default_plan() -> Dict[str, Any]:
+    """Let the bounded task adapter choose whether to read or clarify."""
+    return {
+        "action": "run_plan",
+        "capability_fit": "supported",
+        "goal_summary": "回应当前请求；上下文不足时先澄清",
+        "steps": [{
+            "role": "qa",
+            "goal": "根据本轮请求和已提供上下文处理；缺少必要信息时先提出澄清问题",
+            "skill_ids": [],
+        }],
+    }
+
+
+def _student_task_requires_resource_receipt(result: Optional[Dict[str, Any]]) -> bool:
+    if (not isinstance(result, dict)
+            or result.get("agent") != "resume_preparation"
+            or result.get("state") not in {"discussing", "partial"}):
+        return False
+    if result.get("document_reads"):
+        return True
+    return any(
+        isinstance(item, dict) and item.get("status") in {"read", "partial"}
+        for item in result.get("evidence_summary") or []
+    )
+
+
 _UNSUPPORTED_CAPABILITY_REPLY = (
     "本轮任务尚未启动：请求中的专家/能力包选择不在当前服务端白名单内，"
     "或与当前交互模式不兼容。请切换到已支持的能力包或普通 Agent 后重试。"
@@ -621,12 +650,17 @@ class AgentRunExecutor:
                     'skill_ids': list(no_read_safe_skill_ids(capability)),
                 }],
             }
-        elif capability is not None and capability.execution_pipeline in {'career_exploration_companion_v1', 'student_task_v1'}:
+        elif capability is not None and capability.execution_pipeline == 'career_exploration_companion_v1':
             # This page already selected a bounded read-only capability. Do not
             # let the generic Lead turn a plan proposal into a write-role task.
             decision = {'action': 'run_plan', 'capability_fit': 'supported',
                         'goal_summary': '依据本轮真实资料陪学生比较、澄清和复盘',
                         'steps': [{'role': 'qa', 'goal': '读取绑定的探索资料并形成待确认建议', 'skill_ids': []}]}
+        elif capability is not None and capability.execution_pipeline == 'student_task_v1':
+            # The task Lead selects clarify, same-session recall, or a domain
+            # adapter after this phase. The outer plan must not force every
+            # request through a personal-resource read.
+            decision = _student_task_default_plan()
         else:
             planner_kwargs = {
                 "card": Blackboard().capability_card(filled_only=True),
@@ -1298,8 +1332,15 @@ class AgentRunExecutor:
             reply = str(output.get("reply") or "").strip()
             if not reply:
                 raise RuntimeError("read_only_answer_empty")
-            if (not no_personal_reads
-                    and step_requires_resource_read(step.get("goal"))
+            is_student_task = bool(
+                capability is not None
+                and capability.execution_pipeline == "student_task_v1"
+            )
+            resource_read_expected = (
+                _student_task_requires_resource_receipt(student_task_result)
+                if is_student_task else step_requires_resource_read(step.get("goal"))
+            )
+            if (not no_personal_reads and resource_read_expected
                     and not has_verified_read_tool_result(output)):
                 receipt_reader = getattr(
                     self.repository, "has_completed_resource_read_for_step", None,

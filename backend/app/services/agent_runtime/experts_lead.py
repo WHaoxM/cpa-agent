@@ -117,7 +117,9 @@ def task_lead_decide(message, context):
                     known_slots=[], interaction_mode='experts', selected_capability={
                         'execution_pipeline': 'student_task_v1', 'capability_id': 'student-task',
                         'task_context': context})
-    if not isinstance(raw, dict) or raw.get('agent') not in {'resume_preparation', 'career_exploration', 'practice_review', 'clarify'}:
+    if not isinstance(raw, dict) or raw.get('agent') not in {
+        'resume_preparation', 'career_exploration', 'practice_review', 'conversation_recall', 'clarify',
+    }:
         raise ValueError('主 Agent 未形成有效的业务委派，尚未启动分析')
     roles = raw.get('compared_roles') or []
     if not isinstance(roles, list) or len(roles) > 2 or any(r not in context['catalogue'] for r in roles):

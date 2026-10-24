@@ -642,6 +642,9 @@ def _invoke_subagent(
     allow_artifact_commit: bool = True,
     max_tokens: int = 2048,
     no_tool_output_token_cap: Optional[int] = None,
+    ask_context_messages=None,
+    ask_context_appendix: str = "",
+    ask_context_append_current: bool = False,
 ):
     kwargs = dict(
         allow_tools=allow_tools,
@@ -650,6 +653,9 @@ def _invoke_subagent(
         student_id=student_id,
         plan_tool_allowlist=plan_tool_allowlist,
         allow_artifact_commit=allow_artifact_commit,
+        ask_context_messages=ask_context_messages,
+        ask_context_appendix=ask_context_appendix,
+        ask_context_append_current=ask_context_append_current,
     )
     if not allow_tools or interaction_mode == InteractionMode.ASK:
         out = scoped_invoke(

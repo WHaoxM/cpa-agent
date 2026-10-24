@@ -230,6 +230,205 @@ def test_task_lead_has_one_protocol_and_rejects_an_unlisted_direction(monkeypatc
     assert len(captured)==2
 
 
+def test_task_lead_accepts_same_session_conversation_recall(monkeypatch):
+    from app.services.agent_runtime import experts_lead
+
+    captured = []
+
+    def chat(**kwargs):
+        captured.extend(kwargs['messages'])
+        return ('{"agent":"conversation_recall","goal_summary":"回顾本会话内容",'
+                '"reply":"","compared_roles":[],"document_action":"discuss"}')
+
+    monkeypatch.setattr('app.utils.llm_client.get_llm_client', lambda: SimpleNamespace(chat=chat))
+    result = experts_lead.task_lead_decide(
+        '我刚才提到的编号是什么？',
+        {'catalogue': [], 'recent_discussion': {'messages': [
+            {'role': 'user', 'content': '编号是 ZXQ-421。'}]}},
+    )
+
+    assert result['agent'] == 'conversation_recall'
+    assert 'conversation_recall' in captured[0]['content']
+
+
+def test_student_task_history_reconciles_same_session_rows_by_message_id(monkeypatch):
+    from app.services.agent_runtime import student_task
+    from app.services import session_manager
+
+    redis_messages = [
+        {'message_id': 'msg-2', 'role': 'user', 'content': '同一条重复文本'},
+        {'message_id': 'msg-3', 'role': 'assistant', 'content': '我会按你刚才的说明处理。',
+         'metadata': {'tool_calls': [{'secret': 'must not pass'}]}},
+    ]
+    manager = SimpleNamespace(
+        refresh_session=lambda session_id, require_authoritative: SimpleNamespace(
+            student_id='owner', messages=redis_messages,
+        ),
+    )
+    monkeypatch.setattr(session_manager, 'get_session_manager', lambda: manager)
+
+    class Mysql:
+        def __init__(self):
+            self.sql = ''
+            self.params = None
+
+        def fetch_all(self, sql, params):
+            self.sql, self.params = sql, params
+            # The query is newest-first; the history adapter restores order.
+            return [
+                {'message_id': 'msg-2', 'role': 'user', 'content': '同一条重复文本'},
+                {'message_id': 'msg-1', 'role': 'user', 'content': '同一条重复文本'},
+            ]
+
+    mysql = Mysql()
+    history = student_task._history(mysql, 'session-a', 'owner')
+
+    assert [item['content'] for item in history] == [
+        '同一条重复文本', '同一条重复文本', '我会按你刚才的说明处理。',
+    ]
+    assert [item['role'] for item in history] == ['user', 'user', 'assistant']
+    assert 'JOIN conversation AS c' in mysql.sql
+    assert mysql.params == {'session': 'session-a', 'owner': 'owner', 'limit': 32}
+    assert 'must not pass' not in str(history)
+    assert all(set(item) == {'role', 'content'} for item in history)
+
+
+def test_student_task_history_does_not_fallback_across_session_owners(monkeypatch):
+    from app.services.agent_runtime import student_task
+    from app.services import session_manager
+
+    manager = SimpleNamespace(
+        refresh_session=lambda session_id, require_authoritative: SimpleNamespace(
+            student_id='different-owner', messages=[
+                {'message_id': 'private', 'role': 'user', 'content': 'private'}
+            ],
+        ),
+    )
+    monkeypatch.setattr(session_manager, 'get_session_manager', lambda: manager)
+
+    class Mysql:
+        def fetch_all(self, *_args, **_kwargs):
+            raise AssertionError('owner mismatch must stop before SQL fallback')
+
+    assert student_task._history(Mysql(), 'session-a', 'owner') == []
+
+
+def test_agent_run_recall_keeps_identical_current_text_as_a_distinct_turn():
+    from app.services.agent_runtime.scoped_invoke import _ask_context_messages
+    from langchain_core.messages import HumanMessage
+
+    history = [{'role': 'user', 'content': '我刚才说的编号是什么？'}]
+    messages = _ask_context_messages(
+        history, '我刚才说的编号是什么？', append_current_user=True,
+    )
+
+    assert len(messages) == 2
+    assert all(isinstance(item, HumanMessage) for item in messages)
+    assert [item.content for item in messages] == [
+        '我刚才说的编号是什么？', '我刚才说的编号是什么？',
+    ]
+
+
+def test_conversation_recall_scoped_adapter_receives_ordered_history_without_tools(monkeypatch):
+    from app.services.agent_runtime.blackboard import Blackboard
+    from app.services.agent_runtime.modes import InteractionMode
+    from app.services.agent_runtime.scoped_invoke import scoped_invoke
+    from app.services.agent_runtime.task_packet import build_standard_packet
+
+    captured = {}
+
+    class FakeLlm:
+        def chat(self, **kwargs):
+            captured.update(kwargs)
+            return '你之前问的是 ZXQ-421。'
+
+    monkeypatch.setattr('app.utils.llm_client.get_llm_client', lambda: FakeLlm())
+    packet = build_standard_packet(
+        'qa', goal='仅按同一会话历史回忆，不调用工具。',
+        user_utterance='我刚才问的编号是什么？', read_keys=[], write_keys=[],
+        capability_id='student-task-conversation-recall',
+    )
+    result = scoped_invoke(
+        packet, Blackboard(), allow_tools=False,
+        interaction_mode=InteractionMode.ASK,
+        ask_context_messages=[
+            {'role': 'user', 'content': '编号是 ZXQ-421。'},
+            {'role': 'assistant', 'content': '已记录。'},
+            {'role': 'user', 'content': '我刚才问的编号是什么？'},
+        ],
+        ask_context_append_current=True,
+        ask_context_appendix='仅当前会话；不调用工具或读取附件。',
+    )
+
+    sent = captured['messages']
+    assert [item['role'] for item in sent] == ['system', 'user', 'assistant', 'user', 'user']
+    assert sent[-2]['content'] == '我刚才问的编号是什么？'
+    assert '我刚才问的编号是什么？' in sent[-1]['content']
+    assert '任务正文：' in sent[-1]['content']
+    assert result['reply'] == '你之前问的是 ZXQ-421。'
+    assert result['tool_calls'] == []
+    assert result['blackboard_updates'] == {}
+
+
+@pytest.mark.parametrize('history,expected_state', [
+    ([], 'needs_input'),
+    ([{'role': 'user', 'content': '编号是 ZXQ-421。'}], 'answered_from_conversation'),
+])
+def test_conversation_recall_uses_only_bounded_history_and_never_tools(
+    monkeypatch, history, expected_state,
+):
+    from app.services.agent_runtime import student_task, experts_lead
+
+    staged = []
+    monkeypatch.setattr(student_task, 'TaskContextStore', lambda _mysql: SimpleNamespace(
+        read=lambda *_args: {
+            'active_run_id': 'run-recall', 'revision': 1, 'focus': [], 'latest_result': {},
+            'document_reads': [], 'turns': [],
+        },
+        stage=lambda *args: staged.append(args[-1]),
+    ))
+    monkeypatch.setattr(student_task, '_lead_sources', lambda *_args: {'facts': {}, 'candidates': []})
+    monkeypatch.setattr(student_task, '_recent', lambda *_args: {
+        'messages': history, 'coverage': 'recent_discussion_only',
+        'boundary': 'same session only',
+    })
+    monkeypatch.setattr(experts_lead, 'task_lead_decide', lambda *_args: {
+        'agent': 'conversation_recall', 'goal_summary': '回忆本会话', 'reply': '',
+        'compared_roles': [], 'document_action': 'discuss',
+    })
+
+    calls = []
+
+    def invoke(packet, board, session_id, **kwargs):
+        calls.append((packet, session_id, kwargs))
+        return {'reply': '你在本会话里提到编号 ZXQ-421。'}
+
+    result = student_task.run_step(
+        mysql=None,
+        snapshot={'task_context_version': 0, 'message': '我之前提到的编号是什么？'},
+        run_id='run-recall', owner='owner', session_id='session-a',
+        repository=SimpleNamespace(record_business_delegation=lambda *_args, **_kwargs: None),
+        claim_token='claim', invoke=invoke, packet=None, board=object(),
+    )
+
+    task = result['student_task']
+    assert task['state'] == expected_state
+    if history:
+        assert len(calls) == 1
+        packet, session_id, kwargs = calls[0]
+        assert session_id == 'session-a'
+        assert packet.capability_id == 'student-task-conversation-recall'
+        assert packet.read_keys == [] and packet.write_keys == []
+        assert kwargs['allow_tools'] is False
+        assert kwargs['ask_context_messages'] == history
+        assert kwargs['ask_context_append_current'] is True
+        assert task['resource_access'] == 'conversation_only'
+    else:
+        assert calls == []
+        assert '原话再发一次' in task['reply']
+    assert len(staged) == 1
+
+
 def test_unselected_directions_do_not_create_an_exploration_for_a_resume_followup(monkeypatch):
     from app.services.agent_runtime import student_task, experts_lead
     from app.services import career_exploration

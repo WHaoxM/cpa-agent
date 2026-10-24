@@ -80,6 +80,7 @@ def run_step(*, mysql, snapshot, run_id, owner, session_id, repository, claim_to
     # Reading checkpoints belong to the task, not to whichever business agent
     # happened to answer last. Older tasks still recover their last receipt.
     previous = {**previous, 'document_reads': context.get('document_reads') or previous.get('document_reads') or []}
+    recent_discussion = _recent(mysql, session_id, owner)
     decision = task_lead_decide(snapshot['message'], {'catalogue': catalogue,
         'materials': [{'name': r['name'], 'status': r['status']} for r in focus],
         'previous_agent': previous.get('agent'), 'current_question': previous.get('question'),
@@ -87,12 +88,59 @@ def run_step(*, mysql, snapshot, run_id, owner, session_id, repository, claim_to
         'has_confirmed_resume': bool(sources.get('facts', {}).get('resume_version')),
         'has_plan': bool(previous.get('round_id')),
         'has_unread_material': any(not r.get('complete') for r in previous['document_reads']) or bool(previous.get('continuation')),
-        'recent_discussion': _recent(mysql, session_id, owner)})
+        'recent_discussion': recent_discussion})
     result = dict(decision)
     repository.record_business_delegation(run_id, student_id=owner, claim_token=claim_token, agent=decision['agent'])
     if decision['agent'] == 'clarify':
         result.update(reply=decision['reply'] or '你想先看简历，还是继续比较职业方向？', state='needs_input')
         output = {'reply': result['reply'], 'tool_calls': [], 'skill_versions': [], 'blackboard_updates': {}}
+    elif decision['agent'] == 'conversation_recall':
+        history_messages = recent_discussion.get('messages') or []
+        if not history_messages:
+            result.update(
+                reply='当前可用的本会话记录里没有这条信息。请把原话再发一次，或补充你希望我回忆的内容。',
+                state='needs_input',
+                history_coverage=recent_discussion.get('coverage', 'unavailable'),
+            )
+            output = {'reply': result['reply'], 'tool_calls': [], 'skill_versions': [],
+                      'blackboard_updates': {}}
+        else:
+            from .modes import InteractionMode
+            from .task_packet import build_standard_packet
+            packet = build_standard_packet(
+                'qa',
+                goal=('仅依据服务端提供的同一会话近期对话回答本轮回忆问题。'
+                      '按角色区分用户原话与助手旧答；用户原话可作为“你之前提到”的来源，'
+                      '不代表客观核验；后来的用户纠正优先。若记录缺少所需信息或被截断，先澄清。'),
+                user_utterance=snapshot['message'],
+                read_keys=[], write_keys=[], capability_id='student-task-conversation-recall',
+            )
+            output = invoke(
+                packet, board, session_id, allow_tools=False,
+                interaction_mode=InteractionMode.ASK, student_id=owner,
+                allow_artifact_commit=False,
+                ask_context_messages=history_messages,
+                ask_context_append_current=True,
+                ask_context_appendix=(
+                    '同一会话回忆边界：下面的 user/assistant 消息由服务端从当前会话投影，'
+                    '不是附件正文或个人档案。用户消息只能归因为“用户此前这样说过”，'
+                    '不能升级为外部核实事实；assistant 消息只说明当时对话内容，不能作为独立证据。'
+                    '同一事项以后出现的明确用户纠正优先。未出现在所给窗口、或被标记截断的内容不得假称记得；'
+                    '信息不足时问一个澄清问题。不要调用工具或声称读取过附件。'
+                ),
+            )
+            reply = str(output.get('reply') or '').strip()
+            if output.get('incomplete'):
+                raise RuntimeError(str(output.get('stop_reason') or 'conversation_recall_incomplete'))
+            if not reply:
+                raise ValueError('conversation_recall_answer_empty')
+            result.update(
+                reply=reply,
+                state='answered_from_conversation',
+                history_coverage=recent_discussion.get('coverage', 'recent_discussion_only'),
+                history_message_count=len(history_messages),
+                resource_access='conversation_only',
+            )
     elif decision['agent'] == 'resume_preparation':
         # A file reference never grants cross-owner or cross-session access.
         ids = [r['file_id'] for r in files] or snapshot.get('attachment_ids', [])
@@ -312,17 +360,54 @@ def _student_discussion(mysql, session_id, owner):
 
 
 def _history(mysql, session_id, owner):
-    # Structured receipts below are discussion only; never replay file bodies as history.
-    rows = mysql.fetch_all('SELECT * FROM agent_run WHERE session_id=:session AND student_id=:owner AND status=\'completed\' ORDER BY created_at DESC,run_id DESC LIMIT 4',
-                           {'session': session_id, 'owner': owner})
-    from .agent_run_store import AgentRunRepository
-    history = []
-    for row in reversed(rows):
-        snapshot = AgentRunRepository._verified_input_snapshot(row)
-        view = AgentRunRepository._run_view(row)
-        history.extend([{'role':'user','content':snapshot['message']},
-                        {'role':'assistant','content':(view['final_result'] or {}).get('reply','')}])
-    return history
+    """Return a bounded, owner-scoped same-session chat transcript.
+
+    Conversation messages are the canonical source for Ask dialogue. Redis is
+    written before its SQL projection, so reconcile the two with stable IDs;
+    never collapse repeated text or guess chronology from mixed local/UTC
+    timestamps. Do not include tool payloads, thinking, or attachment bodies.
+    """
+    from ..session_history import merge_history_sources
+
+    redis_messages = []
+    try:
+        from ..session_manager import get_session_manager
+        manager = get_session_manager()
+        state = manager.refresh_session(session_id, require_authoritative=True)
+        if state is not None:
+            if state.student_id != owner:
+                return []
+            redis_messages = [
+                {'message_id': item.get('message_id'), 'role': item.get('role'),
+                 'content': item.get('content', '')}
+                for item in state.messages
+                if isinstance(item, dict) and item.get('role') in {'user', 'assistant'}
+            ]
+    except Exception:
+        # The owner-bound SQL projection remains a safe fallback. An unavailable
+        # or invalid Redis snapshot is never used as proof of complete history.
+        redis_messages = []
+
+    durable_rows = mysql.fetch_all(
+        """SELECT m.message_id, m.role, m.content
+           FROM conversation_message AS m
+           INNER JOIN conversation AS c
+             ON c.session_id=m.session_id AND c.student_id=:owner
+           WHERE m.session_id=:session AND m.role IN ('user','assistant')
+           ORDER BY m.id DESC LIMIT :limit""",
+        {'session': session_id, 'owner': owner, 'limit': 32},
+    ) or []
+    durable_messages = [
+        {'message_id': row.get('message_id'), 'role': row.get('role'),
+         'content': row.get('content', '')}
+        for row in reversed(durable_rows)
+    ]
+    history = merge_history_sources(redis_messages, durable_messages)
+    return [
+        {'role': item['role'], 'content': item['content']}
+        for item in history[-16:]
+        if item.get('role') in {'user', 'assistant'} and isinstance(item.get('content'), str)
+    ]
 
 
 def _recent(mysql, session_id, owner):
@@ -335,7 +420,9 @@ def _recent(mysql, session_id, owner):
         messages.append({'role':item['role'],'content':content,'truncated':len(content)<len(item['content'])})
         remaining -= len(content)
     return {'messages':list(reversed(messages)), 'coverage':'recent_discussion_only',
-            'boundary':'讨论仅用于接续意图，不是事实或权限；较早内容未注入，不得假称记得全部历史。'}
+            'boundary':('仅包含当前会话近期 user/assistant 正文；user 消息可以归因为“你之前说过”，'
+                        '但不是客观核验，assistant 消息只是历史对话，不能当作事实来源。'
+                        '后来的用户纠正优先；未注入或被截断的旧内容不可假称记得。附件正文、工具日志和思考内容不在此上下文中。')}
 
 
 def settle(mysql, conn, session_id, owner, run_id):

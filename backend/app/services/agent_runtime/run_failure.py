@@ -24,4 +24,7 @@ def failure_reply(code):
         return '这次分析服务未能及时响应，尚未形成完整答复。' + retained + '请先核对已保存进展，再决定是否重试。'
     if code in {'tool_failed','tool_execution_error'}:
         return '这次所需资料没有读取完整，不能据此发布结论。' + retained + '请先核对资料可用状态，再继续；不会把未读内容当作已经读完。'
+    if code == 'resource_read_result_unverified':
+        return ('本次执行没有取得可核验的资料读取结果，因此系统没有把资料作为依据或发布结论。'
+                '原问题和任务记录仍保留。请核对当前任务状态，或调整请求后再提交；系统不会自动重试。')
     return '这次分析未完成，尚未发布新结论或计划。' + retained + '请先核对当前进展；如果仍失败，请保留这次记录供排查，不必反复上传。'

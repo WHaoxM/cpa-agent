@@ -58,6 +58,38 @@ def _plan():
     }
 
 
+def test_student_task_default_plan_does_not_require_a_resource_read():
+    from app.services.agent_runtime.agent_run_executor import (
+        _student_task_default_plan,
+    )
+    from app.services.agent_runtime.resource_access_policy import (
+        step_requires_resource_read,
+    )
+
+    plan = _student_task_default_plan()
+    assert plan['action'] == 'run_plan'
+    assert len(plan['steps']) == 1
+    assert not step_requires_resource_read(plan['steps'][0]['goal'])
+
+
+@pytest.mark.parametrize('result,expected', [
+    ({'agent': 'clarify', 'state': 'needs_input'}, False),
+    ({'agent': 'conversation_recall', 'state': 'answered_from_conversation'}, False),
+    ({'agent': 'resume_preparation', 'state': 'needs_input'}, False),
+    ({'agent': 'resume_preparation', 'state': 'discussing', 'evidence_summary': []}, False),
+    ({'agent': 'resume_preparation', 'state': 'discussing',
+      'evidence_summary': [{'status': 'read'}]}, True),
+    ({'agent': 'resume_preparation', 'state': 'partial',
+      'document_reads': [{'complete': False}]}, True),
+])
+def test_student_task_requires_receipt_only_after_a_real_read_state(result, expected):
+    from app.services.agent_runtime.agent_run_executor import (
+        _student_task_requires_resource_receipt,
+    )
+
+    assert _student_task_requires_resource_receipt(result) is expected
+
+
 def test_executor_step_uses_durable_session_and_keeps_narrative_unverified(monkeypatch):
     from app.services.agent_runtime import mode_runtime
     from app.services.agent_runtime.budget import (
