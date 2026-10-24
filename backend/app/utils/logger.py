@@ -37,7 +37,9 @@ def setup_logger(name: str, log_dir: str = None) -> logging.Logger:
     logger.addHandler(ch)
 
     if log_dir is None:
-        log_dir = os.path.join(os.path.dirname(__file__), '../../logs')
+        log_dir = os.environ.get('CPA_LOG_DIR') or os.path.join(
+            os.path.dirname(__file__), '../../logs'
+        )
     os.makedirs(log_dir, exist_ok=True)
 
     fh = RotatingFileHandler(

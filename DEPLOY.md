@@ -71,6 +71,8 @@ python -B -m celery -A app.services.agent_runtime.media.jobs:celery_app worker -
 python -B -m celery -A app.services.agent_runtime.media.jobs:celery_app beat --loglevel=INFO
 ```
 
+For deployments that keep code, runtime config, and data in separate directories, set `CPA_UPLOAD_FOLDER` and `CPA_LOG_DIR` in the private runtime environment file. These override the development defaults `backend/uploads` and `backend/logs`; keep uploads in the backed-up data directory and logs in a separate writable directory. Do not commit the runtime environment file.
+
 `run.py` 只提供 HTTP，不执行 `cpa.pipeline` 中的简历解析或 L3 匹配；若检出版本包含确认后的画像/诊断扩展，该任务同样由 worker 执行。Agent 附件和个人图任务分别走 `cpa.media`、`cpa.graph`。Beat 也不能代替 worker。缺 worker 时已持久保存的任务可能一直等待；不要重复上传来“催促”任务。当前真实岗位发布目录可能为空，L3 无可匹配岗位不等于队列已坏。
 
 ## 4. 核验与前端联调

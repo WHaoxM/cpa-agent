@@ -9,7 +9,7 @@ config/defaults/integrations/，由 config.integration_loader 提供默认值。
 import os
 import warnings
 from pathlib import Path
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 from config.integration_loader import (
     get_default_provider,
@@ -24,8 +24,45 @@ from config.integration_loader import (
 )
 
 project_root_env = os.path.join(os.path.dirname(__file__), '../../.env')
+qa_env_file = os.environ.get("CPA_ENV_FILE")
+if qa_env_file:
+    qa_env_path = Path(qa_env_file).expanduser()
+    if not qa_env_path.is_absolute() or not qa_env_path.is_file():
+        raise RuntimeError("CPA_ENV_FILE must point to an existing absolute private config file")
 
-if os.path.exists(project_root_env):
+    # A QA process may reuse only the existing model configuration in memory.
+    # Never load the complete project .env into a QA process: it also contains
+    # the normal application's database and service targets.
+    project_values = dotenv_values(project_root_env) if os.path.exists(project_root_env) else {}
+    for key in list(os.environ):
+        if (
+            key.startswith(("CPA_", "LLM_", "MYSQL_", "NEO4J_", "REDIS_", "CELERY_", "FLASK_", "LITELLM_"))
+            or key.endswith("_API_KEY")
+            or key in {"SECRET_KEY", "OPENAI_API_KEY"}
+        ):
+            os.environ.pop(key, None)
+
+    for key in ("LLM_PROVIDER", "LLM_API_KEY", "LLM_MODEL_NAME", "LLM_TIMEOUT"):
+        value = project_values.get(key)
+        if value:
+            os.environ[key] = str(value)
+
+    load_dotenv(qa_env_path, override=True)
+    neo4j_auth_file = os.environ.get("NEO4J_AUTH_FILE")
+    if neo4j_auth_file:
+        neo4j_auth_path = Path(neo4j_auth_file).expanduser()
+        if not neo4j_auth_path.is_absolute() or not neo4j_auth_path.is_file():
+            raise RuntimeError("NEO4J_AUTH_FILE must point to an existing private auth file")
+        neo4j_auth = dotenv_values(neo4j_auth_path).get("NEO4J_AUTH")
+        if not neo4j_auth or "/" not in neo4j_auth:
+            raise RuntimeError("NEO4J_AUTH_FILE is missing the expected auth setting")
+        neo4j_user, neo4j_password = neo4j_auth.split("/", 1)
+        if neo4j_user != "neo4j" or not neo4j_password:
+            raise RuntimeError("NEO4J_AUTH_FILE has an unexpected QA graph identity")
+        os.environ["NEO4J_USER"] = neo4j_user
+        os.environ["NEO4J_PASSWORD"] = neo4j_password
+    os.environ["CPA_ENV_FILE"] = str(qa_env_path)
+elif os.path.exists(project_root_env):
     load_dotenv(project_root_env, override=True)
 else:
     load_dotenv(override=True)
@@ -149,7 +186,9 @@ class Config:
 
     # 文件上传配置
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
-    UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), '../uploads')
+    UPLOAD_FOLDER = os.environ.get('CPA_UPLOAD_FOLDER') or os.path.join(
+        os.path.dirname(__file__), '../uploads'
+    )
     ALLOWED_EXTENSIONS = {'pdf', 'doc', 'docx', 'txt', 'json'}
 
     # Agent 配置 — .env 优先，未设置时从 config/integrations/agent.yaml 读取
