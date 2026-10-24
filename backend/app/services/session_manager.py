@@ -12,6 +12,7 @@ from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field, asdict
 
 from .db.redis_client import get_redis_client, RedisClient
+from .session_history import merge_history_sources
 from ..utils.logger import get_logger
 
 logger = get_logger('cpa-agent.session')
@@ -736,19 +737,29 @@ class SessionManager:
         获取适合传给 Agent 的历史消息格式（单通道 STM）。
         默认 max_messages=16 ≈ K=8 轮。不把同一批消息再塞进 structured context。
         """
-        all_messages = self.get_messages(session_id)
-        messages = all_messages[-max_messages:] if max_messages else []
-        mysql_messages: List[Dict[str, Any]] = []
+        if max_messages <= 0:
+            return []
 
-        if len(messages) < max_messages:
+        all_messages = self.get_messages(session_id)
+        mysql_messages: List[Dict[str, Any]] = []
+        if len(all_messages) < max_messages:
+            # Redis is written before its MySQL projection. Read a bounded SQL
+            # page only when the session snapshot cannot fill the context
+            # window, then reconcile by stable message_id. A text match is
+            # never enough to collapse two distinct turns.
             mysql_messages = self._get_messages_from_mysql(
                 session_id,
-                limit=max_messages - len(messages),
-                offset=0
+                limit=max_messages,
+                offset=0,
             )
-            if mysql_messages:
-                mysql_messages.reverse()
-                messages = mysql_messages + messages
+        source_messages = merge_history_sources(all_messages, mysql_messages)
+        messages = source_messages[-max_messages:]
+
+        # A bounded window should start at a user turn, not a detached
+        # assistant answer. The current user message is added separately by
+        # the caller after this previous-turn history is assembled.
+        if len(messages) > 1 and messages[0].get("role") == "assistant":
+            messages = messages[1:]
 
         history: List[Dict[str, Any]] = []
         for message in messages[-max_messages:]:
@@ -773,7 +784,7 @@ class SessionManager:
         # projection over the already owner/session-scoped in-memory history;
         # the assembler validates the registered component schema again.
         component_messages: List[Dict[str, Any]] = []
-        for message in all_messages + mysql_messages:
+        for message in source_messages:
             if message.get("role") != "assistant":
                 continue
             metadata = message.get("metadata")
@@ -1070,7 +1081,7 @@ class SessionManager:
         limit: int = 50,
         offset: int = 0
     ) -> List[Dict[str, Any]]:
-        """从 MySQL 分页获取消息"""
+        """Fetch the latest bounded MySQL history page in chronological order."""
         try:
             from .db import get_mysql_client
             mysql = get_mysql_client()
@@ -1079,17 +1090,19 @@ class SessionManager:
                 """
                 SELECT message_id, role, content, tool_calls_json, thinking_json, created_at
                 FROM conversation_message
-                WHERE session_id = :session_id
-                ORDER BY created_at ASC
+                WHERE session_id = :session_id AND role IN ('user', 'assistant')
+                ORDER BY id DESC
                 LIMIT :limit OFFSET :offset
                 """,
                 {"session_id": session_id, "limit": limit, "offset": offset}
             )
 
-            return [
+            latest_first = [
                 self._mysql_row_to_message(row)
                 for row in rows
             ]
+            latest_first.reverse()
+            return latest_first
         except Exception as e:
             logger.warning(f"从 MySQL 获取消息失败: {e}")
             return []

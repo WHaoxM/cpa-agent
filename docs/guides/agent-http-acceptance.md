@@ -120,6 +120,7 @@ HTTP /api/agent/chat 或 /chat/stream
 | 要查的问题 | 从这里开始 | 重点边界 |
 |---|---|---|
 | 历史消息没回来 | `app/api/agent.py` 的 history 路由；`services/session_manager.py::get_history_for_agent` | 必须是同一 owner、同一 `session_id`。完整聊天历史不跨 session 搜索。 |
+| 同一 session 回指失败或顺序错乱 | `services/session_manager.py::get_history_for_agent` → `services/session_history.py::merge_history_sources` → `agent_runtime/context_assembler.py::_ask_messages` → `agent_runtime/mode_runtime.py::_run_ask` | Redis 消息与 MySQL 投影用稳定 `message_id` 对齐；最终送到模型适配器的是 system + user/assistant 消息，不含内部 metadata。确认旧事实确实出现在适配器输入，再评估模型是否正确使用它。 |
 | 附件卡片显示但回答没读正文 | `media/session_attachment_context.py` → `tool_policy.py` / `scoped_invoke.py` → `tools/attachment_read.py` → `media/document_access.py` | 当前轮附件沿现有 mount 流程；旧轮附件只在本轮明确提到文件/简历时、从同 session owner mount 列表开放只读工具。检查 ready 状态、工具结果、coverage/next offset，不能由卡片或附件数量推断已读。 |
 | 工具没出现或被拒 | `agent_runtime/tool_policy.py`、`permissions.py`、`scoped_invoke.py`，再查工具自己的 owner/session 校验 | Ask 的只读工具由服务端逐项 allowlist；客户端或模型不能扩大权限。 |
 | 任务显示运行中、完成但没更新 | 普通回合看 `agent_runtime/turn_contract.py` 与 JSON/SSE 事件；持久 Agent run 看 `api/agent_runs.py` → `agent_run_store.py` / `agent_run_dispatch.py` → `agent_run_jobs.py` → `agent_run_executor.py` | run/plan/step/dispatch 的 MySQL 状态是业务权威；Celery 负责执行/派发，LangGraph checkpointer 是执行阶段恢复器，不取代业务状态表。 |
@@ -127,6 +128,10 @@ HTTP /api/agent/chat 或 /chat/stream
 | provider 请求内容或解析失败 | `app/utils/llm_client.py::get_llm_client` 和 `LLMClient` | 不打印完整 prompt、密钥或私人正文；用脱敏来源计数、工具名、结果状态、预算和事件序号定位。 |
 
 `context_assembler` 负责不同来源的预算拼装，不负责授权；权限边界在工具 allowlist、owner/session 绑定和各工具入口。上传接入及解析生命周期见《附件解析完整性：当前运行链与验证》；持久 Agent run 状态可从 `agent_run_store.py`、`agent_run_dispatch.py`、`agent_run_jobs.py` 和 `agent_run_executor.py` 开始追踪。
+
+同一 session 的历史权威先看 Redis `SessionState.messages`：`SessionManager.add_message()` 先追加并保存 Redis，再把同一个 `message_id` 投影到 MySQL `conversation_message`；摘要/结构化状态滚动不会裁剪原消息。历史窗口不足时，`get_history_for_agent()` 才读取 MySQL 最近页，并交给纯函数 `services/session_history.py::merge_history_sources()` 按稳定 `message_id` 对齐。这个提取出来的能力模块只处理两个有序来源，不负责 owner 授权、持久化或上下文预算。两个来源可证明为前缀/后缀或相同序列时才合并，随后恢复正序并限到最近 16 条；相同文本但不同消息 ID 是不同回合，不得去重。若 ID 缺失、共有 ID 顺序冲突或不同来源在同一锚点间各有独有消息，则不猜交错顺序，保留 Redis 顺序并只记录不含正文的告警。MySQL 回退按单调行 ID 倒序分页，再反转为正序；相同时间戳不影响顺序。当前普通 chat route 持久化 user/assistant 最终消息；工具执行过程不作为可重放的 tool-role 对话历史。Ask 的 `context_assembler._ask_messages()` 单独组装 system prompt 与 user/assistant 回合，丢弃非对话协议角色，并只从 history 尾部移除当前已单独传入的那条消息，因此旧回合中相同文本会保留。
+
+本轮合成诊断曾观察到同一小会话在 Redis 与 MySQL 各有 4 条消息，旧实现把 MySQL 的同一投影反转后再拼到 Redis 前面，产生 8 条重复且倒序的历史；测试已覆盖 ID 合并、部分缓存回补、SQL 落后、相同时间戳、冲突顺序、当前问题只传一次和最终 Ask 模型适配器的合成输入结构。适配器测试使用假 LLM，证明的是程序交给 provider client 的 role/content 顺序与合成事实存在性，**不是**真实 provider HTTP body 抓包，也不是模型会正确回忆。实际模型回放中用户第二轮问到上一轮的合成事实时曾回答“没有这条信息”；那次服务端最终模型请求正文未被捕获，因此不能断言模型当时究竟收到了哪段 wire payload。修复后的真实模型质量回归还需要新的调用预算与隔离回放。
 
 需要手工操作时，在前台启动独立测试 host（不是正式部署入口）：
 
