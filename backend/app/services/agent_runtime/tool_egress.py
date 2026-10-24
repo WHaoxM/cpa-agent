@@ -105,6 +105,10 @@ def sanitize_tool_call_record(record: Dict[str, Any]) -> Dict[str, Any]:
         "parameters": sanitize_parameters(params),
         "egress": "redacted",
     }
+    # This is only the asynchronous audit handoff result. It does not change
+    # or attest the business tool's execution outcome or durable audit storage.
+    if record.get("audit_dispatch") == "enqueue_failed":
+        out["audit_dispatch"] = "enqueue_failed"
     if status in {"error", "failed", "denied", "unavailable"}:
         error_code = record.get("error_code")
         if isinstance(error_code, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", error_code):
