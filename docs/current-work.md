@@ -1,5 +1,7 @@
 # 当前工作入口（2026-10-23）
 
+2026-10-24 **生产 Agent runtime 已切到 `a9376fa18937876890ee8d9f27330f2ae9c91d58`，联网搜索失败关闭补丁仍仅在隔离候选树**：CPA API/worker 已按批准切换到受保护 `source-a9376fa`；API 仅监听 `127.0.0.1:5001`，本机 health、安全 CORS、Secure Cookie 与 worker 空闲/队列检查通过；Beat 保持旧 `source-5bfcf76`，未触碰。没有 Alembic 迁移，启动时五项既有表均已存在。另一个隔离分支对明确当前外部信息请求增加 provider 状态、真实工具结算与来源校验，并防止无来源时回退到模型记忆；其离线测试 `22 passed`，其中含 FakeLLM 对真实 ToolNode/ToolMessage 回注边界的测试；未联网验证，尚未提交/推送/部署。provider 凭据与当前公网可达性未在本轮确认。细节见 [Agent 业务资源 owner](guides/agent-business-resources.md) 的 2026-10-24 搜索边界段。
+
 2026-10-23 **Ask 离线复核完成，本轮未改运行时代码**：补 100 轮/200 条合成消息与旧卡片恢复/第二、第三项重复读取验收，更新旧“16 条触发摘要”测试为“消息数不触发，需真实 token 压力”；四组主回归及额外 7 个预算边界用例通过。预算用例使用既有 UTF-8 保守估算器做测试专属注入，不验证真实 tokenizer parity；宽预算整套未重跑。旧用例曾触碰受限 Redis；修订后以假 SessionManager 隔离。真实前端/截图、数据库持久恢复、Tavily、跨进程 HTTP 幂等和旧事件取消隔离仍未测。逐项约定、五组完整命令结果、UI 输入/操作/预期及未来截图点见[Ask 离线验收清单](reports/2026-10-23-ask-offline-acceptance.md)。
 
 2026-10-23 **QA 数据库连接仍不可达；未改库或尝试 Docker**：使用 `mkg` 解释器和项目配置对 `localhost:13306` 做只读连接/元数据查询，返回 `pymysql.OperationalError` 错误码 `2003`；未获得 schema 或授权信息。`Get-Service` 查询被 Service Control Manager 拒绝（提示可能需要额外权限），普通进程枚举未看到 `mysqld`/`mariadbd`。因此尚不能确认是服务未运行还是执行环境 socket 限制，`cpa_agent_qa` 未创建，后续需受支持的本机 MySQL 管理连接；没有重试 Docker/替换通道。

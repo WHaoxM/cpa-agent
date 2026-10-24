@@ -9,7 +9,9 @@ in-process; the HTTP contract only gets redacted public cards.
 from __future__ import annotations
 
 import re
+import ipaddress
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 from .field_keys import NEVER_KEYS as _SENSITIVE_KEYS
 
@@ -74,6 +76,93 @@ def public_tool_summary(tool_name: str, result_text: str = "", ok: bool = True, 
     return f"{tool_name or 'tool'} {labels.get(state, '结果待核验')}（已脱敏）"
 
 
+def sanitize_public_web_search_detail(value: Any) -> Optional[Dict[str, Any]]:
+    """Keep only bounded search state and public HTTPS citation metadata."""
+    if not isinstance(value, dict):
+        return None
+    allowed_statuses = {"completed", "partial", "empty", "unavailable", "invalid_request", "blocked"}
+    status = str(value.get("status") or "")
+    if status not in allowed_statuses:
+        return None
+    out: Dict[str, Any] = {"status": status, "exhaustive": False}
+    provider_id = value.get("provider_id")
+    if isinstance(provider_id, str) and re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,39}", provider_id):
+        out["provider_id"] = provider_id
+    retrieved_at = value.get("retrieved_at")
+    if isinstance(retrieved_at, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}T[^\s]{1,32}", retrieved_at):
+        out["retrieved_at"] = retrieved_at[:64]
+    reason = value.get("reason") or value.get("error_code")
+    if isinstance(reason, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", reason):
+        out["reason"] = reason
+
+    rows = value.get("sources")
+    if not isinstance(rows, list):
+        rows = value.get("results")
+    safe_sources: List[Dict[str, str]] = []
+    seen = set()
+    if isinstance(rows, list):
+        for row in rows[:10]:
+            if not isinstance(row, dict):
+                continue
+            raw_url = row.get("url")
+            if not isinstance(raw_url, str) or not 1 <= len(raw_url) <= 2048:
+                continue
+            if any(ord(char) < 32 or ord(char) == 127 for char in raw_url):
+                continue
+            try:
+                parts = urlsplit(raw_url.strip())
+                host = (parts.hostname or "").lower().rstrip(".")
+                if parts.scheme.lower() != "https" or not host or parts.username or parts.password:
+                    continue
+                if host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
+                    continue
+                try:
+                    if not ipaddress.ip_address(host).is_global:
+                        continue
+                except ValueError:
+                    if "." not in host or any(not label or len(label) > 63 for label in host.split(".")):
+                        continue
+                url = urlunsplit(("https", parts.netloc, parts.path or "/", parts.query, ""))
+            except (TypeError, ValueError):
+                continue
+            if url in seen:
+                continue
+            seen.add(url)
+            source = {"url": url}
+            title = row.get("title")
+            if isinstance(title, str) and title.strip():
+                normalized_title = re.sub(r"[\x00-\x1f\x7f]+", " ", title).strip()
+                if normalized_title:
+                    source["title"] = redact_text(normalized_title, max_len=160)
+            published = row.get("published_at") or row.get("publishedAt")
+            if isinstance(published, str) and published.strip():
+                normalized_date = re.sub(r"[\x00-\x1f\x7f]+", " ", published).strip()
+                if normalized_date:
+                    source["published_at"] = redact_text(normalized_date, max_len=64)
+            safe_sources.append(source)
+    out["sources"] = safe_sources
+    # Count only citation URLs that survived the public-URL validation above.
+    # Provider-reported result counts can include entries intentionally dropped.
+    out["result_count"] = len(safe_sources)
+    return out
+
+
+def public_web_search_summary(detail: Dict[str, Any]) -> str:
+    status = str(detail.get("status") or "")
+    sources = detail.get("sources") or []
+    count = len(sources) if isinstance(sources, list) else 0
+    count_text = f"，{count} 个来源" if type(count) is int and count > 0 else ""
+    labels = {
+        "completed": "网页搜索已完成",
+        "partial": "网页搜索部分完成",
+        "empty": "网页搜索已执行但无来源",
+        "unavailable": "网页搜索不可用",
+        "invalid_request": "网页搜索请求无效",
+        "blocked": "网页搜索因隐私边界未发送",
+    }
+    return labels.get(status, "网页搜索结果待核验") + count_text + "（来源见详情，结果非穷尽）"
+
+
 def sanitize_tool_call_record(record: Dict[str, Any]) -> Dict[str, Any]:
     """
     Convert an internal tool_call dict into a client-safe card.
@@ -94,6 +183,12 @@ def sanitize_tool_call_record(record: Dict[str, Any]) -> Dict[str, Any]:
     params = record.get("parameters") or record.get("args") or {}
     status = str(record.get("status") or "unverified")
     summary = public_tool_summary(name, status=status)
+    web_search = (
+        sanitize_public_web_search_detail(record.get("web_search"))
+        if name == "public_web_search" else None
+    )
+    if web_search is not None:
+        summary = public_web_search_summary(web_search)
     row_count = record.get("row_count")
     if isinstance(row_count, int) and not isinstance(row_count, bool) and row_count >= 0:
         summary += f"，返回 {row_count} 条"
@@ -105,6 +200,8 @@ def sanitize_tool_call_record(record: Dict[str, Any]) -> Dict[str, Any]:
         "parameters": sanitize_parameters(params),
         "egress": "redacted",
     }
+    if web_search is not None:
+        out["web_search"] = web_search
     # This is only the asynchronous audit handoff result. It does not change
     # or attest the business tool's execution outcome or durable audit storage.
     if record.get("audit_dispatch") == "enqueue_failed":

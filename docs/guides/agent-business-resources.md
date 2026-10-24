@@ -90,7 +90,19 @@ D:\Miniconda\miniconda3\envs\mkg\python.exe -B -m pytest backend/tests/test_ask_
 
 最新结果：`122 passed, 1 skipped, 2 warnings`。测试使用合成会话、MySQL stub、假模型和假 provider；没有真实联网/真实模型/真实前端回放。OpenCode commit `388406238bd5ca15564a762840a2362c3a45bd9c`（MIT）的 `packages/opencode/src/tool/websearch.ts` 与 `mcp-websearch.ts` 采用 schema 约束、服务端 provider 选择和有界超时；CPA-Agent 只复用“server-selected provider + typed 参数 + 明确预算”的边界思路，不复用其登录/确认流。
 
-联网实现现有明确 provider：`TavilySearchProvider` 使用官方 `POST https://api.tavily.com/search`，只从服务器 `TAVILY_API_KEY` 读取 Bearer 凭据，固定 `basic`、最多 5 条、关闭自动参数/模型答案/原始网页内容并请求发布日期；每个 Ask 工具循环最多 3 次请求，每次基本搜索官方标价为 1 credit，超时/限流/配额/API 错误在本轮熔断，不继续花费额度。工具日志不保存原始查询，明显个人标识/简历语句/常见密钥格式在发出前拒绝；模型只有在服务端有凭据时才获得该只读工具，是否需要搜索由主模型判断。官方契约和额度见 [Tavily Search API](https://docs.tavily.com/documentation/api-reference/endpoint/search) 与 [API credits](https://docs.tavily.com/documentation/api-credits)；查询会传给 provider，参见 [Tavily Privacy Policy](https://tavily.com/privacy)，因此仍不得把简历、联系方式、个人经历或秘密放入查询。当前执行环境未配置 `TAVILY_API_KEY`，没有真实 API 调用；测试均为注入的假 provider。
+联网实现使用明确的 `TavilySearchProvider`：它向 `https://api.tavily.com/search` 发出有界 basic 搜索，只从服务端 `TAVILY_API_KEY` 读取 Bearer 凭据，固定最多 5 条、关闭自动参数/模型答案/原始网页内容并请求发布日期；每个 Ask 工具循环最多 3 次，超时/限流/配额/API 错误后熔断。查询会发送给 provider，因此不得包含简历原文、联系方式、个人经历或秘密；工具参数审计会遮盖查询，只允许经过公共 HTTPS URL 校验的来源标题/URL/日期进入 UI。官方契约和额度见 [Tavily Search API](https://docs.tavily.com/documentation/api-reference/endpoint/search)、[API credits](https://docs.tavily.com/documentation/api-credits) 与 [Privacy Policy](https://tavily.com/privacy)。
+
+Ask 对明显的外部时效问题（例如“最近的行业动态，要昨天的”）以及明确的联网/网页搜索请求由服务端策略选择搜索工具；仅请求记忆本轮对话或搜索本人上传内容不会因此转发给公网。对于明确联网请求，若 provider 缺失/配置初始化失败，会在初始化模型前失败关闭；provider 可配置不代表网络可达。若模型未实际调用工具、没有取得有效来源或工具执行失败，产品不会使用模型记忆补写成“已搜索”结论。只有实际工具结算的公共 HTTPS 来源可以显示为来源，查询和原始网页片段不进入 UI；空结果、暂时故障和未执行会区分呈现。非明确联网问题仍可由模型判断是否需要当前外部资料。
+
+这条交付参考了本机 DeepSeek Harness 快照 `d347e703908d0406b7a7ef80e3a0e594d86b2215`（`0.1.3-alpha.1`，MIT）：`packages/core/agent-loop/src/agent.ts`、`tool-calls.ts` 的工具结算/回注边界，`packages/llm/llm-deepseek/src/translate.ts` 的结构化工具参数映射，以及 `packages/web/web-search-deepseek/src/provider.ts` 的搜索 provider 契约。这里只适配“工具是否真实结算、搜索来源随最终结果可审计”的原则；CPA 保留服务端选择的 Tavily、查询隐私门禁、调用预算与业务权限，未复制 Harness 运行时或 provider 代码。
+
+定向离线回归命令：
+
+```powershell
+D:\Miniconda\miniconda3\envs\mkg\python.exe -B -m pytest backend/tests/test_ask_public_web_search_adapter.py -q --tb=short
+```
+
+2026-10-24 在隔离工作树结果：`22 passed`。其中一项通过真实 `scoped_invoke`/LangGraph ToolNode 边界和假模型验证工具调用、ToolMessage 结果回注、脱敏 UI 结算及 Ask 来源投影；其它模型/provider 边界也均使用 fake。没有访问互联网、没有真实 Tavily 调用，也没有证明生产环境的 provider 凭据或外网可达性。当前部署配置状态在这轮未读取，不能据代码推断 provider 已配置或可用。
 
 ## 2026-10-24 Ask 回答事实边界
 

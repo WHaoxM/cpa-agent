@@ -9,7 +9,12 @@ import json
 from typing import Any, Dict, Optional
 
 from .field_policy import project_document_access_for_model, project_tool_result_text
-from .tool_egress import public_tool_summary, sanitize_parameters
+from .tool_egress import (
+    public_tool_summary,
+    public_web_search_summary,
+    sanitize_parameters,
+    sanitize_public_web_search_detail,
+)
 
 # Tools whose payload is a Document Access window — generic 4k cut is forbidden.
 _DOCUMENT_ACCESS_TOOLS = frozenset({"attachment_read"})
@@ -76,6 +81,12 @@ def build_ui_view(
     if isinstance(row_count, int) and not isinstance(row_count, bool) and row_count >= 0:
         summary += f"，返回 {row_count} 条"
     params = sanitize_parameters(parameters or {})
+    web_search = (
+        sanitize_public_web_search_detail(payload)
+        if tool_name == "public_web_search" else None
+    )
+    if web_search is not None:
+        summary = public_web_search_summary(web_search)
     # A task-shaped substring is not a task reference. pipeline_run creates its
     # task server-side; its structured ID remains subject to business readback.
     if tool_name == "pipeline_run" and isinstance(payload.get("task_id"), str):
@@ -88,6 +99,8 @@ def build_ui_view(
         "parameters": params,
         "channel": "ui",
     }
+    if web_search is not None:
+        out["web_search"] = web_search
     if isinstance(payload.get("error_code"), str) and ui_status == "error":
         out["error_code"] = payload["error_code"]
         out["retryable"] = payload.get("retryable") is True
