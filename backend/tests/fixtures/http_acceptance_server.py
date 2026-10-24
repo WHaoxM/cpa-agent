@@ -32,6 +32,7 @@ def main():
     from app.services import db, session_manager
     from app.services import agent_runtime
     from app.services.agent_runtime import schema_ensure
+    from app.services.agent_runtime.task_context import TaskContextStore
     from app.services.agent_runtime.media import file_store, schema
     from app.services.agent_runtime.session_coordinator import SessionCoordinator
     from test_session_turn_coordination import _SharedSessionRedis
@@ -62,6 +63,10 @@ def main():
                             fetch_one=lambda *_a, **_k: None,
                             fetch_all=lambda *_a, **_k: [])
     db.get_mysql_client = lambda: mysql
+    # This HTTP journey uses a deliberately small MySQL substitute and does
+    # not create Agent runs. Keep its durable task-history projection empty
+    # instead of calling the production SQLAlchemy-backed store on the stub.
+    TaskContextStore.read = lambda *_args, **_kwargs: {"turns": []}
     schema_ensure.ensure_runtime_schema = lambda: None
     schema.ensure_media_schema = lambda *_a, **_k: False
     file_store.ensure_media_schema = schema.ensure_media_schema

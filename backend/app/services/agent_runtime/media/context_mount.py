@@ -95,7 +95,9 @@ def build_attachment_mount_card(
     allow_attachment_read: bool = True,
 ) -> str:
     files = get_agent_file_service()
-    lines = ["【本回合已挂载附件】"]
+    lines = [
+        "【本回合已挂载附件】" if turn_file_ids else "【当前会话已挂载附件】"
+    ]
     if allow_attachment_read:
         lines.append(
             "规则: 此卡仅目录。正文由 Document Access 注入或 "
@@ -147,7 +149,7 @@ def build_attachment_mount_card(
         name = r.get("filename") or meta.get("filename") or fid
         path = r.get("mount_path") or f"/data/{fid}"
         status = meta.get("status") or "unknown"
-        tag = "本回合" if (not focus or fid in focus) else "会话内"
+        tag = "本回合" if fid in focus else "会话内"
         # Do not embed excerpt body — models latched onto the 280-char head
         # and claimed the resume was truncated (education lives at the end).
         lines.append(

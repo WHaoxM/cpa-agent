@@ -1,6 +1,6 @@
 # Agent 真实 HTTP 边界验收
 
-面向维护者；用于复现用户可见边界故障，再下钻进程内定位。本文覆盖最小的两条确定性旅程，不是完整模型质量或生产依赖验收。
+面向维护者；用于复现用户可见边界故障，再下钻进程内定位。本文覆盖三条确定性 HTTP 旅程，不是完整模型质量或生产依赖验收。
 
 ## 验收边界
 
@@ -23,9 +23,9 @@
 
 文件与挂载的磁盘状态是真实资源状态；`*.state.json` 是**替身会话存储在写入点的观测副本**，不是生产 Redis 的证明。它与 HTTP history、下一轮收到的 history/context 交叉核验，避免只断言一份伪造回答。
 
-只使用合成 TXT。PDF/DOCX、OCR Sidecar、Celery、外部知识服务和浏览器不属于这两条旅程。不要据此改写那些能力的验收状态。
+只使用合成 TXT。PDF/DOCX、OCR Sidecar、Celery、外部知识服务、真实模型和浏览器不属于这些旅程。不要据此改写那些能力的验收状态。
 
-## 两条用户旅程
+## 三条用户旅程
 
 ### 1. 同一 session 连续对话
 
@@ -42,6 +42,15 @@
 3. JSON chat 显式引用 `file_id` → owner-bound 准备/挂载 → GET resources；与真实磁盘挂载记录、文件 owner/status、会话消息附件引用一致。
 4. SSE chat 再次引用 → 挂载幂等；event id 连续、turn id 每轮独立、`turn_start → reply_delta → turn_done → [DONE]`，最终 outcome 与 JSON 相同。
 5. 仅将 `attachment_ids` 改为不存在的文件：JSON 404；SSE 在已建立的 200 流中给 `RESOURCE_NOT_FOUND`、`[DONE]`，不产生 `turn_done`，不写消息、不调用 Supervisor。
+
+### 3. 下一轮引用本会话已挂载的附件
+
+1. owner 在 session A 上传并挂载合成 TXT；第一轮消息记录该轮的 `attachment_ids`。
+2. 同一 owner 在同一 session A 继续问“刚才上传的简历”，不重传附件 ID；第二轮消息的当前轮附件列表为空，但 Session Resources 仍有该附件。
+3. Ask 只为这条明确引用启用 `attachment_read`；文件工具再次校验 owner 与 session。只挂在其他 session 或其他 owner 名下的资源不可从本旅程读取。
+4. 若用户切换到 session B，完整历史不会从 session A 自动带入；`use_memory` 是单独的可选记忆挂载，不等同于搜索全部旧聊天。
+
+该旅程验证 HTTP 挂载/历史状态和资源边界；HTTP fixture 对 Supervisor 使用确定性替身，另有 ModeRuntime 单测验证只读工具 allowlist。它不调用真实模型，也不证明模型一定会选择工具或正确总结简历。
 
 SSE comment `: connected` 只证明连接已建立，不是增量模型进度；当前测试不声称首 token 延迟或流式模型生成已验收。
 
@@ -62,7 +71,23 @@ $env:PYTHONUTF8 = '1'
 ```powershell
 & 'D:\Miniconda\miniconda3\envs\mkg\python.exe' -B -m pytest backend/tests/test_agent_http_journeys.py::test_http_multi_turn_preserves_session_history_and_context -q --tb=short
 & 'D:\Miniconda\miniconda3\envs\mkg\python.exe' -B -m pytest backend/tests/test_agent_http_journeys.py::test_http_upload_then_reference_orders_state_and_json_sse_semantics -q --tb=short
+& 'D:\Miniconda\miniconda3\envs\mkg\python.exe' -B -m pytest backend/tests/test_agent_http_journeys.py::test_http_followup_keeps_prior_session_attachment_addressable_without_resending -q --tb=short
 ```
+
+只回放本会话附件旅程并输出不含文件名、ID、消息正文或文件正文的统计 trace：
+
+```powershell
+$traceRoot = Join-Path $env:TEMP ('cpa-agent-attachment-trace-' + [guid]::NewGuid().ToString('N'))
+& 'D:\Miniconda\miniconda3\envs\mkg\python.exe' -B -m pytest `
+  backend/tests/test_agent_http_journeys.py::test_http_followup_keeps_prior_session_attachment_addressable_without_resending `
+  -q --tb=short --basetemp $traceRoot
+if ($LASTEXITCODE -ne 0) { throw 'Attachment continuity journey failed' }
+$trace = Get-ChildItem -LiteralPath $traceRoot -Filter 'safe-trace.json' -Recurse | Select-Object -First 1
+if (-not $trace) { throw 'safe-trace.json was not produced' }
+Get-Content -Encoding UTF8 $trace.FullName
+```
+
+Trace 仅含 runtime/scope、历史消息计数、当前轮附件计数、session 挂载计数和异 owner HTTP 状态。fixture 还会保存其他合成请求/状态证据；不要把它们误认为真实用户数据或生产 Redis/MySQL。此 fixture 的 MySQL 替身不创建 Agent run，因此 `TaskContextStore.read` 被显式固定为空列表，避免把 SQLAlchemy 查询误打到只支持轻量查询的替身上。
 
 每条旅程使用 pytest `tmp_path` 隔离存储和日志，自动设置测试身份边界；`finally` 中关闭客户端、终止并等待**该子进程**，失败也不会留下后端。pytest 临时目录保留以便审阅，由 pytest 的临时目录保留机制管理，不触碰工作区已有上传、数据库与日志。
 
@@ -78,6 +103,30 @@ $env:PYTHONUTF8 = '1'
 - `uploads/agent_files/`、`uploads/session_mounts/`：真实解析和挂载产物。
 
 先找第一条偏离预期的 HTTP 请求及资源状态，再用现有窄测试（`test_agent_stream_parity.py`、`test_session_turn_coordination.py`、`test_agent_media.py`）定位。修复后必须重跑**原 HTTP 旅程**，不能仅以进程内绿灯替代。
+
+## 源码导航：从症状下钻
+
+```text
+HTTP /api/agent/chat 或 /chat/stream
+  → app/api/agent.py：身份、session owner、当前轮消息/附件记录、JSON/SSE 包装
+  → _run_recorded_supervisor_turn → _run_supervisor
+  → services/agent_runtime/supervisor.py → ModeRuntime.chat
+  → 同 session history + context_assembler 预算 + Ask/Agent 分流
+  → Ask：显式证据选择/附件范围 → scoped_invoke 与只读工具
+  → attachment_read → document_access → 提取文本/coverage/分页结果
+  → turn_contract：权威 outcome 和可回放事件
+```
+
+| 要查的问题 | 从这里开始 | 重点边界 |
+|---|---|---|
+| 历史消息没回来 | `app/api/agent.py` 的 history 路由；`services/session_manager.py::get_history_for_agent` | 必须是同一 owner、同一 `session_id`。完整聊天历史不跨 session 搜索。 |
+| 附件卡片显示但回答没读正文 | `media/session_attachment_context.py` → `tool_policy.py` / `scoped_invoke.py` → `tools/attachment_read.py` → `media/document_access.py` | 当前轮附件沿现有 mount 流程；旧轮附件只在本轮明确提到文件/简历时、从同 session owner mount 列表开放只读工具。检查 ready 状态、工具结果、coverage/next offset，不能由卡片或附件数量推断已读。 |
+| 工具没出现或被拒 | `agent_runtime/tool_policy.py`、`permissions.py`、`scoped_invoke.py`，再查工具自己的 owner/session 校验 | Ask 的只读工具由服务端逐项 allowlist；客户端或模型不能扩大权限。 |
+| 任务显示运行中、完成但没更新 | 普通回合看 `agent_runtime/turn_contract.py` 与 JSON/SSE 事件；持久 Agent run 看 `api/agent_runs.py` → `agent_run_store.py` / `agent_run_dispatch.py` → `agent_run_jobs.py` → `agent_run_executor.py` | run/plan/step/dispatch 的 MySQL 状态是业务权威；Celery 负责执行/派发，LangGraph checkpointer 是执行阶段恢复器，不取代业务状态表。 |
+| 回答像截断或漏掉附件尾部 | `agent_runtime/context_assembler.py`、`media/document_access.py`、`tools/attachment_read.py` | 分别查上下文预算、文档 coverage 与分页 offset；partial 必须标记，不把窗口当全文。 |
+| provider 请求内容或解析失败 | `app/utils/llm_client.py::get_llm_client` 和 `LLMClient` | 不打印完整 prompt、密钥或私人正文；用脱敏来源计数、工具名、结果状态、预算和事件序号定位。 |
+
+`context_assembler` 负责不同来源的预算拼装，不负责授权；权限边界在工具 allowlist、owner/session 绑定和各工具入口。上传接入及解析生命周期见《附件解析完整性：当前运行链与验证》；持久 Agent run 状态可从 `agent_run_store.py`、`agent_run_dispatch.py`、`agent_run_jobs.py` 和 `agent_run_executor.py` 开始追踪。
 
 需要手工操作时，在前台启动独立测试 host（不是正式部署入口）：
 
@@ -98,11 +147,12 @@ curl.exe --noproxy '*' -X POST -H 'X-Dev-Student-Id: http_acceptance_owner' http
 
 ## 复用来源与适配边界
 
-此次仅增加验收适配器，没有修改 Agent 状态机/解析/预算核心，也没有引入新测试框架：pytest、requests、Werkzeug 均为现有环境依赖。
+本次在 Ask 的 `ModeRuntime` 分支增加了“显式提到附件时，才为同一 owner/session 的已挂载文件开放只读工具”这一薄适配；没有改 Agent 持久状态机、解析器或预算核心，也没有引入新测试框架：pytest、requests、Werkzeug 均为现有环境依赖。
 
 - 项目现有 `test_agent_stream_parity.py`、`test_session_turn_coordination.py`、`test_agent_media.py` 提供事件、会话、文件契约；直接复用 `_SharedSessionRedis`，不另造通用 Redis 模拟库。
 - `opencode` commit `388406238bd5ca15564a762840a2362c3a45bd9c`，`packages/sdk/js/test/session-history.test.ts`：历史接口的稳定字段断言。该测试是 SDK 契约，不被误称为 TCP 测试。
 - 外部 `_agent_reference/codex` commit `a06545b311fe01e51ce855c7aa5d8da21e9e7aaf`，`codex-rs/core/src/responses_retry_tests.rs`：观察并断言错误/重试/历史状态而非模型措辞。Rust 内部 session fixture 不适配 Flask，未复制实现，只沿用有界、确定性状态断言思路。
+- 附件/上下文边界核对了 OpenCode snapshot `388406238bd5ca15564a762840a2362c3a45bd9c` 的 `packages/opencode/src/session/message-v2.ts` 与 `session/compaction.ts`，以及 Codex snapshot `a06545b311fe01e51ce855c7aa5d8da21e9e7aaf` 的 `app-server/src/request_processors/thread_attachments.rs`、`thread_input.rs`、`core/src/context/compaction_summary.rs`。只适配“附件属于明确 session/thread、历史上下文需要显式有界”的原则；没有复制上游状态机、实现或许可证材料，也没有加入跨会话搜索。更完整的仓库、版本和许可对照见 `docs/architecture/agent-upstream-adaptation.md`。
 
 ## 首次实测发现（2026-10-10）
 

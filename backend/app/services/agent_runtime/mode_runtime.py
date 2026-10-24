@@ -852,9 +852,19 @@ class ModeRuntime:
         turn_file_ids = prepared["turn_file_ids"]
         mount_errors = prepared["mount_errors"]
         attach_card = prepared["attach_card"] or ""
-        # Ask card: allow attachment_read instruction only when we will bind that tool
-        if mode == InteractionMode.ASK and turn_file_ids:
+        session_attachment_ids: List[str] = []
+        if mode == InteractionMode.ASK:
             from .media.context_mount import build_attachment_mount_card
+            from .media.session_attachment_context import ask_attachment_read_scope
+
+            session_attachment_ids = ask_attachment_read_scope(
+                message or "",
+                session_id=session_id,
+                student_id=student_id,
+                current_turn_file_ids=turn_file_ids,
+            )
+        # Ask card: allow attachment_read instruction only when we will bind that tool
+        if mode == InteractionMode.ASK and session_attachment_ids:
             attach_card = build_attachment_mount_card(
                 session_id, parts, turn_file_ids=turn_file_ids,
                 student_id=student_id, allow_attachment_read=True,
@@ -1117,6 +1127,7 @@ class ModeRuntime:
                 assembled_context=assembled,
                 evidence_pack=evidence_pack,
                 ask_context=ctx,
+                session_attachment_ids=session_attachment_ids,
             )
             result["ask_evidence_continuation"] = result_cursor
             try:
@@ -1281,11 +1292,13 @@ class ModeRuntime:
         memory_mount: str,
         student_id: Optional[str] = None,
         turn_file_ids: Optional[List[str]] = None,
+        session_attachment_ids: Optional[List[str]] = None,
         mount_errors: Optional[List[str]] = None,
         assembled_context: Optional[AssembledContext] = None,
         evidence_pack: Optional[Dict[str, Any]] = None,
         ask_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        attachment_lookup = bool(session_attachment_ids)
         evidence_coverage = (
             evidence_pack.get("coverage")
             if isinstance(evidence_pack, dict) and isinstance(evidence_pack.get("coverage"), dict)
@@ -1293,7 +1306,11 @@ class ModeRuntime:
         )
         from .quality_gate import section_count_answer
         from .resume_report_resources import source_readback_answer
-        readback = source_readback_answer(evidence_pack or {}) if not turn_file_ids and not mount_errors else None
+        readback = (
+            source_readback_answer(evidence_pack or {})
+            if not turn_file_ids and not session_attachment_ids and not mount_errors
+            else None
+        )
         if readback:
             return self._pack(
                 reply=readback, session_id=session_id, start=start,
@@ -1304,14 +1321,18 @@ class ModeRuntime:
                 thinking_steps=['已读回这份简历解读和本次选中的补充经历。'],
                 message=message, evidence_summary=_evidence_summary_part(evidence_pack),
                 incomplete=evidence_coverage.get('complete') is not True)
-        if (not turn_file_ids and not mount_errors and isinstance(evidence_pack,dict)
+        if (not turn_file_ids and not session_attachment_ids and not mount_errors and isinstance(evidence_pack,dict)
                 and evidence_pack.get('answer_kind')=='source_readback'):
             return self._pack(reply='这次还没有读到可用的当前简历解读。已保存的资料不会改变；可以回到职途导航核对当前结果后，再打开这份解读。',
                 session_id=session_id,start=start,active_subagent='ask',strategy='ask',blackboard=blackboard,
                 tool_calls=[],memory_mounted=bool(memory_mount),upgrade_hint=upgrade_hint,
                 supervisor_view={'path':'ask_source_readback_unavailable','evidence_pack':_evidence_view(evidence_pack)},
                 message=message,evidence_summary=_evidence_summary_part(evidence_pack),incomplete=True)
-        count_reply = section_count_answer(evidence_pack or {}) if not turn_file_ids and not mount_errors else None
+        count_reply = (
+            section_count_answer(evidence_pack or {})
+            if not turn_file_ids and not session_attachment_ids and not mount_errors
+            else None
+        )
         if count_reply:
             return self._pack(
                 reply=count_reply, session_id=session_id, start=start,
@@ -1329,6 +1350,7 @@ class ModeRuntime:
             and selection_reason in {"continuation_invalid", "reference_not_current",
                                      "stale_report_reference"}
             and not turn_file_ids
+            and not session_attachment_ids
         ):
             return self._pack(
                 reply=("这份岗位报告的来源已失效，我不能继续用旧内容说明当前岗位或与你的简历对照。"
@@ -1365,6 +1387,7 @@ class ModeRuntime:
             isinstance(evidence_pack, dict)
             and evidence_pack.get("budget_exceeded") is True
             and not turn_file_ids
+            and not session_attachment_ids
         ):
             return self._pack(
                 reply=(
@@ -1751,7 +1774,8 @@ class ModeRuntime:
             llm_messages.extend(assembled_context.messages)
         else:
             llm_messages.append({"role": "user", "content": message})
-        if supplemental_read or ask_skill_ids or component_lookup or history_lookup or web_search:
+        if (supplemental_read or ask_skill_ids or component_lookup or history_lookup
+                or web_search or attachment_lookup):
             # Reuse the existing QA executor for server-selected professional
             # Skills and, only after an empty relevant evidence pass, the
             # bounded explicit read-tool loop.
@@ -1759,6 +1783,7 @@ class ModeRuntime:
             from .task_packet import build_standard_packet
             from .tool_policy import (
                 ASK_COMPONENT_TOOLS, ASK_HISTORY_TOOLS, ASK_PUBLIC_WEB_TOOLS, ASK_SEARCH_TOOLS,
+                ASK_ATTACHMENT_TOOLS,
             )
 
             packet = build_standard_packet(
@@ -1776,6 +1801,9 @@ class ModeRuntime:
                     + ("仅在当前问题需要联网时使用 server-selected Tavily；首次无结果可在预算内用不同表述补查，"
                        "同一查询无新增信息、限流、超时或调用上限时停止。"
                        if web_search else "")
+                    + ("用户本轮明确提到附件；只可通过当前会话已挂载且归属当前账号的只读附件工具读取，"
+                       "需要相关内容时再读取。不得搜索其他会话或声称未读取的正文。"
+                       if attachment_lookup else "")
                 ),
                 write_keys=[],
                 skill_ids=ask_skill_ids,
@@ -1783,7 +1811,8 @@ class ModeRuntime:
             fallback = scoped_invoke(
                 packet,
                 blackboard,
-                allow_tools=supplemental_read or component_lookup or history_lookup or web_search,
+                allow_tools=(supplemental_read or component_lookup or history_lookup
+                             or web_search or attachment_lookup),
                 interaction_mode=InteractionMode.ASK,
                 session_id=session_id,
                 student_id=student_id,
@@ -1792,6 +1821,7 @@ class ModeRuntime:
                     | (set(ASK_COMPONENT_TOOLS) if component_lookup else set())
                     | (set(ASK_HISTORY_TOOLS) if history_lookup else set())
                     | (set(ASK_PUBLIC_WEB_TOOLS) if web_search else set())
+                    | (set(ASK_ATTACHMENT_TOOLS) if attachment_lookup else set())
                 ) or None,
                 allow_artifact_commit=False,
                 temperature=0.5,

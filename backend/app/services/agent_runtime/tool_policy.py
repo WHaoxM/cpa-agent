@@ -25,6 +25,7 @@ ASK_READONLY_TOOLS = frozenset({
     "public_web_search",
 })
 ASK_SEARCH_TOOLS = frozenset({"career_data_read", "graph_query"})
+ASK_ATTACHMENT_TOOLS = frozenset({"attachment_read"})
 ASK_PUBLIC_WEB_TOOLS = frozenset({"public_web_search"})
 ASK_HISTORY_TOOLS = frozenset({"conversation_history_lookup"})
 ASK_COMPONENT_TOOLS = frozenset({"component_snapshot_read", "component_snapshot_discover"})

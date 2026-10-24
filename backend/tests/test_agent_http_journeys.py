@@ -196,3 +196,66 @@ def test_http_upload_then_reference_orders_state_and_json_sse_semantics(http_bac
     history = data(request("GET", f"/api/agent/session/{sid}/history"))
     assert history["message_count"] == 4
     assert [m["role"] for m in history["messages"]] == ["user", "assistant"] * 2
+
+
+def test_http_followup_keeps_prior_session_attachment_addressable_without_resending(http_backend):
+    request, root = http_backend
+    sid = data(request("POST", "/api/agent/session/create", json={}))[
+        "session_id"
+    ]
+    uploaded = data(request(
+        "POST", "/api/agent/files", data={"session_id": sid},
+        files={"file": ("resume.txt", b"SYNTHETIC_RESUME: project experience", "text/plain")},
+    ))
+    file_id = uploaded["file_id"]
+
+    first = data(request("POST", "/api/agent/chat", json={
+        "session_id": sid,
+        "message": "请保存这份简历供本会话后续分析",
+        "attachment_ids": [file_id],
+        "interaction_mode": "ask",
+    }))
+    assert first["reply"]
+
+    second = data(request("POST", "/api/agent/chat", json={
+        "session_id": sid,
+        "message": "请继续看我刚才上传的简历内容",
+        "interaction_mode": "ask",
+    }))
+    assert second["reply"]
+
+    observed = calls(root)
+    prior_turn, followup = observed
+    assert prior_turn["prepared_turn"]["turn_file_ids"] == [file_id]
+    assert followup["prepared_turn"]["turn_file_ids"] == []
+    assert "当前会话已挂载附件" in followup["prepared_turn"]["attach_card"]
+    assert "[会话内] resume.txt" in followup["prepared_turn"]["attach_card"]
+    assert file_id in followup["prepared_turn"]["attach_card"]
+    persisted = state(root, sid)
+    assert persisted["messages"][0]["metadata"]["attachment_ids"] == [file_id]
+    assert persisted["messages"][2]["metadata"]["attachment_ids"] == []
+    resources = data(request("GET", f"/api/agent/session/{sid}/resources"))["resources"]
+    assert resources[0]["file_id"] == file_id
+    other_owner_status = request(
+        "GET", f"/api/agent/session/{sid}/resources", owner="other_owner",
+    ).status_code
+    assert other_owner_status == 403
+
+    # A deliberately content-free trace artifact for maintainers. The normal
+    # supervisor-calls file is test-only synthetic data and is not the trace
+    # sample exposed by the guide.
+    safe_trace = {
+        "runtime": "deterministic_http_acceptance_fixture",
+        "scope": "same_session_and_owner",
+        "turns": [
+            {"history_message_count": len(prior_turn["history"]),
+             "current_attachment_count": len(prior_turn["prepared_turn"]["turn_file_ids"])},
+            {"history_message_count": len(followup["history"]),
+             "current_attachment_count": len(followup["prepared_turn"]["turn_file_ids"]),
+             "mounted_attachment_count": len(resources)},
+        ],
+        "foreign_owner_status": other_owner_status,
+    }
+    (root / "safe-trace.json").write_text(
+        json.dumps(safe_trace, sort_keys=True), encoding="utf-8",
+    )

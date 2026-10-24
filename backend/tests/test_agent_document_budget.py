@@ -109,6 +109,216 @@ def test_ask_owned_attachment_card_reaches_context_after_rebuild(monkeypatch):
     assert "attachment_read" in captured["system_prompt"]
 
 
+def test_ask_explicit_reference_exposes_only_current_owner_session_mount(monkeypatch):
+    from app.services.agent_runtime.media import session_attachment_context, session_resources
+
+    monkeypatch.setattr(session_resources, "list_resources", lambda sid, *, student_id: [
+        {"session_id": sid, "student_id": student_id, "file_id": "file_resume"},
+    ])
+    assert session_attachment_context.ask_attachment_read_scope(
+        "请继续看我刚才上传的简历内容",
+        session_id="session_current", student_id="owner_current",
+    ) == ["file_resume"]
+    assert session_attachment_context.ask_attachment_read_scope(
+        "你好，继续刚才的话题",
+        session_id="session_current", student_id="owner_current",
+    ) == []
+    assert session_attachment_context.ask_attachment_read_scope(
+        "请继续看这份简历",
+        session_id="", student_id="owner_current",
+    ) == []
+    assert session_attachment_context.ask_attachment_read_scope(
+        "Please read the attached file again",
+        session_id="session_current", student_id="owner_current",
+    ) == ["file_resume"]
+    assert session_attachment_context.ask_attachment_read_scope(
+        "Please resume the earlier plan",
+        session_id="session_current", student_id="owner_current",
+    ) == []
+
+
+def test_attachment_reader_requires_mount_in_bound_owner_session(monkeypatch):
+    from app.services.agent_runtime.media import document_access, file_store, session_resources
+    from app.services.agent_runtime.media.types import CHARS_READ_PAGE
+    from app.services.tools.attachment_read import create_attachment_read_tool
+
+    reads = []
+    resource = {"session_id": "session_current", "student_id": "owner_current",
+                "file_id": "file_resume"}
+    monkeypatch.setattr(
+        session_resources, "list_resources",
+        lambda sid, *, student_id: (
+            [resource] if sid == "session_current" and student_id == "owner_current" else []
+        ),
+    )
+    monkeypatch.setattr(
+        file_store, "get_agent_file_service",
+        lambda: SimpleNamespace(get=lambda file_id: {
+            "file_id": file_id, "filename": "resume.txt", "status": "ready",
+            "student_id": "owner_current",
+        }),
+    )
+
+    def read_window(file_id, *, offset, max_chars):
+        reads.append((file_id, offset, max_chars))
+        return document_access.DocWindow(
+            file_id=file_id, filename="resume.txt", total_chars=24, offset=offset,
+            text="SYNTHETIC_RESUME: experience", next_offset=None,
+            has_more=False, complete=True, coverage="full",
+        )
+
+    monkeypatch.setattr(document_access, "read_window", read_window)
+    tool = create_attachment_read_tool(student_id="owner_current", session_id="session_current")
+
+    result = tool.invoke({"file_id": "file_resume", "mode": "read"})
+    denied = tool.invoke({"file_id": "file_other_session", "mode": "read"})
+
+    assert "SYNTHETIC_RESUME: experience" in result
+    assert "complete=true" in result
+    assert denied == "[attachment_read] 文件未挂载到当前会话，拒绝读取"
+    assert reads == [("file_resume", 0, CHARS_READ_PAGE)]
+
+
+def test_ask_followup_mount_card_and_attachment_tool_stay_session_scoped(monkeypatch):
+    from app.services.agent_runtime import quality_gate, scoped_invoke, task_packet
+    from app.services.agent_runtime.media import context_mount, file_store, session_resources
+    from app.services.agent_runtime.mode_runtime import ModeRuntime
+
+    resource = {
+        "session_id": "sess_old_file", "file_id": "file_resume",
+        "filename": "resume.txt", "mount_path": "/data/file_resume",
+    }
+    files = SimpleNamespace(get=lambda _fid: {
+        "file_id": "file_resume", "filename": "resume.txt",
+        "student_id": "stu_owner", "status": "ready",
+    })
+    monkeypatch.setattr(file_store, "get_agent_file_service", lambda: files)
+    monkeypatch.setattr(context_mount, "get_agent_file_service", lambda: files)
+    monkeypatch.setattr(session_resources, "list_resources", lambda *_a, **_k: [resource])
+    monkeypatch.setattr(context_mount, "list_resources", lambda *_a, **_k: [resource])
+    monkeypatch.setattr("app.services.db.get_mysql_client", lambda: None)
+
+    class EmptySessionManager:
+        def get_session(self, _sid):
+            return None
+
+    monkeypatch.setattr(
+        "app.services.session_manager.get_session_manager",
+        lambda: EmptySessionManager(),
+    )
+    monkeypatch.setattr(
+        "app.services.agent_runtime.evidence_retrieval.build_evidence_pack",
+        lambda *_a, **_k: {
+            "status": "empty", "items": [], "sources": [], "continuations": [],
+            "coverage": {"reason": "evidence_not_needed", "complete": True},
+        },
+    )
+
+    observed = {}
+
+    def invoke(packet, _blackboard, **kwargs):
+        observed["packet"] = packet
+        observed.update(kwargs)
+        return {"reply": "根据当前会话附件回答", "tool_calls": []}
+
+    monkeypatch.setattr(scoped_invoke, "scoped_invoke", invoke)
+    monkeypatch.setattr(task_packet, "build_standard_packet", lambda **kwargs: kwargs)
+    monkeypatch.setattr("app.utils.llm_client.get_llm_client", lambda: object())
+    monkeypatch.setattr(
+        "app.services.agent_runtime.mode_runtime._ask_answer_or_repair",
+        lambda *_a, **_k: ([], "根据当前会话附件回答"),
+    )
+    monkeypatch.setattr(
+        quality_gate, "ground_evidence_answer",
+        lambda _llm, reply, *_a, **_k: (reply, {"status": "not_applicable"}),
+    )
+    monkeypatch.setattr(
+        "app.services.agent_runtime.mode_runtime._evidence_summary_part",
+        lambda *_a, **_k: None,
+    )
+    saved_resume_pack = {
+        "status": "completed",
+        "answer_kind": "source_readback",
+        "items": [{
+            "uri": "career://me/resume-reports/resume_0123456789abcdef0123456789abcdef",
+            "section": "analysis", "analysis_content_status": "current", "version": "v1",
+            "data": {"kind": "summary", "text": "已保存的结构化简历总结"},
+        }],
+        "coverage": {"reason": "complete", "complete": True},
+    }
+
+    result = ModeRuntime()._run_ask(
+        "请继续看我刚才上传的简历内容",
+        Blackboard(), prefix="system", hist=[], start=0.0,
+        session_id="sess_old_file", upgrade_hint=None, memory_mount="",
+        student_id="stu_owner", turn_file_ids=[], session_attachment_ids=["file_resume"],
+        mount_errors=[],
+        evidence_pack=saved_resume_pack,
+    )
+    assert result["reply"] == "根据当前会话附件回答"
+    assert observed["allow_tools"] is True
+    assert observed["plan_tool_allowlist"] == {"attachment_read"}
+    assert observed["session_id"] == "sess_old_file"
+    assert observed["student_id"] == "stu_owner"
+    assert "当前会话已挂载且归属当前账号" in observed["packet"]["success_criteria"]
+
+
+def test_ask_chat_includes_explicitly_referenced_prior_mount_in_context(monkeypatch):
+    from app.services.agent_runtime.media import context_mount, file_store, session_resources
+
+    resource = {
+        "session_id": "sess_old_file", "file_id": "file_resume",
+        "filename": "resume.txt", "mount_path": "/data/file_resume",
+    }
+    files = SimpleNamespace(get=lambda _fid: {
+        "file_id": "file_resume", "filename": "resume.txt",
+        "student_id": "stu_owner", "status": "ready",
+    })
+    monkeypatch.setattr(file_store, "get_agent_file_service", lambda: files)
+    monkeypatch.setattr(context_mount, "get_agent_file_service", lambda: files)
+    monkeypatch.setattr(session_resources, "list_resources", lambda *_a, **_k: [resource])
+    monkeypatch.setattr(context_mount, "list_resources", lambda *_a, **_k: [resource])
+    monkeypatch.setattr("app.services.db.get_mysql_client", lambda: None)
+
+    class EmptySessionManager:
+        def get_session(self, _sid):
+            return None
+
+    monkeypatch.setattr(
+        "app.services.session_manager.get_session_manager",
+        lambda: EmptySessionManager(),
+    )
+    monkeypatch.setattr(
+        "app.services.agent_runtime.evidence_retrieval.build_evidence_pack",
+        lambda *_a, **_k: {"status": "empty", "items": [], "sources": [], "continuations": []},
+    )
+    captured = {}
+
+    def run_ask(self, *_args, assembled_context=None, session_attachment_ids=None,
+                 turn_file_ids=None, **_kwargs):
+        captured["system_prompt"] = assembled_context.system_prompt
+        captured["session_attachment_ids"] = session_attachment_ids
+        captured["turn_file_ids"] = turn_file_ids
+        return {"reply": "已收到当前会话附件范围", "orchestration": {}}
+
+    monkeypatch.setattr(ModeRuntime, "_run_ask", run_ask)
+    message = "请继续看我刚才上传的简历内容"
+    ModeRuntime().chat(
+        message, session_id="sess_old_file", student_id="stu_owner",
+        interaction_mode="ask",
+        prepared_turn={
+            "visible_text": message,
+            "parts": [{"type": "text", "text": message}],
+            "turn_file_ids": [], "attach_card": "", "mount_errors": [],
+        },
+    )
+    assert captured["turn_file_ids"] == []
+    assert captured["session_attachment_ids"] == ["file_resume"]
+    assert "当前会话已挂载附件" in captured["system_prompt"]
+    assert "[会话内] resume.txt" in captured["system_prompt"]
+    assert "attachment_read" in captured["system_prompt"]
+
+
 def test_eight_small_attachments_reach_model_with_complete_text(monkeypatch):
     files = _Files(8, 30)
     monkeypatch.setattr(document_access, "get_agent_file_service", lambda: files)
