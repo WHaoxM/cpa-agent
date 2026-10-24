@@ -36,14 +36,8 @@ class SeedReadOnlyMySQL:
         normalized = " ".join(sql.split()).lower()
         if "count(*) as total" in normalized:
             return [{"total": 1}]
-        if "group_concat(role_name" in normalized:
-            return [{
-                "category": "运维",
-                "role_count": 1,
-                "avg_salary_low": 25,
-                "avg_salary_high": 50,
-                "roles": "AI Infra工程师",
-            }]
+        if "select category, role_name" in normalized:
+            return [{"category": "运维", "role_name": "AI Infra工程师"}]
         return [dict(SEED_ROLE)]
 
 
@@ -96,6 +90,24 @@ def test_unverified_market_seed_is_suppressed_in_public_http(monkeypatch):
     finally:
         server.shutdown()
         thread.join(timeout=5)
+
+
+def test_landscape_does_not_truncate_database_roles(monkeypatch):
+    class ManyRoles:
+        def execute(self, sql, parameters=None):
+            if "select category, role_name" in " ".join(sql.split()).lower():
+                return [{"category": "Data", "role_name": f"Role {index:02}"} for index in range(1, 13)]
+            return []
+
+    monkeypatch.setattr(career_api, "get_mysql_client", lambda: ManyRoles())
+    monkeypatch.setattr(career_api, "_cache_get", lambda _key: None)
+    monkeypatch.setattr(career_api, "_cache_set", lambda *_args, **_kwargs: None)
+    response = _isolated_career_app().test_client().get("/api/career/landscape")
+    assert response.status_code == 200
+    data = response.json["data"]
+    assert len(data) == 1
+    assert data[0]["role_count"] == 12
+    assert data[0]["roles"] == [f"Role {index:02}" for index in range(1, 13)]
 
 
 def test_market_filter_and_keyword_cannot_consume_unverified_seed(monkeypatch):

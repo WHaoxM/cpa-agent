@@ -54,7 +54,7 @@ _UNVERIFIED_MARKET_FIELDS = (
     'avg_salary_low', 'avg_salary_high', 'demand_level', 'entry_difficulty',
     'growth_trend', 'hot_cities', 'hot_industries', 'description',
 )
-_MARKET_CACHE_VERSION = 'v2_unverified_market'
+_MARKET_CACHE_VERSION = 'v3_unbounded_landscape'
 
 
 def _unverified_market_meta() -> dict:
@@ -151,25 +151,28 @@ def get_landscape():
         mysql = get_mysql_client()
 
         sql = """
-        SELECT
-            category,
-            COUNT(*) as role_count,
-            GROUP_CONCAT(role_name ORDER BY role_name SEPARATOR '||') as roles
+        SELECT category, role_name
         FROM career_insights
-        GROUP BY category
-        ORDER BY role_count DESC
+        WHERE role_name IS NOT NULL AND TRIM(role_name) <> ''
+        ORDER BY category, role_name
         """
         results = mysql.execute(sql)
 
-        landscape = []
+        roles_by_category = {}
         for row in results:
-            roles = row.get('roles', '').split('||') if row.get('roles') else []
-            landscape.append({
-                "category": row['category'],
-                "role_count": row['role_count'],
-                "avg_salary_range": "",
-                "roles": roles[:8],  # 每类最多展示8个
-            })
+            category = row.get('category')
+            role_name = row.get('role_name')
+            if not isinstance(role_name, str) or not role_name.strip():
+                continue
+            if not isinstance(category, str) or not category.strip():
+                category = '未分类'
+            roles_by_category.setdefault(category, []).append(role_name)
+        landscape = [{
+            "category": category,
+            "role_count": len(roles),
+            "avg_salary_range": "",
+            "roles": roles,
+        } for category, roles in sorted(roles_by_category.items(), key=lambda item: (-len(item[1]), item[0]))]
 
         resp = {"success": True, "data": landscape, "count": len(landscape),
                 **_unverified_market_meta()}
