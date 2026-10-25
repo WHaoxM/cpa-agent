@@ -31,12 +31,14 @@ _RESULT_STATUSES = frozenset({
 })
 _SETTLED_STATUSES = frozenset({
     "succeeded", "failed", "denied", "partial", "unavailable", "needs_input",
+    "running", "pending", "queued",
 })
 _PENDING_RESULT_STATUSES = frozenset({
     "needs_input", "approval_required", "partial", "unavailable", "running",
     "pending", "queued",
 })
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
+MAX_TOOL_MODEL_ITERATIONS = 6
 
 
 def safe_tool_error_code(error: Any) -> str:
@@ -86,6 +88,8 @@ def stable_assistant_message_id(
                 or type(attempt) is not int or attempt < 1
                 or type(model_iteration) is not int or model_iteration < 1):
             raise ValueError("invalid assistant message coordinates")
+        if model_iteration > MAX_TOOL_MODEL_ITERATIONS:
+            raise ValueError("assistant message iteration is outside the tool loop bound")
         parts = (turn_id, plan_version, step_index, attempt, model_iteration)
     return _stable_id("msg_", *parts)
 
@@ -139,6 +143,7 @@ def build_tool_event_payload(
     *,
     event_type: str,
     assistant_message_id: str,
+    model_iteration: int,
     tool_call_id: str,
     tool_name: str,
     args: Optional[Mapping[str, Any]] = None,
@@ -154,11 +159,22 @@ def build_tool_event_payload(
         raise ValueError("tool call id is invalid")
     if not isinstance(assistant_message_id, str) or not re.fullmatch(r"msg_[a-f0-9]{32}", assistant_message_id):
         raise ValueError("assistant message id is invalid")
+    expected_assistant_message_id = stable_assistant_message_id(
+        run_id=context.run_id,
+        contract_revision=context.contract_revision,
+        plan_version=context.plan_version,
+        step_index=context.step_index,
+        attempt=context.attempt,
+        model_iteration=model_iteration,
+    )
+    if assistant_message_id != expected_assistant_message_id:
+        raise ValueError("assistant message id does not match tool event coordinates")
 
     payload: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "turn_id": context.turn_id,
         "assistant_message_id": assistant_message_id,
+        "model_iteration": model_iteration,
         "tool_call_id": tool_call_id,
         "plan_version": context.plan_version,
         "contract_revision": context.contract_revision,
@@ -230,6 +246,10 @@ def summarize_tool_result(
         status = "unavailable"
     elif raw_status in {"needs_input", "approval_required"}:
         status = "needs_input"
+    elif raw_status in {"running", "pending", "queued"}:
+        # ToolNode returned, but the underlying operation is not terminal.
+        # Preserve that state so the UI cannot present it as completed.
+        status = raw_status
     elif success is False and raw_status not in _PENDING_RESULT_STATUSES:
         status = "failed"
     else:
@@ -250,7 +270,7 @@ def summarize_tool_result(
 def validate_tool_event_payload(event_type: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     """Strictly validate persisted event shape and reject arbitrary payloads."""
     common = {
-        "schema_version", "turn_id", "assistant_message_id", "tool_call_id",
+        "schema_version", "turn_id", "assistant_message_id", "model_iteration", "tool_call_id",
         "plan_version", "contract_revision", "step_index", "attempt", "tool_name",
         "status",
     }
@@ -262,12 +282,15 @@ def validate_tool_event_payload(event_type: str, payload: Mapping[str, Any]) -> 
         raise ValueError("unsupported tool event type")
     if not isinstance(payload, Mapping) or set(payload) != allowed:
         raise ValueError("tool event payload has an invalid shape")
-    if payload.get("schema_version") != 1:
+    if payload.get("schema_version") != 2:
         raise ValueError("tool event schema version is unsupported")
     if not isinstance(payload.get("turn_id"), str) or not re.fullmatch(r"turn_[a-f0-9]{32}", payload["turn_id"]):
         raise ValueError("tool event turn id is invalid")
     if not isinstance(payload.get("assistant_message_id"), str) or not re.fullmatch(r"msg_[a-f0-9]{32}", payload["assistant_message_id"]):
         raise ValueError("tool event assistant message id is invalid")
+    model_iteration = payload.get("model_iteration")
+    if type(model_iteration) is not int or not 1 <= model_iteration <= MAX_TOOL_MODEL_ITERATIONS:
+        raise ValueError("tool event model iteration is invalid")
     if not isinstance(payload.get("tool_call_id"), str) or not _SAFE_CALL_ID.fullmatch(payload["tool_call_id"]):
         raise ValueError("tool event tool call id is invalid")
     if not isinstance(payload.get("tool_name"), str) or not _SAFE_TOOL_NAME.fullmatch(payload["tool_name"]):
@@ -276,7 +299,6 @@ def validate_tool_event_payload(event_type: str, payload: Mapping[str, Any]) -> 
         value = payload.get(field)
         if type(value) is not int or value < minimum:
             raise ValueError(f"tool event {field} is invalid")
-
     if event_type == TOOL_STARTED_EVENT:
         if payload.get("status") != "started":
             raise ValueError("tool start event status is invalid")

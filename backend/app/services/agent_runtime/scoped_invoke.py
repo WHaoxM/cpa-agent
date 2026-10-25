@@ -40,6 +40,7 @@ from .prompt_selector import PromptSelectionKey, get_prompt_selector
 from .task_packet import TaskPacket
 from .tool_egress import redact_text
 from .tool_event_contract import (
+    MAX_TOOL_MODEL_ITERATIONS,
     TOOL_SETTLED_EVENT,
     TOOL_STARTED_EVENT,
     ToolEventContext,
@@ -484,7 +485,7 @@ def scoped_invoke(
 
     # Bound the graph loop. At the limit ask for a text-only conclusion, but
     # never mutate an AIMessage to erase an unexecuted tool call silently.
-    max_iterations = 6
+    max_iterations = MAX_TOOL_MODEL_ITERATIONS
     iteration_count = {"n": 0}
     iteration_limit = {"reached": False}
     tool_failures: Dict[str, int] = {}
@@ -553,6 +554,7 @@ def scoped_invoke(
                     tool_event_context,
                     event_type=TOOL_STARTED_EVENT,
                     assistant_message_id=assistant_id,
+                    model_iteration=iteration_count["n"],
                     tool_call_id=call_id,
                     tool_name=name,
                     args=call["args"],
@@ -574,6 +576,7 @@ def scoped_invoke(
                         tool_event_context,
                         event_type=TOOL_SETTLED_EVENT,
                         assistant_message_id=assistant_id,
+                        model_iteration=iteration_count["n"],
                         tool_call_id=call_id,
                         tool_name=call["name"],
                         tool_message_content=safe_content,
@@ -635,6 +638,7 @@ def scoped_invoke(
                     tool_event_context,
                     event_type=TOOL_SETTLED_EVENT,
                     assistant_message_id=assistant_id,
+                    model_iteration=iteration_count["n"],
                     tool_call_id=tool_call_id,
                     tool_name=tool_name,
                     tool_message_content=content,
@@ -654,6 +658,7 @@ def scoped_invoke(
                         tool_event_context,
                         event_type=TOOL_SETTLED_EVENT,
                         assistant_message_id=assistant_id,
+                        model_iteration=iteration_count["n"],
                         tool_call_id=call_id,
                         tool_name=call["name"],
                         tool_message_content=safe_content,

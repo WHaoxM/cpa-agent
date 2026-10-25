@@ -439,7 +439,8 @@ def test_tool_call_event_contract_replays_through_owner_bound_http_cursor(run_ap
     )
     start = build_tool_event_payload(
         context, event_type=TOOL_STARTED_EVENT,
-        assistant_message_id=message_id, tool_call_id="http_call_01",
+        assistant_message_id=message_id, model_iteration=1,
+        tool_call_id="http_call_01",
         tool_name="career_data_read", args={"query": "PRIVATE_QUERY_SENTINEL"},
     )
     start_seq = repository.append_tool_call_event(
@@ -450,7 +451,8 @@ def test_tool_call_event_contract_replays_through_owner_bound_http_cursor(run_ap
     )
     settled = build_tool_event_payload(
         context, event_type=TOOL_SETTLED_EVENT,
-        assistant_message_id=message_id, tool_call_id="http_call_01",
+        assistant_message_id=message_id, model_iteration=1,
+        tool_call_id="http_call_01",
         tool_name="career_data_read",
         tool_message_content='{"status":"done","success":true,"summary":"PRIVATE_RESULT_SENTINEL"}',
     )

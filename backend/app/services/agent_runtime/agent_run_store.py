@@ -40,6 +40,8 @@ from .agent_task_control import (
 from .tool_event_contract import (
     TOOL_SETTLED_EVENT,
     TOOL_STARTED_EVENT,
+    stable_assistant_message_id,
+    stable_turn_id,
     validate_tool_event_payload,
 )
 
@@ -3187,6 +3189,20 @@ class AgentRunRepository:
             raise AgentRunConflict("tool event coordinates do not match the worker step")
         if normalized["attempt"] != attempt:
             raise AgentRunConflict("tool event attempt does not match the worker step")
+        if normalized["turn_id"] != stable_turn_id(run_id, contract_revision):
+            raise AgentRunConflict("tool event turn id does not match its run and revision")
+        expected_message_id = stable_assistant_message_id(
+            run_id=run_id,
+            contract_revision=contract_revision,
+            plan_version=plan_version,
+            step_index=step_index,
+            attempt=attempt,
+            model_iteration=normalized["model_iteration"],
+        )
+        if normalized["assistant_message_id"] != expected_message_id:
+            raise AgentRunConflict(
+                "tool event assistant message id does not match its run coordinates"
+            )
 
         identity = (
             normalized["turn_id"], normalized["assistant_message_id"],

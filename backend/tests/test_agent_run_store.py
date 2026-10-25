@@ -239,12 +239,15 @@ def test_resource_read_receipt_is_bound_to_owner_plan_and_started_step(store):
 
 
 def test_tool_call_events_are_session_step_bound_ordered_and_replayable(store):
+    import json
+
     from app.services.agent_runtime.tool_event_contract import (
         TOOL_SETTLED_EVENT,
         TOOL_STARTED_EVENT,
         ToolEventContext,
         build_tool_event_payload,
         stable_assistant_message_id,
+        stable_turn_id,
     )
 
     run_id = _submit(store, key="tool-event-roundtrip-01")["run"]["run_id"]
@@ -261,7 +264,8 @@ def test_tool_call_events_are_session_step_bound_ordered_and_replayable(store):
     )
     start_payload = build_tool_event_payload(
         context, event_type=TOOL_STARTED_EVENT,
-        assistant_message_id=assistant_message_id, tool_call_id="call_store_01",
+        assistant_message_id=assistant_message_id, model_iteration=1,
+        tool_call_id="call_store_01",
         tool_name="career_data_read", args={"query": "PRIVATE_QUERY_MUST_NOT_PERSIST"},
     )
     append = lambda event_type, payload, owner="owner_a", session="session_a", attempt=1: store.append_tool_call_event(
@@ -275,7 +279,8 @@ def test_tool_call_events_are_session_step_bound_ordered_and_replayable(store):
 
     settled_payload = build_tool_event_payload(
         context, event_type=TOOL_SETTLED_EVENT,
-        assistant_message_id=assistant_message_id, tool_call_id="call_store_01",
+        assistant_message_id=assistant_message_id, model_iteration=1,
+        tool_call_id="call_store_01",
         tool_name="career_data_read",
         tool_message_content='{"status":"done","success":true,"summary":"PRIVATE_RESULT_MUST_NOT_PERSIST"}',
     )
@@ -298,6 +303,8 @@ def test_tool_call_events_are_session_step_bound_ordered_and_replayable(store):
     assert start_payload["input_summary"] == {
         "argument_count": 1, "argument_names": ["query"],
     }
+    assert start_payload["schema_version"] == 2
+    assert start_payload["model_iteration"] == 1
     assert settled_payload["output_summary"]["result_kind"] == "json_object"
 
     with pytest.raises(AgentRunConflict, match="session"):
@@ -306,6 +313,141 @@ def test_tool_call_events_are_session_step_bound_ordered_and_replayable(store):
         append(TOOL_SETTLED_EVENT, settled_payload, owner="owner_b")
     with pytest.raises(AgentRunConflict, match="attempt"):
         append(TOOL_SETTLED_EVENT, settled_payload, attempt=2)
+
+    forged_turn = dict(start_payload, turn_id="turn_" + "0" * 32)
+    with pytest.raises(AgentRunConflict, match="turn id"):
+        append(TOOL_STARTED_EVENT, forged_turn)
+
+    forged_message = dict(start_payload, assistant_message_id="msg_" + "0" * 32)
+    with pytest.raises(AgentRunConflict, match="assistant message id"):
+        append(TOOL_STARTED_EVENT, forged_message)
+
+    wrong_iteration = dict(start_payload, model_iteration=2)
+    with pytest.raises(AgentRunConflict, match="assistant message id"):
+        append(TOOL_STARTED_EVENT, wrong_iteration)
+
+    with pytest.raises(AgentRunConflict, match="turn id"):
+        store.append_tool_call_event(
+            run_id, student_id="owner_a", session_id="session_a", claim_token=None,
+            plan_version=1, contract_revision=1, step_index=1, attempt=1,
+            allowed_tool_names={"career_data_read"},
+            event_type=TOOL_STARTED_EVENT,
+            payload=dict(start_payload, contract_revision=1),
+        )
+
+    # Historical schema-v1 tool events remain readable. New writes use v2,
+    # but pagination must not run the write validator on stored legacy rows.
+    legacy_payload = dict(settled_payload)
+    legacy_payload["schema_version"] = 1
+    legacy_payload.pop("model_iteration")
+    legacy_seq = settled_seq + 1
+    with store.mysql.engine.begin() as conn:
+        conn.execute(text("""
+            UPDATE agent_run SET last_event_seq=:seq
+            WHERE run_id=:run_id AND student_id='owner_a'
+        """), {"seq": legacy_seq, "run_id": run_id})
+        conn.execute(text("""
+            INSERT INTO agent_run_event
+            (run_id, student_id, event_seq, event_type, run_status, payload_json, occurred_at)
+            VALUES (:run_id, 'owner_a', :seq, 'run.tool_call_settled', 'running', :payload,
+                    CURRENT_TIMESTAMP)
+        """), {
+            "run_id": run_id,
+            "seq": legacy_seq,
+            "payload": json.dumps(legacy_payload, sort_keys=True),
+        })
+    legacy_read = store.read_events(
+        run_id, student_id="owner_a", after_seq=legacy_seq - 1, limit=1,
+    )
+    assert legacy_read["events"][0]["payload"]["schema_version"] == 1
+    assert "model_iteration" not in legacy_read["events"][0]["payload"]
+
+    revision_one_payload = dict(
+        start_payload,
+        turn_id=stable_turn_id(run_id, 1),
+        contract_revision=1,
+        assistant_message_id=stable_assistant_message_id(
+            run_id=run_id, contract_revision=1, plan_version=1,
+            step_index=1, attempt=1, model_iteration=1,
+        ),
+    )
+    with pytest.raises(AgentRunConflict, match="contract revision is stale"):
+        store.append_tool_call_event(
+            run_id, student_id="owner_a", session_id="session_a", claim_token=None,
+            plan_version=1, contract_revision=1, step_index=1, attempt=1,
+            allowed_tool_names={"career_data_read"},
+            event_type=TOOL_STARTED_EVENT, payload=revision_one_payload,
+        )
+
+    other_run = _submit(store, key="tool-event-cross-run-01")["run"]["run_id"]
+    other_plan = _plan(store, other_run)
+    store.start_step(other_run, student_id="owner_a", plan_version=1, step_index=1)
+    other_context = ToolEventContext(
+        run_id=other_run, student_id="owner_a", session_id="session_a",
+        claim_token=None, plan_version=1, contract_revision=0, step_index=1,
+        attempt=1, allowed_tool_names=frozenset({"career_data_read"}),
+    )
+    other_payload = build_tool_event_payload(
+        other_context, event_type=TOOL_STARTED_EVENT,
+        assistant_message_id=stable_assistant_message_id(
+            run_id=other_run, contract_revision=0, plan_version=1,
+            step_index=1, attempt=1, model_iteration=1,
+        ),
+        model_iteration=1, tool_call_id="call_cross_run_01",
+        tool_name="career_data_read", args={"query": "synthetic"},
+    )
+    cross_run_message = dict(
+        other_payload, assistant_message_id=assistant_message_id,
+    )
+    with pytest.raises(AgentRunConflict, match="assistant message id"):
+        store.append_tool_call_event(
+            other_run, student_id="owner_a", session_id="session_a", claim_token=None,
+            plan_version=other_plan["plan_version"], contract_revision=0,
+            step_index=1, attempt=1, allowed_tool_names={"career_data_read"},
+            event_type=TOOL_STARTED_EVENT, payload=cross_run_message,
+        )
+    with pytest.raises(AgentRunConflict, match="turn id"):
+        store.append_tool_call_event(
+            other_run, student_id="owner_a", session_id="session_a", claim_token=None,
+            plan_version=other_plan["plan_version"], contract_revision=0,
+            step_index=1, attempt=1, allowed_tool_names={"career_data_read"},
+            event_type=TOOL_STARTED_EVENT, payload=start_payload,
+        )
+
+
+@pytest.mark.parametrize("tool_status", ["running", "pending", "queued"])
+def test_nonterminal_tool_result_status_is_not_projected_as_success(tool_status):
+    from app.services.agent_runtime.tool_event_contract import (
+        TOOL_SETTLED_EVENT,
+        ToolEventContext,
+        build_tool_event_payload,
+        stable_assistant_message_id,
+    )
+
+    context = ToolEventContext(
+        run_id="run_" + "a" * 32, student_id="synthetic-owner",
+        session_id="synthetic-session", claim_token="b" * 32,
+        plan_version=1, contract_revision=0, step_index=1, attempt=1,
+        allowed_tool_names=frozenset({"career_data_read"}),
+    )
+    payload = build_tool_event_payload(
+        context,
+        event_type=TOOL_SETTLED_EVENT,
+        assistant_message_id=stable_assistant_message_id(
+            run_id=context.run_id, contract_revision=0, plan_version=1,
+            step_index=1, attempt=1, model_iteration=1,
+        ),
+        model_iteration=1,
+        tool_call_id="call_nonterminal_01",
+        tool_name="career_data_read",
+        tool_message_content=(
+            '{"status":"' + tool_status + '","success":false}'
+        ),
+    )
+
+    assert payload["schema_version"] == 2
+    assert payload["status"] == tool_status
+    assert payload["status"] != "succeeded"
 
 
 def test_submission_and_dispatch_outbox_are_atomic_and_publish_failure_replays(store):
